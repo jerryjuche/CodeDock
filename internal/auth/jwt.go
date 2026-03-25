@@ -8,7 +8,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-var secretkey = getSecret()
+var secretkey = []byte(getSecret())
 
 func getSecret() []byte {
 
@@ -18,6 +18,7 @@ func getSecret() []byte {
 
 	}
 	return []byte(secret)
+	
 
 }
 
@@ -62,7 +63,7 @@ func VerifyToken(tokenString string) (*Claims, error) {
 	)
 
 	if err != nil {
-		return nil, err
+		return nil, nil
 	}
 
 	claims, ok := token.Claims.(*Claims)
