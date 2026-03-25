@@ -8,7 +8,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-var secretkey = []byte(getSecret())
+var secretkey = getSecret()
 
 func getSecret() []byte {
 
