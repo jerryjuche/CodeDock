@@ -63,7 +63,7 @@ func VerifyToken(tokenString string) (*Claims, error) {
 	)
 
 	if err != nil {
-		return nil, nil
+		return nil, err
 	}
 
 	claims, ok := token.Claims.(*Claims)
