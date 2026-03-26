@@ -23,7 +23,7 @@ type authResponse struct {
 	Email string `json:"email"`
 }
 
-func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Response) {
+func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	var req registerRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -34,6 +34,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Response) {
 	// verify email and password before writing to the db
 	if req.Email == "" || req.Password == "" {
 		http.Error(w, "email and password are required", http.StatusBadRequest)
+		return
 	}
 
 	// hash passwords before storing
@@ -45,9 +46,10 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Response) {
 
 	var UserID string
 
-	err = h.DB.QueryRow(`INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id`, req.Email, hashedPassword).Scan(&UserID)
+	err = h.DB.QueryRow(`INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id`, req.Email, string(hashedPassword)).Scan(&UserID)
 	if err != nil {
-		http.Error(w, "internal server error", http.StatusBadRequest)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
 	}
 
 	token, err := auth.GenerateToken(UserID, req.Email)
@@ -65,7 +67,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Response) {
 
 }
 
-func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Response) {
+func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req registerRequest
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -86,10 +88,12 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Response) {
 
 	if err == sql.ErrNoRows {
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		return
 	}
 
 	if err != nil {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
 	}
 
 	// compare hashed password
