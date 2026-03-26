@@ -8,8 +8,6 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-var secretkey = []byte(getSecret())
-
 func getSecret() []byte {
 
 	secret := os.Getenv("JWT_SECRET")
@@ -43,7 +41,7 @@ func GenerateToken(userID string, email string) (string, error) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(secretkey)
+	return token.SignedString(getSecret())
 
 }
 
@@ -58,7 +56,7 @@ func VerifyToken(tokenString string) (*Claims, error) {
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, errors.New("unexpected signing method")
 			}
-			return secretkey, nil
+			return getSecret(), nil
 		},
 	)
 
