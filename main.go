@@ -1,19 +1,70 @@
 package main
 
 import (
+	"database/sql"
+	"fmt"
 	"log"
+	"net/http"
+	"os"
 
+	"github.com/jerryjuche/CodeDock/internal/handlers"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 )
 
 func main() {
 
-	if err := godotenv.Load(); err != nil {
-		log.Println("no .env file found, reading from system environment")
-		return
+	if err := godotenv.Overload(); err != nil {
+		log.Println("no .env file found, reading from system environment") 
 	}
 
 	db, err := connectDB()
+	if err != nil {
+		log.Fatalf("could not connect to database, %s", err)
+		return
+	}
+
+	defer db.Close()
+	log.Println("connected to database sucessfully")
+
+	authHandler := &handlers.AuthHandler{DB: db}
+
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("POST /auth/register", authHandler.Register)
+	mux.HandleFunc("POST /auth/login", authHandler.Login)
+
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	log.Printf("codedock server starting on port: %s", port)
+	if err := http.ListenAndServe(":"+port, mux); err != nil {
+		log.Fatalf("error, server failed to start up, %s", err)
+		return
+	}
+}
+
+func connectDB() (*sql.DB, error) {
+
+	host := os.Getenv("DB_HOST")
+	port := os.Getenv("DB_PORT")
+	user := os.Getenv("DB_USER")
+	password := os.Getenv("DB_PASSWORD")
+	dbname := os.Getenv("DB_NAME")
+
+	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable", host, port, user, password, dbname)
+
+	db, err := sql.Open("postgres", connStr)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := db.Ping(); err != nil {
+		return nil, err
+
+	}
+	return db, nil
 
 }
