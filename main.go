@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/jerryjuche/CodeDock/internal/auth"
 	"github.com/jerryjuche/CodeDock/internal/handlers"
+	"github.com/jerryjuche/CodeDock/internal/services"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 )
@@ -15,7 +17,7 @@ import (
 func main() {
 
 	if err := godotenv.Overload(); err != nil {
-		log.Println("no .env file found, reading from system environment") 
+		log.Println("no .env file found, reading from system environment")
 	}
 
 	db, err := connectDB()
@@ -28,12 +30,17 @@ func main() {
 	log.Println("connected to database sucessfully")
 
 	authHandler := &handlers.AuthHandler{DB: db}
+	roomService := &services.RoomService{DB: db}
+	roomHandler := &handlers.RoomHandler{Services: roomService}
 
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("POST /auth/register", authHandler.Register)
 	mux.HandleFunc("POST /auth/login", authHandler.Login)
-
+	// Protected — require authentication
+	mux.Handle("POST /rooms", auth.RequireAuth(http.HandlerFunc(roomHandler.CreateRoom)))
+	mux.Handle("GET /rooms", auth.RequireAuth(http.HandlerFunc(roomHandler.GetUserRooms)))
+	mux.Handle("GET /rooms/{id}", auth.RequireAuth(http.HandlerFunc(roomHandler.GetRoom)))
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"

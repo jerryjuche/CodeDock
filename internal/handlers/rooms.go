@@ -9,7 +9,7 @@ import (
 )
 
 type RoomHandler struct {
-	services *services.RoomService
+	Services *services.RoomService
 }
 
 type createRoomRequest struct {
@@ -36,7 +36,7 @@ func (s *RoomHandler) CreateRoom(w http.ResponseWriter, r *http.Request) {
 
 	}
 
-	createdRoom, err := s.services.CreateRoom(claims.UserID, room.Name)
+	createdRoom, err := s.Services.CreateRoom(claims.UserID, room.Name)
 	if err != nil {
 		http.Error(w, "could not create room", http.StatusInternalServerError)
 		return
@@ -57,7 +57,7 @@ func (s *RoomHandler) GetRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	getRoom, err := s.services.GetRoom(roomID)
+	getRoom, err := s.Services.GetRoom(roomID)
 
 	if err != nil {
 		if err.Error() == "no room found" {
@@ -89,7 +89,7 @@ func (s *RoomHandler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 
 	UserID := claims.UserID
 
-	getUserRooms, err := s.services.GetUserRooms(UserID)
+	getUserRooms, err := s.Services.GetUserRooms(UserID)
 
 	if err != nil {
 		if err.Error() == "no id found" {
