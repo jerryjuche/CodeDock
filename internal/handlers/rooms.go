@@ -53,11 +53,12 @@ func (s *RoomHandler) GetRoom(w http.ResponseWriter, r *http.Request) {
 	roomID := r.PathValue("id")
 
 	if roomID == "" {
-		http.Error(w, "ID cannot be empty", http.StatusBadRequest)
+		http.Error(w, "room ID cannot be empty", http.StatusBadRequest)
 		return
 	}
 
 	getRoom, err := s.services.GetRoom(roomID)
+
 	if err != nil {
 		if err.Error() == "no room found" {
 			http.Error(w, "room not found", http.StatusNotFound)
@@ -70,5 +71,37 @@ func (s *RoomHandler) GetRoom(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(getRoom)
+
+}
+
+func (s *RoomHandler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
+
+	claims, ok := auth.GetUserFromContext(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if claims.UserID == "" {
+		http.Error(w, "id cannot be empty", http.StatusBadRequest)
+		return
+	}
+
+	UserID := claims.UserID
+
+	getUserRooms, err := s.services.GetUserRooms(UserID)
+
+	if err != nil {
+		if err.Error() == "no id found" {
+			http.Error(w, "id not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(getUserRooms)
 
 }
