@@ -190,6 +190,7 @@ func TestRegister_DuplicateEmail(t *testing.T) {
 func TestRegister_MissingFields(t *testing.T) {
 	app := setupTestApp(t)
 	defer app.db.Close()
+	
 	cleanTestDB(t, app.db)
 
 	rr := app.postJSON(t, "/auth/register", map[string]string{
