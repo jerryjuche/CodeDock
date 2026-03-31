@@ -24,6 +24,8 @@ func RequireAuth(next http.Handler) http.Handler {
 			return
 		}
 
+		//
+
 		tokenString := parts[1]
 
 		//verifying tokens using jwt.verifytokens function
