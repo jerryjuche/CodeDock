@@ -33,6 +33,7 @@ func runTests() TestSuite {
 	start := time.Now()
 
 	cmd := exec.Command("go", "test", "./...", "-v", "-count=1")
+	cmd.Dir = ".."
 	var out bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &out
