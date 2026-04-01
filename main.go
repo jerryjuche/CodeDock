@@ -29,8 +29,10 @@ func main() {
 	defer db.Close()
 	log.Println("connected to database successfully")
 
+	snapshotStore := &services.DBSnapshotStore{DB: db}
+
 	// Initialise the Hub — central registry for all WebSocket connections
-	h := hub.New()
+	h := hub.New(snapshotStore)
 
 	authHandler := &handlers.AuthHandler{DB: db}
 	roomService := &services.RoomService{DB: db}

@@ -6,6 +6,18 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+type SnapshotStore interface {
+	Save(roomID, filePath string, state []byte) error
+	Get(roomID, filePath string) ([]byte, error)
+}
+
+type snapshotKey struct {
+	roomID   string
+	filePath string
+}
+
+const snapshotThreshold = 50
+
 // Client represents a single connected developer.
 // Each client belongs to one room and has a dedicated send channel.
 type Client struct {
@@ -18,14 +30,19 @@ type Client struct {
 // Hub is the central registry of all connected clients, organised by room.
 // It is the only place where broadcast decisions are made.
 type Hub struct {
-	rooms map[string]map[*Client]bool
-	mu    sync.RWMutex
+	rooms     map[string]map[*Client]bool
+	mu        sync.RWMutex
+	snapshots SnapshotStore
+	counts    map[snapshotKey]int
+	countsMu  sync.Mutex
 }
 
 // New creates and returns an empty Hub.
-func New() *Hub {
+func New(store SnapshotStore) *Hub {
 	return &Hub{
-		rooms: make(map[string]map[*Client]bool),
+		rooms:     make(map[string]map[*Client]bool),
+		snapshots: store,
+		counts:    make(map[snapshotKey]int),
 	}
 }
 
@@ -83,17 +100,41 @@ func (h *Hub) Broadcast(senderID string, roomID string, message []byte) {
 func (h *Hub) Route(msg Message) {
 	switch msg.Type {
 	case MessageTypeSync:
-		// CRDT update — broadcast to all other clients in the room
-		// Viewers cannot broadcast document updates
 		h.Broadcast(msg.Sender.UserID, msg.Sender.RoomID, append([]byte{MessageTypeSync}, msg.Payload...))
+		h.trackAndSnapshot(msg)
 
 	case MessageTypeAwareness:
-		// Presence update — broadcast to everyone including sender
 		h.BroadcastAll(msg.Sender.RoomID, append([]byte{MessageTypeAwareness}, msg.Payload...))
 
 	case MessageTypeChat:
-		// Chat message — broadcast to all other clients
 		h.Broadcast(msg.Sender.UserID, msg.Sender.RoomID, append([]byte{MessageTypeChat}, msg.Payload...))
+	}
+}
+
+func (h *Hub) trackAndSnapshot(msg Message) {
+	if h.snapshots == nil {
+		return
+	}
+
+	// First byte of sync payload is the file path length,
+	// remaining bytes split into file path and Yjs state.
+	// For now we use a placeholder file path — Phase 7 sends the real one.
+	filePath := "default"
+
+	key := snapshotKey{roomID: msg.Sender.RoomID, filePath: filePath}
+
+	h.countsMu.Lock()
+	h.counts[key]++
+	count := h.counts[key]
+	if count >= snapshotThreshold {
+		h.counts[key] = 0
+	}
+	h.countsMu.Unlock()
+
+	if count >= snapshotThreshold {
+		go func() {
+			_ = h.snapshots.Save(key.roomID, key.filePath, msg.Payload)
+		}()
 	}
 }
 
