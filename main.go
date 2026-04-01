@@ -9,6 +9,7 @@ import (
 
 	"github.com/jerryjuche/CodeDock/internal/auth"
 	"github.com/jerryjuche/CodeDock/internal/handlers"
+	"github.com/jerryjuche/CodeDock/internal/hub"
 	"github.com/jerryjuche/CodeDock/internal/services"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
@@ -25,9 +26,11 @@ func main() {
 		log.Fatalf("could not connect to database, %s", err)
 		return
 	}
-
 	defer db.Close()
-	log.Println("connected to database sucessfully")
+	log.Println("connected to database successfully")
+
+	// Initialise the Hub — central registry for all WebSocket connections
+	h := hub.New()
 
 	authHandler := &handlers.AuthHandler{DB: db}
 	roomService := &services.RoomService{DB: db}
@@ -35,12 +38,18 @@ func main() {
 
 	mux := http.NewServeMux()
 
+	// Auth routes
 	mux.HandleFunc("POST /auth/register", authHandler.Register)
 	mux.HandleFunc("POST /auth/login", authHandler.Login)
-	// Protected — require authentication
+
+	// Room routes — protected
 	mux.Handle("POST /rooms", auth.RequireAuth(http.HandlerFunc(roomHandler.CreateRoom)))
 	mux.Handle("GET /rooms", auth.RequireAuth(http.HandlerFunc(roomHandler.GetUserRooms)))
 	mux.Handle("GET /rooms/{id}", auth.RequireAuth(http.HandlerFunc(roomHandler.GetRoom)))
+
+	// WebSocket route — auth handled inside the handler via query param
+	mux.HandleFunc("GET /ws", handlers.ServeWS(h))
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -54,14 +63,16 @@ func main() {
 }
 
 func connectDB() (*sql.DB, error) {
-
 	host := os.Getenv("DB_HOST")
 	port := os.Getenv("DB_PORT")
 	user := os.Getenv("DB_USER")
 	password := os.Getenv("DB_PASSWORD")
 	dbname := os.Getenv("DB_NAME")
 
-	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable", host, port, user, password, dbname)
+	connStr := fmt.Sprintf(
+		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		host, port, user, password, dbname,
+	)
 
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
@@ -70,8 +81,7 @@ func connectDB() (*sql.DB, error) {
 
 	if err := db.Ping(); err != nil {
 		return nil, err
-
 	}
-	return db, nil
 
+	return db, nil
 }
