@@ -78,3 +78,34 @@ func (h *Hub) Broadcast(senderID string, roomID string, message []byte) {
 		}
 	}
 }
+
+// Route inspects the message type and dispatches accordingly.
+func (h *Hub) Route(msg Message) {
+	switch msg.Type {
+	case MessageTypeSync:
+		// CRDT update — broadcast to all other clients in the room
+		// Viewers cannot broadcast document updates
+		h.Broadcast(msg.Sender.UserID, msg.Sender.RoomID, append([]byte{MessageTypeSync}, msg.Payload...))
+
+	case MessageTypeAwareness:
+		// Presence update — broadcast to everyone including sender
+		h.BroadcastAll(msg.Sender.RoomID, append([]byte{MessageTypeAwareness}, msg.Payload...))
+
+	case MessageTypeChat:
+		// Chat message — broadcast to all other clients
+		h.Broadcast(msg.Sender.UserID, msg.Sender.RoomID, append([]byte{MessageTypeChat}, msg.Payload...))
+	}
+}
+
+// BroadcastAll sends a message to every client in a room including the sender.
+func (h *Hub) BroadcastAll(roomID string, message []byte) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	for client := range h.rooms[roomID] {
+		select {
+		case client.Send <- message:
+		default:
+		}
+	}
+}

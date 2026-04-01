@@ -38,7 +38,7 @@ func (c *Client) ReadPump(h *Hub) {
 	})
 
 	for {
-		_, message, err := c.Conn.ReadMessage()
+		_, raw, err := c.Conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err,
 				websocket.CloseGoingAway,
@@ -49,8 +49,18 @@ func (c *Client) ReadPump(h *Hub) {
 			break
 		}
 
-		// Broadcast to all other clients in the same room
-		h.Broadcast(c.UserID, c.RoomID, message)
+		// Every valid message must have at least a type byte
+		if len(raw) < 2 {
+			continue
+		}
+
+		msg := Message{
+			Type:    raw[0],
+			Payload: raw[1:],
+			Sender:  c,
+		}
+
+		h.Route(msg)
 	}
 }
 
