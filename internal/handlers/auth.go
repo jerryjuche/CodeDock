@@ -3,9 +3,11 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/jerryjuche/CodeDock/internal/auth"
+	"github.com/jerryjuche/CodeDock/internal/services"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -31,30 +33,31 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// verify email and password before writing to the db
 	if req.Email == "" || req.Password == "" {
 		http.Error(w, "email and password are required", http.StatusBadRequest)
 		return
 	}
 
-	// hash passwords before storing
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), 12)
 	if err != nil {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	var UserID string
-
-	err = h.DB.QueryRow(`INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id`, req.Email, string(hashedPassword)).Scan(&UserID)
+	// Delegate to service layer — business logic lives there, not here
+	userID, err := services.CreateUser(h.DB, req.Email, string(hashedPassword))
 	if err != nil {
+		if errors.Is(err, services.ErrDuplicateEmail) {
+			http.Error(w, "email already registered", http.StatusConflict)
+			return
+		}
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	token, err := auth.GenerateToken(UserID, req.Email)
+	token, err := auth.GenerateToken(userID, req.Email)
 	if err != nil {
-		http.Error(w, "could not generate token", http.StatusBadRequest)
+		http.Error(w, "could not generate token", http.StatusInternalServerError)
 		return
 	}
 
@@ -64,9 +67,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		Token: token,
 		Email: req.Email,
 	})
-
 }
-
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req registerRequest
 
