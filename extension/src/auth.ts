@@ -1,109 +1,93 @@
 import * as vscode from "vscode";
-import { AuthManager } from "./auth";
+import { EventEmitter } from "events";
 import { ApiClient } from "./api";
-import { WebSocketManager } from "./websocket";
-import { YjsSync } from "./yjs-sync";
-import { CursorManager } from "./cursor-manager";
-import { ChatManager } from "./chat";
 
-let authManager: AuthManager;
-let wsManager: WebSocketManager;
-let yjsSync: YjsSync;
-let cursorManager: CursorManager;
-let chatManager: ChatManager;
+const TOKEN_KEY = "codedock.jwt";
 
-export async function activate(
-  context: vscode.ExtensionContext,
-): Promise<void> {
-  const config = vscode.workspace.getConfiguration("codedock");
-  const serverUrl = config.get<string>("serverUrl", "http://localhost:8080");
+export class AuthManager {
+  constructor(
+    private readonly secrets: vscode.SecretStorage,
+    private readonly api: ApiClient,
+    private readonly events: EventEmitter,
+  ) {}
 
-  const apiClient = new ApiClient(serverUrl);
-  authManager = new AuthManager(context.secrets, apiClient);
-  wsManager = new WebSocketManager();
-  yjsSync = new YjsSync(wsManager);
-  cursorManager = new CursorManager(wsManager);
-  chatManager = new ChatManager(context);
+  async getToken(): Promise<string | null> {
+    const token = await this.secrets.get(TOKEN_KEY);
+    return token ?? null;
+  }
 
-  context.subscriptions.push(
-    vscode.commands.registerCommand("codedock.login", () =>
-      authManager.login(),
-    ),
-    vscode.commands.registerCommand("codedock.logout", () =>
-      authManager.logout(),
-    ),
-    vscode.commands.registerCommand("codedock.joinRoom", () =>
-      handleJoinRoom(),
-    ),
-    vscode.commands.registerCommand("codedock.openChat", () =>
-      chatManager.open(),
-    ),
-    vscode.commands.registerCommand("codedock.disconnectRoom", () =>
-      wsManager.disconnect("user"),
-    ),
-  );
+  private async saveToken(token: string): Promise<void> {
+    await this.secrets.store(TOKEN_KEY, token);
+  }
 
-  await restoreSession();
-}
+  async deleteToken(): Promise<void> {
+    await this.secrets.delete(TOKEN_KEY);
+  }
 
-async function restoreSession(): Promise<void> {
-  const token = await authManager.getToken();
+  async login(): Promise<void> {
+    const email = await vscode.window.showInputBox({
+      prompt: "CodeDock: Enter your email",
+      placeHolder: "developer@example.com",
+      ignoreFocusOut: true,
+    });
 
-  if (!token) {
-    vscode.window.showInformationMessage(
-      'CodeDock: Not logged in. Run "CodeDock: Login" to start.',
+    if (!email) {
+      return;
+    }
+
+    const password = await vscode.window.showInputBox({
+      prompt: "CodeDock: Enter your password",
+      password: true,
+      ignoreFocusOut: true,
+    });
+
+    if (!password) {
+      return;
+    }
+
+    try {
+      const response = await this.api.login(email, password);
+      await this.saveToken(response.token);
+      this.events.emit("login", response.token);
+      vscode.window.showInformationMessage("CodeDock: Logged in successfully.");
+      await this.promptRoomAction();
+    } catch (err) {
+      vscode.window.showErrorMessage(
+        `CodeDock: Login failed — ${err instanceof Error ? err.message : "unknown error"}`,
+      );
+    }
+  }
+
+  async logout(): Promise<void> {
+    await this.deleteToken();
+    this.events.emit("logout");
+    vscode.window.showInformationMessage("CodeDock: Logged out.");
+  }
+
+  async validateToken(): Promise<boolean> {
+    try {
+      await this.api.validateToken();
+      return true;
+    } catch {
+      await this.deleteToken();
+      return false;
+    }
+  }
+
+  private async promptRoomAction(): Promise<void> {
+    const choice = await vscode.window.showQuickPick(
+      ["Join a Room", "Create a Room"],
+      { placeHolder: "What would you like to do?" },
     );
-    return;
+
+    if (!choice) {
+      return;
+    }
+
+    if (choice === "Join a Room") {
+      vscode.commands.executeCommand("codedock.joinRoom");
+    } else {
+      vscode.commands.executeCommand("codedock.createRoom");
+    }
   }
-
-  const valid = await authManager.validateToken();
-
-  if (!valid) {
-    vscode.window
-      .showWarningMessage(
-        "CodeDock: Session expired. Please log in again.",
-        "Login",
-      )
-      .then((selection) => {
-        if (selection === "Login") {
-          authManager.login();
-        }
-      });
-    return;
-  }
-
-  vscode.window.showInformationMessage("CodeDock: Session restored.");
-}
-
-async function handleJoinRoom(): Promise<void> {
-  const token = await authManager.getToken();
-
-  if (!token) {
-    vscode.window.showErrorMessage(
-      "CodeDock: You must be logged in to join a room.",
-    );
-    return;
-  }
-
-  const roomId = await vscode.window.showInputBox({
-    prompt: "Enter Room ID",
-    placeHolder: "e.g. 550e8400-e29b-41d4-a716-446655440000",
-    validateInput: (value) =>
-      value.trim().length === 0 ? "Room ID cannot be empty" : null,
-  });
-
-  if (!roomId) {
-    return;
-  }
-
-  await wsManager.connect(token, roomId.trim());
-  yjsSync.activate();
-  cursorManager.activate();
-}
-
-export function deactivate(): void {
-  wsManager?.disconnect("extension_deactivated");
-  yjsSync?.dispose();
-  cursorManager?.dispose();
-  chatManager?.dispose();
 }

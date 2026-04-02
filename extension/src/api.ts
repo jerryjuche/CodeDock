@@ -1,109 +1,94 @@
-import * as vscode from "vscode";
-import { AuthManager } from "./auth";
-import { ApiClient } from "./api";
-import { WebSocketManager } from "./websocket";
-import { YjsSync } from "./yjs-sync";
-import { CursorManager } from "./cursor-manager";
-import { ChatManager } from "./chat";
+import { ApiError, AuthResponse, Room } from './types';
 
-let authManager: AuthManager;
-let wsManager: WebSocketManager;
-let yjsSync: YjsSync;
-let cursorManager: CursorManager;
-let chatManager: ChatManager;
+const REQUEST_TIMEOUT_MS = 10_000;
 
-export async function activate(
-  context: vscode.ExtensionContext,
-): Promise<void> {
-  const config = vscode.workspace.getConfiguration("codedock");
-  const serverUrl = config.get<string>("serverUrl", "http://localhost:8080");
+export class ApiClient {
+    constructor(private readonly baseUrl: string) {}
 
-  const apiClient = new ApiClient(serverUrl);
-  authManager = new AuthManager(context.secrets, apiClient);
-  wsManager = new WebSocketManager();
-  yjsSync = new YjsSync(wsManager);
-  cursorManager = new CursorManager(wsManager);
-  chatManager = new ChatManager(context);
+    async login(email: string, password: string): Promise<AuthResponse> {
+        return this.request<AuthResponse>(
+            '/auth/login',
+            {
+                method: 'POST',
+                body: JSON.stringify({ email, password })
+            },
+            false
+        );
+    }
 
-  context.subscriptions.push(
-    vscode.commands.registerCommand("codedock.login", () =>
-      authManager.login(),
-    ),
-    vscode.commands.registerCommand("codedock.logout", () =>
-      authManager.logout(),
-    ),
-    vscode.commands.registerCommand("codedock.joinRoom", () =>
-      handleJoinRoom(),
-    ),
-    vscode.commands.registerCommand("codedock.openChat", () =>
-      chatManager.open(),
-    ),
-    vscode.commands.registerCommand("codedock.disconnectRoom", () =>
-      wsManager.disconnect("user"),
-    ),
-  );
+    async validateToken(token: string): Promise<void> {
+        return this.request<void>(
+            '/auth/me',
+            { method: 'GET' },
+            true,
+            token
+        );
+    }
 
-  await restoreSession();
-}
+    async getRooms(token: string): Promise<Room[]> {
+        return this.request<Room[]>(
+            '/rooms',
+            { method: 'GET' },
+            true,
+            token
+        );
+    }
 
-async function restoreSession(): Promise<void> {
-  const token = await authManager.getToken();
+    async createRoom(token: string, name: string): Promise<Room> {
+        return this.request<Room>(
+            '/rooms',
+            {
+                method: 'POST',
+                body: JSON.stringify({ name })
+            },
+            true,
+            token
+        );
+    }
 
-  if (!token) {
-    vscode.window.showInformationMessage(
-      'CodeDock: Not logged in. Run "CodeDock: Login" to start.',
-    );
-    return;
-  }
+    private async request<T>(
+        path: string,
+        options: RequestInit,
+        authenticated: boolean,
+        token?: string
+    ): Promise<T> {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
-  const valid = await authManager.validateToken();
+        const headers: Record<string, string> = {
+            'Content-Type': 'application/json',
+            ...(options.headers as Record<string, string> ?? {})
+        };
 
-  if (!valid) {
-    vscode.window
-      .showWarningMessage(
-        "CodeDock: Session expired. Please log in again.",
-        "Login",
-      )
-      .then((selection) => {
-        if (selection === "Login") {
-          authManager.login();
+        if (authenticated && token) {
+            headers['Authorization'] = `Bearer ${token}`;
         }
-      });
-    return;
-  }
 
-  vscode.window.showInformationMessage("CodeDock: Session restored.");
-}
+        try {
+            const response = await fetch(`${this.baseUrl}${path}`, {
+                ...options,
+                headers,
+                signal: controller.signal
+            });
 
-async function handleJoinRoom(): Promise<void> {
-  const token = await authManager.getToken();
+            if (!response.ok) {
+                const body = await response.text();
+                throw new ApiError(response.status, body || `HTTP ${response.status}`);
+            }
 
-  if (!token) {
-    vscode.window.showErrorMessage(
-      "CodeDock: You must be logged in to join a room.",
-    );
-    return;
-  }
+            const text = await response.text();
+            return text ? JSON.parse(text) as T : {} as T;
 
-  const roomId = await vscode.window.showInputBox({
-    prompt: "Enter Room ID",
-    placeHolder: "e.g. 550e8400-e29b-41d4-a716-446655440000",
-    validateInput: (value) =>
-      value.trim().length === 0 ? "Room ID cannot be empty" : null,
-  });
-
-  if (!roomId) {
-    return;
-  }
-
-  await wsManager.connect(token, roomId.trim());
-  yjsSync.activate();
-  cursorManager.activate();
-}
-
-export function deactivate(): void {
-  wsManager?.disconnect("extension_deactivated");
-  yjsSync?.dispose();
-  cursorManager?.dispose();
-  chatManager?.dispose();
+        } catch (err) {
+            if (err instanceof ApiError) {
+                throw err;
+            }
+            if (err instanceof DOMException && err.name === 'AbortError') {
+                throw new ApiError(408, 'Request timed out — is the server reachable?');
+            }
+            throw new ApiError(0, `Network error: ${err instanceof Error ? err.message : 'unknown'}`);
+        } finally {
+            clearTimeout(timeout);
+        }
+    }
 }
