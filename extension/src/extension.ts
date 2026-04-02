@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { EventEmitter } from "events";
 import { AuthManager } from "./auth";
 import { ApiClient } from "./api";
 import { WebSocketManager } from "./websocket";
@@ -11,6 +12,7 @@ let wsManager: WebSocketManager;
 let yjsSync: YjsSync;
 let cursorManager: CursorManager;
 let chatManager: ChatManager;
+let apiClient: ApiClient 
 
 export async function activate(
   context: vscode.ExtensionContext,
@@ -18,13 +20,37 @@ export async function activate(
   const config = vscode.workspace.getConfiguration("codedock");
   const serverUrl = config.get<string>("serverUrl", "http://localhost:8080");
 
-  const apiClient = new ApiClient(serverUrl);
-  authManager = new AuthManager(context.secrets, apiClient);
-  wsManager = new WebSocketManager();
+  // output channel for safe diagnostics — no secrets ever logged here
+  const outputChannel = vscode.window.createOutputChannel("CodeDock");
+  context.subscriptions.push(outputChannel);
+
+  // shared event emitter — auth announces login/logout, others listen
+  const emitter = new EventEmitter();
+
+  // wire dependencies — office manager hands out keys
+  apiClient = new ApiClient(serverUrl);
+  authManager = new AuthManager(context.secrets, apiClient, emitter);
+  wsManager = new WebSocketManager(serverUrl, outputChannel);
   yjsSync = new YjsSync(wsManager);
   cursorManager = new CursorManager(wsManager);
-  chatManager = new ChatManager(context);
+  chatManager = new ChatManager(context, wsManager);
 
+  // observer — when login fires, activate collaboration features
+  emitter.on("login", (token: string, email: string) => {
+    cursorManager.activate(token, email);
+    chatManager.activate(token, email);
+  });
+
+  // observer — when logout fires, disconnect everything
+  emitter.on("logout", () => {
+    wsManager.disconnect("logout");
+    yjsSync.dispose();
+    cursorManager.dispose();
+    chatManager.dispose();
+  });
+
+  // register all commands into context.subscriptions
+  // VS Code disposes these automatically on deactivation
   context.subscriptions.push(
     vscode.commands.registerCommand("codedock.login", () =>
       authManager.login(),
@@ -35,6 +61,9 @@ export async function activate(
     vscode.commands.registerCommand("codedock.joinRoom", () =>
       handleJoinRoom(),
     ),
+    vscode.commands.registerCommand("codedock.createRoom", () =>
+      handleCreateRoom(),
+    ),
     vscode.commands.registerCommand("codedock.openChat", () =>
       chatManager.open(),
     ),
@@ -43,6 +72,7 @@ export async function activate(
     ),
   );
 
+  // restore session or prompt login on startup
   await restoreSession();
 }
 
@@ -88,6 +118,7 @@ async function handleJoinRoom(): Promise<void> {
   const roomId = await vscode.window.showInputBox({
     prompt: "Enter Room ID",
     placeHolder: "e.g. 550e8400-e29b-41d4-a716-446655440000",
+    ignoreFocusOut: true,
     validateInput: (value) =>
       value.trim().length === 0 ? "Room ID cannot be empty" : null,
   });
@@ -98,7 +129,42 @@ async function handleJoinRoom(): Promise<void> {
 
   await wsManager.connect(token, roomId.trim());
   yjsSync.activate();
-  cursorManager.activate();
+}
+
+async function handleCreateRoom(): Promise<void> {
+  const token = await authManager.getToken();
+
+  if (!token) {
+    vscode.window.showErrorMessage(
+      "CodeDock: You must be logged in to create a room.",
+    );
+    return;
+  }
+
+  const roomName = await vscode.window.showInputBox({
+    prompt: "Enter a name for your room",
+    placeHolder: "e.g. my-project",
+    ignoreFocusOut: true,
+    validateInput: (value) =>
+      value.trim().length === 0 ? "Room name cannot be empty" : null,
+  });
+
+  if (!roomName) {
+    return;
+  }
+
+  try {
+    const room = await apiClient.createRoom(token, roomName.trim());
+    vscode.window.showInformationMessage(
+      `CodeDock: Room "${room.name}" created. ID: ${room.id}`,
+    );
+    await wsManager.connect(token, room.id);
+    yjsSync.activate();
+  } catch (err) {
+    vscode.window.showErrorMessage(
+      `CodeDock: Failed to create room — ${err instanceof Error ? err.message : "unknown error"}`,
+    );
+  }
 }
 
 export function deactivate(): void {

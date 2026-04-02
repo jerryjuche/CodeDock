@@ -67,7 +67,10 @@ export class WebSocketManager {
   disconnect(reason: string = "user"): void {
     // intentional — do not reconnect
     this.manualDisconnect = true;
-    clearTimeout(this.reconnectTimer);
+    if (this.reconnectTimer) {
+    clearTimeout(this.reconnectTimer)
+    this.reconnectTimer = null
+}
     this.reconnectTimer = null;
     this.socket?.close();
     this.socket = null;
@@ -89,7 +92,10 @@ export class WebSocketManager {
 
   dispose(): void {
     this.manualDisconnect = true;
-    clearTimeout(this.reconnectTimer);
+    if (this.reconnectTimer) {
+    clearTimeout(this.reconnectTimer)
+    this.reconnectTimer = null
+}
     this.socket?.close();
     this.socket = null;
     this.state = "disconnected";
@@ -161,7 +167,10 @@ export class WebSocketManager {
     }
 
     // clear any existing timer — never stack timers
-    clearTimeout(this.reconnectTimer);
+    if (this.reconnectTimer) {
+    clearTimeout(this.reconnectTimer)
+    this.reconnectTimer = null
+}
 
     const base = Math.min(
       BASE_BACKOFF_MS * Math.pow(2, this.attemptCount),

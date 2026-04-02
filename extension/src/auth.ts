@@ -66,7 +66,11 @@ export class AuthManager {
 
   async validateToken(): Promise<boolean> {
     try {
-      await this.api.validateToken();
+      const token = await this.getToken();
+      if (!token) {
+        return false;
+      }
+      const valid = await this.api.validateToken(token);
       return true;
     } catch {
       await this.deleteToken();
