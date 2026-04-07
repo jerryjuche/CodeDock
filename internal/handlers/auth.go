@@ -43,6 +43,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
+	
 
 	// Delegate to service layer — business logic lives there, not here
 	userID, err := services.CreateUser(h.DB, req.Email, string(hashedPassword))
