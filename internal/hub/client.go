@@ -88,6 +88,7 @@ func (c *Client) WritePump() {
 				return
 			}
 
+			
 		case <-ticker.C:
 			// Send a ping to keep the connection alive
 			c.Conn.SetWriteDeadline(time.Now().Add(writeWait))
