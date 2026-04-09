@@ -43,11 +43,13 @@ func main() {
 	// Auth routes
 	mux.HandleFunc("POST /auth/register", authHandler.Register)
 	mux.HandleFunc("POST /auth/login", authHandler.Login)
+	mux.HandleFunc("POST /auth/exchange", authHandler.ExchangeCode)
 
 	// Room routes — protected
 	mux.Handle("POST /rooms", auth.RequireAuth(http.HandlerFunc(roomHandler.CreateRoom)))
 	mux.Handle("GET /rooms", auth.RequireAuth(http.HandlerFunc(roomHandler.GetUserRooms)))
 	mux.Handle("GET /rooms/{id}", auth.RequireAuth(http.HandlerFunc(roomHandler.GetRoom)))
+	
 
 	// WebSocket route — auth handled inside the handler via query param
 	mux.HandleFunc("GET /ws", handlers.ServeWS(h))

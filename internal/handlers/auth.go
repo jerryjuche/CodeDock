@@ -43,7 +43,6 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
-	
 
 	// Delegate to service layer — business logic lives there, not here
 	userID, err := services.CreateUser(h.DB, req.Email, string(hashedPassword))
@@ -117,4 +116,34 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		Token: token,
 		Email: req.Email,
 	})
+}
+
+func (h *AuthHandler) ExchangeCode(w http.ResponseWriter, r *http.Request) {
+
+	var Det struct {
+		DB   sql.DB
+		Code string `json:"code"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&Det); err != nil {
+		http.Error(w, "Error Fetching results", http.StatusInternalServerError)
+		return
+	}
+
+	details, err := services.ExchangeInviteCode(Det.Code)
+
+	if err == sql.ErrNoRows {
+		http.Error(w, "Invalid Invitation Code", http.StatusGone)
+		return
+	}
+
+	if err != nil {
+		http.Error(w, "Invalid Invitation Code", http.StatusGone)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(code:Det.Code)
+
 }
