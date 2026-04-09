@@ -79,6 +79,17 @@ async function activate(context) {
     // register all commands into context.subscriptions
     // VS Code disposes these automatically on deactivation
     context.subscriptions.push(vscode.commands.registerCommand("codedock.login", () => authManager.login()), vscode.commands.registerCommand("codedock.logout", () => authManager.logout()), vscode.commands.registerCommand("codedock.joinRoom", () => handleJoinRoom()), vscode.commands.registerCommand("codedock.createRoom", () => handleCreateRoom()), vscode.commands.registerCommand("codedock.openChat", () => chatManager.open()), vscode.commands.registerCommand("codedock.disconnectRoom", () => wsManager.disconnect("user")));
+    context.subscriptions.push(vscode.window.registerUriHandler({
+        handleUri(uri) {
+            outputChannel.appendLine(`URI received: ${uri.toString()}`);
+            const params = new URLSearchParams(uri.query);
+            const code = params.get("code");
+            const roomId = params.get("room_id");
+            outputChannel.appendLine(`code: ${code}`);
+            outputChannel.appendLine(`room_id: ${roomId}`);
+            vscode.window.showInformationMessage(`Deep link received — code: ${code}, room: ${roomId}`);
+        },
+    }));
     // restore session or prompt login on startup
     await restoreSession();
 }

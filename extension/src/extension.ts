@@ -12,7 +12,7 @@ let wsManager: WebSocketManager;
 let yjsSync: YjsSync;
 let cursorManager: CursorManager;
 let chatManager: ChatManager;
-let apiClient: ApiClient 
+let apiClient: ApiClient;
 
 export async function activate(
   context: vscode.ExtensionContext,
@@ -70,6 +70,25 @@ export async function activate(
     vscode.commands.registerCommand("codedock.disconnectRoom", () =>
       wsManager.disconnect("user"),
     ),
+  );
+
+  context.subscriptions.push(
+    vscode.window.registerUriHandler({
+      handleUri(uri: vscode.Uri): void {
+        outputChannel.appendLine(`URI received: ${uri.toString()}`);
+
+        const params = new URLSearchParams(uri.query);
+        const code = params.get("code");
+        const roomId = params.get("room_id");
+
+        outputChannel.appendLine(`code: ${code}`);
+        outputChannel.appendLine(`room_id: ${roomId}`);
+
+        vscode.window.showInformationMessage(
+          `Deep link received — code: ${code}, room: ${roomId}`,
+        );
+      },
+    }),
   );
 
   // restore session or prompt login on startup
