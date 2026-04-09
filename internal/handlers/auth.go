@@ -121,7 +121,6 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 func (h *AuthHandler) ExchangeCode(w http.ResponseWriter, r *http.Request) {
 
 	var Det struct {
-		DB   sql.DB
 		Code string `json:"code"`
 	}
 
@@ -130,20 +129,37 @@ func (h *AuthHandler) ExchangeCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	details, err := services.ExchangeInviteCode(Det.Code)
-
-	if err == sql.ErrNoRows {
-		http.Error(w, "Invalid Invitation Code", http.StatusGone)
+	details, err := services.ExchangeInviteCode(h.DB, Det.Code)
+	if err != nil {
+		if errors.Is(err, services.ErrInviteExpired) {
+			http.Error(w, "invalid or expired invite code", http.StatusGone)
+			return
+		}
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	token, err := auth.GenerateToken(details.UserID, details.Email)
+	if err != nil {
+		http.Error(w, "could not generate token", http.StatusInternalServerError)
 		return
 	}
 
 	if err != nil {
-		http.Error(w, "Invalid Invitation Code", http.StatusGone)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
-
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(code:Det.Code)
+	json.NewEncoder(w).Encode(struct {
+		Token    string `json:"token"`
+		Email    string `json:"email"`
+		RoomID   string `json:"room_id"`
+		RoomName string `json:"room_name"`
+	}{
+		Token:    token,
+		Email:    details.Email,
+		RoomID:   details.RoomID,
+		RoomName: details.RoomName,
+	})
 
 }

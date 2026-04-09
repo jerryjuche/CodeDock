@@ -12,6 +12,7 @@ type InviteDetails struct {
 	RoomID   string
 	RoomName string
 	Email    string
+	UserID   string
 }
 
 func ExchangeInviteCode(db *sql.DB, code string) (*InviteDetails, error) {
@@ -25,6 +26,7 @@ func ExchangeInviteCode(db *sql.DB, code string) (*InviteDetails, error) {
 
 	err = tx.QueryRow(`
         SELECT 
+			u.id,
             i.room_id,
             r.name AS room_name,
             u.email
@@ -35,7 +37,7 @@ func ExchangeInviteCode(db *sql.DB, code string) (*InviteDetails, error) {
           AND i.used_at IS NULL
           AND i.expires_at > NOW()
         FOR UPDATE
-    `, code).Scan(&details.RoomID, &details.RoomName, &details.Email)
+    `, code).Scan(&details.UserID, &details.RoomID, &details.RoomName, &details.Email)
 
 	if err == sql.ErrNoRows {
 		return nil, ErrInviteExpired
