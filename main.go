@@ -55,6 +55,7 @@ func main() {
 	mux.HandleFunc("GET /ws", handlers.ServeWS(h))
 
 	port := os.Getenv("PORT")
+	
 	if port == "" {
 		port = "8080"
 	}
