@@ -461,3 +461,103 @@ func TestExchangeCode_EmptyCode(t *testing.T) {
 		t.Fatalf("expected 410 Gone for empty code, got %d — body: %s", rr.Code, rr.Body.String())
 	}
 }
+func TestExchangeCode_MalformedJSON(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	req := httptest.NewRequest("POST", "/auth/exchange", bytes.NewBufferString("not valid json{{{"))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	app.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for malformed JSON, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestExchangeCode_MissingCodeField(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	// valid JSON but no code field
+	rr := app.postJSON(t, "/auth/exchange", map[string]string{
+		"wrong_field": "somevalue",
+	}, "")
+
+	if rr.Code != http.StatusGone {
+		t.Errorf("expected 410 for missing code field, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestExchangeCode_ValidCode(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	// step 1 — register a user to act as room creator
+	rr := app.postJSON(t, "/auth/register", map[string]string{
+		"email":    "inviter@codedock.com",
+		"password": "strongpassword",
+	}, "")
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for register, got %d", rr.Code)
+	}
+
+	var authResp map[string]string
+	if err := json.NewDecoder(rr.Body).Decode(&authResp); err != nil {
+		t.Fatalf("could not decode register response: %v", err)
+	}
+	token := authResp["token"]
+
+	// step 2 — create a room
+	roomRR := app.postJSON(t, "/rooms", map[string]string{
+		"name": "invite-test-room",
+	}, token)
+	if roomRR.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for room creation, got %d — body: %s", roomRR.Code, roomRR.Body.String())
+	}
+
+	var roomResp map[string]interface{}
+	if err := json.NewDecoder(roomRR.Body).Decode(&roomResp); err != nil {
+		t.Fatalf("could not decode room response: %v", err)
+	}
+	roomID, ok := roomResp["id"].(string)
+	if !ok || roomID == "" {
+		t.Fatalf("expected room id in response, got %v", roomResp["id"])
+	}
+	
+	// step 3 — get the creator's user ID from the token
+	claims, err := auth.VerifyToken(token)
+	if err != nil {
+		t.Fatal("could not verify token to extract user ID")
+	}
+
+	// step 4 — insert invite token directly into database
+	inviteCode := "test-valid-invite-code-001"
+	_, err = app.db.Exec(`
+		INSERT INTO invite_tokens (token, room_id, created_by, expires_at)
+		VALUES ($1, $2, $3, NOW() + INTERVAL '1 hour')
+	`, inviteCode, roomID, claims.UserID)
+	if err != nil {
+		t.Fatalf("failed to insert invite token: %v", err)
+	}
+
+	// step 5 — exchange the code
+	exchangeRR := app.postJSON(t, "/auth/exchange", map[string]string{
+		"code": inviteCode,
+	}, "")
+
+	if exchangeRR.Code != http.StatusOK {
+		t.Fatalf("expected 200 for valid code exchange, got %d — body: %s", exchangeRR.Code, exchangeRR.Body.String())
+	}
+
+	var exchangeResp map[string]string
+	if err := json.NewDecoder(exchangeRR.Body).Decode(&exchangeResp); err != nil {
+		t.Fatalf("could not decode exchange response: %v", err)
+	}
+	if exchangeResp["token"] == "" {
+		t.Error("expected token in exchange response, got empty string")
+	}
+	if exchangeResp["room_id"] != roomID {
+		t.Errorf("expected room_id %s, got %s", roomID, exchangeResp["room_id"])
+	}
+}

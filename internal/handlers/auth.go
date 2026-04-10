@@ -126,7 +126,7 @@ func (h *AuthHandler) ExchangeCode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&Det); err != nil {
-		http.Error(w, "Error Fetching results", http.StatusInternalServerError)
+		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
