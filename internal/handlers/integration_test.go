@@ -528,6 +528,7 @@ func TestExchangeCode_ValidCode(t *testing.T) {
 	// step 3 — get the creator's user ID from the token
 	
 	claims, err := auth.VerifyToken(token)
+	
 	if err != nil {
 		t.Fatal("could not verify token to extract user ID")
 	}
