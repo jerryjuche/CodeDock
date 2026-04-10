@@ -68,6 +68,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		Email: req.Email,
 	})
 }
+
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req registerRequest
 
@@ -131,7 +132,7 @@ func (h *AuthHandler) ExchangeCode(w http.ResponseWriter, r *http.Request) {
 
 	details, err := services.ExchangeInviteCode(h.DB, Det.Code)
 	if err != nil {
-		if errors.Is(err, services.ErrInviteExpired) {
+		if errors.Is(err, services.ErrInviteExpired) || errors.Is(err, services.ErrInviteNotFound) {
 			http.Error(w, "invalid or expired invite code", http.StatusGone)
 			return
 		}
@@ -144,10 +145,6 @@ func (h *AuthHandler) ExchangeCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err != nil {
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
-	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(struct {
@@ -163,4 +160,3 @@ func (h *AuthHandler) ExchangeCode(w http.ResponseWriter, r *http.Request) {
 	})
 
 }
-

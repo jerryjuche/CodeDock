@@ -3,6 +3,7 @@ package services
 import (
 	"database/sql"
 	"errors"
+	"time"
 )
 
 var ErrInviteNotFound = errors.New("invite token not found")
@@ -23,29 +24,49 @@ func ExchangeInviteCode(db *sql.DB, code string) (*InviteDetails, error) {
 	defer tx.Rollback()
 
 	var details InviteDetails
+	var usedAt sql.NullTime
+	var expiresAt time.Time
 
+	// Step 1 — find token by code only, no expiry filter
+	// FOR UPDATE locks the row against concurrent exchanges
 	err = tx.QueryRow(`
         SELECT 
-			u.id,
+            u.id,
             i.room_id,
             r.name AS room_name,
-            u.email
+            u.email,
+            i.used_at,
+            i.expires_at
         FROM invite_tokens i
         JOIN rooms r ON i.room_id = r.id
         JOIN users u ON i.created_by = u.id
         WHERE i.token = $1
-          AND i.used_at IS NULL
-          AND i.expires_at > NOW()
         FOR UPDATE
-    `, code).Scan(&details.UserID, &details.RoomID, &details.RoomName, &details.Email)
+    `, code).Scan(
+		&details.UserID,
+		&details.RoomID,
+		&details.RoomName,
+		&details.Email,
+		&usedAt,
+		&expiresAt,
+	)
 
-	if err == sql.ErrNoRows {
-		return nil, ErrInviteExpired
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrInviteNotFound
 	}
 	if err != nil {
 		return nil, err
 	}
 
+	// Step 2 — check if token is expired or already used
+	if usedAt.Valid {
+		return nil, ErrInviteExpired
+	}
+	if expiresAt.Before(time.Now()) {
+		return nil, ErrInviteExpired
+	}
+
+	// Step 3 — mark as used
 	result, err := tx.Exec(`
         UPDATE invite_tokens
         SET used_at = NOW()
