@@ -511,6 +511,7 @@ Important pending backend issue:
 
 Please continue from here and help me do the Oracle deployment in the safest zero-cost way, step by step, without overengineering.
 ```
+`
 
 ---
 
