@@ -116,10 +116,18 @@ func (h *Hub) trackAndSnapshot(msg Message) {
 		return
 	}
 
-	// First byte of sync payload is the file path length,
-	// remaining bytes split into file path and Yjs state.
-	// For now we use a placeholder file path — Phase 7 sends the real one.
-	filePath := "default"
+	if len(msg.Payload) < 4 {
+		return
+	}
+
+	filePathLen := int(msg.Payload[0])<<8 | int(msg.Payload[1])
+
+	if filePathLen == 0 || 2+filePathLen >= len(msg.Payload) {
+		return
+	}
+
+	filePath := string(msg.Payload[2 : 2+filePathLen])
+	yjsUpdate := msg.Payload[2+filePathLen:]
 
 	key := snapshotKey{roomID: msg.Sender.RoomID, filePath: filePath}
 
@@ -133,7 +141,7 @@ func (h *Hub) trackAndSnapshot(msg Message) {
 
 	if count >= snapshotThreshold {
 		go func() {
-			_ = h.snapshots.Save(key.roomID, key.filePath, msg.Payload)
+			_ = h.snapshots.Save(key.roomID, key.filePath, yjsUpdate)
 		}()
 	}
 }

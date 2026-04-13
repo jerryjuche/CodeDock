@@ -382,7 +382,16 @@ func TestTrackAndSnapshot_SavesAtThreshold(t *testing.T) {
 	h := New(store)
 	sender := newTestClient("room-1", "sender", 1)
 
-	payload := []byte("snapshot-state")
+	filePath := "main.go"
+	yjsUpdate := []byte("snapshot-state")
+
+	// build the payload
+	payload := []byte{
+		0,                   // high byte of path length
+		byte(len(filePath)), // low byte of path length
+	}
+	payload = append(payload, []byte(filePath)...)
+	payload = append(payload, yjsUpdate...)
 
 	for i := 0; i < snapshotThreshold-1; i++ {
 		h.trackAndSnapshot(Message{
@@ -409,11 +418,11 @@ func TestTrackAndSnapshot_SavesAtThreshold(t *testing.T) {
 		if call.roomID != "room-1" {
 			t.Fatalf("expected roomID room-1, got %s", call.roomID)
 		}
-		if call.filePath != "default" {
+		if call.filePath != "main.go" {
 			t.Fatalf("expected filePath default, got %s", call.filePath)
 		}
-		if !bytes.Equal(call.state, payload) {
-			t.Fatalf("expected state %v, got %v", payload, call.state)
+		if !bytes.Equal(call.state, yjsUpdate) {
+			t.Fatalf("expected state %v, got %v", yjsUpdate, call.state)
 		}
 	case <-time.After(250 * time.Millisecond):
 		t.Fatal("expected snapshot save at threshold")
@@ -425,7 +434,15 @@ func TestTrackAndSnapshot_ResetsCounterAfterThreshold(t *testing.T) {
 	h := New(store)
 	sender := newTestClient("room-1", "sender", 1)
 
-	payload := []byte("state")
+	filePath := "main.go"
+	yjsUpdate := []byte("state")
+
+	payload := []byte{
+		0,
+		byte(len(filePath)),
+	}
+	payload = append(payload, []byte(filePath)...)
+	payload = append(payload, yjsUpdate...)
 
 	for i := 0; i < snapshotThreshold; i++ {
 		h.trackAndSnapshot(Message{

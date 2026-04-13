@@ -90,7 +90,7 @@ func runTests() TestSuite {
 		absRoot = projectRoot
 	}
 
-	cmd := exec.Command("go", "test", ".", "./internal/...", "-v", "-count=1")
+	cmd := exec.Command("go", "test", "./...", "-v", "-count=1", "-p", "1")
 	cmd.Dir = absRoot
 
 	var stdout bytes.Buffer
