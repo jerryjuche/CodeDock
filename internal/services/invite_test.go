@@ -17,6 +17,7 @@ func createTestInvite(t *testing.T, db interface{ Exec(string, ...any) (interfac
 	}
 }
 
+
 func TestExchangeInviteCode_Success(t *testing.T) {
 	db := setupTestDB(t)
 	defer db.Close()
