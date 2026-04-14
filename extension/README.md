@@ -1,4 +1,3 @@
-````md
 # CodeDock
 
 **Self-hosted real-time collaborative coding for VS Code.**
