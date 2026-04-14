@@ -4,7 +4,7 @@
   "description": "Self-hosted real-time collaborative coding for VS Code",
   "version": "0.1.0",
   "publisher": "jerryjuche",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "MIT",
   "icon": "images/codedock.png",
   "repository": {
     "type": "git",
