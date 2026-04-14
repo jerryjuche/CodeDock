@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="./images/codedock.png" alt="CodeDock Logo" width="140" />
+<img src="./images/codedock.jpg" alt="CodeDock Logo" width="140" />
 
 # CodeDock
 

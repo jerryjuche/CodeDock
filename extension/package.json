@@ -2,10 +2,10 @@
   "name": "codedock",
   "displayName": "CodeDock",
   "description": "Self-hosted real-time collaborative coding for VS Code",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "publisher": "jerryjuche",
   "license": "MIT",
-  "icon": "images/codedock.png",
+  "icon": "images/codedock.jpg",
   "repository": {
     "type": "git",
     "url": "https://github.com/jerryjuche/CodeDock.git"
