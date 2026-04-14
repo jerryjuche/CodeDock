@@ -46,15 +46,16 @@
       "properties": {
         "codedock.serverUrl": {
           "type": "string",
-          "default": "http://localhost:8080",
+          "default": "https://codedock.fly.dev",
           "description": "Base URL of the CodeDock backend server"
         }
       }
     }
   },
   "scripts": {
-    "compile": "tsc -p ./",
+    "compile": "tsc --noEmit && node esbuild.js",
     "watch": "tsc -watch -p ./",
+    "build": "node esbuild.js",
     "lint": "eslint src --ext ts"
   },
   "dependencies": {
@@ -63,6 +64,7 @@
   "devDependencies": {
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",
+    "esbuild": "^0.28.0",
     "typescript": "^5.9.3"
   }
 }
