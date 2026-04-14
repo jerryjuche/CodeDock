@@ -1,7 +1,3 @@
-Absolutely — here is a **professional, production-quality `README.md`** for **CodeDock** that is written like a serious developer tool, polished for GitHub and strong enough to support your VS Code Marketplace presence.
-
-You can drop this directly into your repo as `README.md`.
-
 ````md
 # CodeDock
 
@@ -26,6 +22,7 @@ CodeDock turns Visual Studio Code into a collaborative workspace where multiple 
 The goal is simple: make collaborative coding feel native inside VS Code.
 
 ---
+
 
 ## Why CodeDock
 
