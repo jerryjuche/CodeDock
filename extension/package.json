@@ -4,6 +4,25 @@
   "description": "Self-hosted real-time collaborative coding for VS Code",
   "version": "0.1.0",
   "publisher": "jerryjuche",
+  "license": "SEE LICENSE IN LICENSE",
+  "icon": "images/codedock.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jerryjuche/CodeDock.git"
+  },
+  "homepage": "https://github.com/jerryjuche/CodeDock",
+  "bugs": {
+    "url": "https://github.com/jerryjuche/CodeDock/issues"
+  },
+  "keywords": [
+    "collaboration",
+    "realtime",
+    "coding",
+    "crdt",
+    "yjs",
+    "pair-programming",
+    "self-hosted"
+  ],
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -18,27 +37,33 @@
     "commands": [
       {
         "command": "codedock.login",
-        "title": "CodeDock: Login"
+        "title": "Login",
+        "category": "CodeDock"
       },
       {
         "command": "codedock.logout",
-        "title": "CodeDock: Logout"
+        "title": "Logout",
+        "category": "CodeDock"
       },
       {
         "command": "codedock.joinRoom",
-        "title": "CodeDock: Join Room"
+        "title": "Join Room",
+        "category": "CodeDock"
       },
       {
         "command": "codedock.createRoom",
-        "title": "CodeDock: Create Room"
+        "title": "Create Room",
+        "category": "CodeDock"
       },
       {
         "command": "codedock.openChat",
-        "title": "CodeDock: Open Chat"
+        "title": "Open Chat",
+        "category": "CodeDock"
       },
       {
         "command": "codedock.disconnectRoom",
-        "title": "CodeDock: Disconnect from Room"
+        "title": "Disconnect from Room",
+        "category": "CodeDock"
       }
     ],
     "configuration": {
@@ -47,7 +72,8 @@
         "codedock.serverUrl": {
           "type": "string",
           "default": "https://codedock.fly.dev",
-          "description": "Base URL of the CodeDock backend server"
+          "description": "Base URL of the CodeDock backend server",
+          "scope": "application"
         }
       }
     }
