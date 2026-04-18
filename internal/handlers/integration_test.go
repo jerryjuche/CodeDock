@@ -1,0 +1,565 @@
+package handlers
+
+import (
+	"bytes"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/jerryjuche/CodeDock/internal/auth"
+	"github.com/jerryjuche/CodeDock/internal/services"
+	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
+)
+
+var testDB *sql.DB
+
+func TestMain(m *testing.M) {
+	candidates := []string{
+		".env",
+		filepath.Join("..", "..", ".env"),
+		filepath.Join("..", "..", "..", ".env"),
+	}
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			godotenv.Overload(candidate)
+			break
+		}
+	}
+
+	connStr := fmt.Sprintf(
+		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		os.Getenv("DB_HOST"),
+		os.Getenv("DB_PORT"),
+		os.Getenv("DB_USER"),
+		os.Getenv("DB_PASSWORD"),
+		os.Getenv("TEST_DB_NAME"),
+	)
+
+	var err error
+	testDB, err = sql.Open("postgres", connStr)
+	if err != nil {
+		fmt.Printf("could not open test database: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := testDB.Ping(); err != nil {
+		fmt.Printf("could not connect to test database: %v\n", err)
+		os.Exit(1)
+	}
+
+	code := m.Run()
+	testDB.Close()
+	os.Exit(code)
+}
+
+type testApp struct {
+	db          *sql.DB
+	mux         *http.ServeMux
+	authHandler *AuthHandler
+	roomHandler *RoomHandler
+}
+
+func setupTestApp(t *testing.T) *testApp {
+	t.Helper()
+
+	app := &testApp{
+		db:          testDB,
+		mux:         http.NewServeMux(),
+		authHandler: &AuthHandler{DB: testDB},
+		roomHandler: &RoomHandler{
+			Services: &services.RoomService{DB: testDB},
+		},
+	}
+
+	app.mux.HandleFunc("POST /auth/register", app.authHandler.Register)
+	app.mux.HandleFunc("POST /auth/login", app.authHandler.Login)
+	app.mux.HandleFunc("POST /auth/exchange", app.authHandler.ExchangeCode)
+	app.mux.Handle("POST /rooms", auth.RequireAuth(http.HandlerFunc(app.roomHandler.CreateRoom)))
+	app.mux.Handle("GET /rooms", auth.RequireAuth(http.HandlerFunc(app.roomHandler.GetUserRooms)))
+	app.mux.Handle("GET /rooms/{id}", auth.RequireAuth(http.HandlerFunc(app.roomHandler.GetRoom)))
+
+	return app
+}
+
+func cleanTestDB(t *testing.T, db *sql.DB) {
+	t.Helper()
+	tables := []string{
+		"invite_tokens",
+		"room_members",
+		"snapshots",
+		"rooms",
+		"users",
+	}
+	for _, table := range tables {
+		if _, err := db.Exec("DELETE FROM " + table); err != nil {
+			t.Fatalf("failed to clean table %s: %v", table, err)
+		}
+	}
+}
+
+func (app *testApp) postJSON(t *testing.T, path string, body interface{}, token string) *httptest.ResponseRecorder {
+	t.Helper()
+	b, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("could not marshal request body: %v", err)
+	}
+	req := httptest.NewRequest("POST", path, bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	rr := httptest.NewRecorder()
+	app.mux.ServeHTTP(rr, req)
+	return rr
+}
+
+func (app *testApp) getJSON(t *testing.T, path string, token string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest("GET", path, nil)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	rr := httptest.NewRecorder()
+	app.mux.ServeHTTP(rr, req)
+	return rr
+}
+
+func (app *testApp) registerAndLogin(t *testing.T, email, password string) string {
+	t.Helper()
+	rr := app.postJSON(t, "/auth/register", map[string]string{
+		"email":    email,
+		"password": password,
+	}, "")
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("registerAndLogin: expected 201, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("registerAndLogin: could not decode response: %v", err)
+	}
+	return resp["token"]
+}
+
+func TestRegister_Success(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	rr := app.postJSON(t, "/auth/register", map[string]string{
+		"email":    "alice@codedock.com",
+		"password": "strongpassword",
+	}, "")
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201 Created, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("could not decode register response: %v", err)
+	}
+	if resp["token"] == "" {
+		t.Error("expected token in response, got empty string")
+	}
+	if resp["email"] != "alice@codedock.com" {
+		t.Errorf("expected email alice@codedock.com, got %s", resp["email"])
+	}
+}
+
+func TestRegister_DuplicateEmail(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	body := map[string]string{
+		"email":    "dup@codedock.com",
+		"password": "password",
+	}
+
+	first := app.postJSON(t, "/auth/register", body, "")
+	if first.Code != http.StatusCreated {
+		t.Fatalf("expected first registration to succeed, got %d — body: %s", first.Code, first.Body.String())
+	}
+
+	rr := app.postJSON(t, "/auth/register", body, "")
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("expected 409 for duplicate email, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestRegister_MissingFields(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	rr := app.postJSON(t, "/auth/register", map[string]string{
+		"email": "nopw@codedock.com",
+	}, "")
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for missing password, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestLogin_Success(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	app.postJSON(t, "/auth/register", map[string]string{
+		"email":    "bob@codedock.com",
+		"password": "mypassword",
+	}, "")
+
+	rr := app.postJSON(t, "/auth/login", map[string]string{
+		"email":    "bob@codedock.com",
+		"password": "mypassword",
+	}, "")
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("could not decode login response: %v", err)
+	}
+	if resp["token"] == "" {
+		t.Error("expected token in login response")
+	}
+}
+
+func TestLogin_WrongPassword(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	app.postJSON(t, "/auth/register", map[string]string{
+		"email":    "carol@codedock.com",
+		"password": "correctpassword",
+	}, "")
+
+	rr := app.postJSON(t, "/auth/login", map[string]string{
+		"email":    "carol@codedock.com",
+		"password": "wrongpassword",
+	}, "")
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for wrong password, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestLogin_UnknownEmail(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	rr := app.postJSON(t, "/auth/login", map[string]string{
+		"email":    "ghost@codedock.com",
+		"password": "anything",
+	}, "")
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for unknown email, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestProtectedRoute_NoToken(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	rr := app.getJSON(t, "/rooms", "")
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for missing token, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestProtectedRoute_InvalidToken(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	rr := app.getJSON(t, "/rooms", "this.is.not.a.valid.jwt")
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for invalid token, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestCreateRoom_Success(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	token := app.registerAndLogin(t, "dave@codedock.com", "password123")
+
+	rr := app.postJSON(t, "/rooms", map[string]string{
+		"name": "Backend Sprint",
+	}, token)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201 Created, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+
+	var room map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&room); err != nil {
+		t.Fatalf("could not decode room response: %v", err)
+	}
+	if room["id"] == nil || room["id"] == "" {
+		t.Error("expected room ID in response")
+	}
+	if room["name"] != "Backend Sprint" {
+		t.Errorf("expected room name 'Backend Sprint', got %v", room["name"])
+	}
+}
+
+func TestCreateRoom_EmptyName(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	token := app.registerAndLogin(t, "eve@codedock.com", "password123")
+
+	rr := app.postJSON(t, "/rooms", map[string]string{
+		"name": "",
+	}, token)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for empty room name, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestCreateRoom_NoAuth(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	rr := app.postJSON(t, "/rooms", map[string]string{
+		"name": "Secret Room",
+	}, "")
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for unauthenticated room creation, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestGetRoom_Success(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	token := app.registerAndLogin(t, "frank@codedock.com", "password123")
+
+	createRR := app.postJSON(t, "/rooms", map[string]string{
+		"name": "Design Review",
+	}, token)
+	if createRR.Code != http.StatusCreated {
+		t.Fatalf("expected room creation to succeed, got %d — body: %s", createRR.Code, createRR.Body.String())
+	}
+
+	var created map[string]interface{}
+	if err := json.NewDecoder(createRR.Body).Decode(&created); err != nil {
+		t.Fatalf("could not decode created room: %v", err)
+	}
+	roomID := created["id"].(string)
+
+	rr := app.getJSON(t, "/rooms/"+roomID, token)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+
+	var room map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&room); err != nil {
+		t.Fatalf("could not decode room response: %v", err)
+	}
+	if room["id"] != roomID {
+		t.Errorf("expected room ID %s, got %v", roomID, room["id"])
+	}
+}
+
+func TestGetRoom_NotFound(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	token := app.registerAndLogin(t, "grace@codedock.com", "password123")
+
+	rr := app.getJSON(t, "/rooms/00000000-0000-0000-0000-000000000000", token)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for non-existent room, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestGetUserRooms_Success(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	token := app.registerAndLogin(t, "henry@codedock.com", "password123")
+
+	first := app.postJSON(t, "/rooms", map[string]string{"name": "Room One"}, token)
+	if first.Code != http.StatusCreated {
+		t.Fatalf("expected first room creation to succeed, got %d — body: %s", first.Code, first.Body.String())
+	}
+
+	second := app.postJSON(t, "/rooms", map[string]string{"name": "Room Two"}, token)
+	if second.Code != http.StatusCreated {
+		t.Fatalf("expected second room creation to succeed, got %d — body: %s", second.Code, second.Body.String())
+	}
+
+	rr := app.getJSON(t, "/rooms", token)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+
+	var rooms []map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&rooms); err != nil {
+		t.Fatalf("could not decode rooms response: %v", err)
+	}
+	if len(rooms) != 2 {
+		t.Errorf("expected 2 rooms, got %d", len(rooms))
+	}
+}
+
+func TestGetUserRooms_Empty(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	token := app.registerAndLogin(t, "iris@codedock.com", "password123")
+
+	rr := app.getJSON(t, "/rooms", token)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK even with no rooms, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+
+	var rooms []map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&rooms); err != nil {
+		t.Fatalf("could not decode rooms response: %v", err)
+	}
+	if rooms == nil {
+		t.Error("expected empty array [], got null")
+	}
+	if len(rooms) != 0 {
+		t.Errorf("expected 0 rooms, got %d", len(rooms))
+	}
+}
+
+func TestExchangeCode_InvalidCode(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	rr := app.postJSON(t, "/auth/exchange", map[string]string{
+		"code": "nonexistent-code",
+	}, "")
+
+	if rr.Code != http.StatusGone {
+		t.Fatalf("expected 410 Gone for invalid code, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestExchangeCode_EmptyCode(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	rr := app.postJSON(t, "/auth/exchange", map[string]string{
+		"code": "",
+	}, "")
+
+	if rr.Code != http.StatusGone {
+		t.Fatalf("expected 410 Gone for empty code, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+}
+func TestExchangeCode_MalformedJSON(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	req := httptest.NewRequest("POST", "/auth/exchange", bytes.NewBufferString("not valid json{{{"))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	app.mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("expected 400 for malformed JSON, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestExchangeCode_MissingCodeField(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	// valid JSON but no code field
+	rr := app.postJSON(t, "/auth/exchange", map[string]string{
+		"wrong_field": "somevalue",
+	}, "")
+
+	if rr.Code != http.StatusGone {
+		t.Errorf("expected 410 for missing code field, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestExchangeCode_ValidCode(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	// step 1 — register a user to act as room creator
+	rr := app.postJSON(t, "/auth/register", map[string]string{
+		"email":    "inviter@codedock.com",
+		"password": "strongpassword",
+	}, "")
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for register, got %d", rr.Code)
+	}
+
+	var authResp map[string]string
+	if err := json.NewDecoder(rr.Body).Decode(&authResp); err != nil {
+		t.Fatalf("could not decode register response: %v", err)
+	}
+	token := authResp["token"]
+
+	// step 2 — create a room
+	roomRR := app.postJSON(t, "/rooms", map[string]string{
+		"name": "invite-test-room",
+	}, token)
+	if roomRR.Code != http.StatusCreated {
+		t.Fatalf("expected 201 for room creation, got %d — body: %s", roomRR.Code, roomRR.Body.String())
+	}
+
+	var roomResp map[string]interface{}
+	if err := json.NewDecoder(roomRR.Body).Decode(&roomResp); err != nil {
+		t.Fatalf("could not decode room response: %v", err)
+	}
+	roomID, ok := roomResp["id"].(string)
+	if !ok || roomID == "" {
+		t.Fatalf("expected room id in response, got %v", roomResp["id"])
+	}
+
+	// step 3 — get the creator's user ID from the token
+	
+	claims, err := auth.VerifyToken(token)
+	
+	if err != nil {
+		t.Fatal("could not verify token to extract user ID")
+	}
+
+	// step 4 — insert invite token directly into database
+	inviteCode := "test-valid-invite-code-001"
+	_, err = app.db.Exec(`
+		INSERT INTO invite_tokens (token, room_id, created_by, expires_at)
+		VALUES ($1, $2, $3, NOW() + INTERVAL '1 hour')
+	`, inviteCode, roomID, claims.UserID)
+	if err != nil {
+		t.Fatalf("failed to insert invite token: %v", err)
+	}
+
+	// step 5 — exchange the code
+	exchangeRR := app.postJSON(t, "/auth/exchange", map[string]string{
+		"code": inviteCode,
+	}, "")
+
+	if exchangeRR.Code != http.StatusOK {
+		t.Fatalf("expected 200 for valid code exchange, got %d — body: %s", exchangeRR.Code, exchangeRR.Body.String())
+	}
+
+	var exchangeResp map[string]string
+	if err := json.NewDecoder(exchangeRR.Body).Decode(&exchangeResp); err != nil {
+		t.Fatalf("could not decode exchange response: %v", err)
+	}
+	if exchangeResp["token"] == "" {
+		t.Error("expected token in exchange response, got empty string")
+	}
+	if exchangeResp["room_id"] != roomID {
+		t.Errorf("expected room_id %s, got %s", roomID, exchangeResp["room_id"])
+	}
+}

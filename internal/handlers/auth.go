@@ -68,6 +68,7 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		Email: req.Email,
 	})
 }
+
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	var req registerRequest
 
@@ -116,4 +117,46 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		Token: token,
 		Email: req.Email,
 	})
+}
+
+func (h *AuthHandler) ExchangeCode(w http.ResponseWriter, r *http.Request) {
+
+	var Det struct {
+		Code string `json:"code"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&Det); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	details, err := services.ExchangeInviteCode(h.DB, Det.Code)
+	if err != nil {
+		if errors.Is(err, services.ErrInviteExpired) || errors.Is(err, services.ErrInviteNotFound) {
+			http.Error(w, "invalid or expired invite code", http.StatusGone)
+			return
+		}
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	token, err := auth.GenerateToken(details.UserID, details.Email)
+	if err != nil {
+		http.Error(w, "could not generate token", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(struct {
+		Token    string `json:"token"`
+		Email    string `json:"email"`
+		RoomID   string `json:"room_id"`
+		RoomName string `json:"room_name"`
+	}{
+		Token:    token,
+		Email:    details.Email,
+		RoomID:   details.RoomID,
+		RoomName: details.RoomName,
+	})
+
 }

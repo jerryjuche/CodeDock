@@ -1,0 +1,202 @@
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(circle at top left, rgba(56, 189, 248, 0.08), transparent 28%),
+    radial-gradient(circle at top right, rgba(34, 197, 94, 0.07), transparent 24%),
+    linear-gradient(180deg, #09111b 0%, #0b1220 100%);
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.codedock-shell {
+  color: #e5edf7;
+}
+
+.codedock-title {
+  font-size: 1.9rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: #f8fbff;
+}
+
+.codedock-brand-mark {
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  color: #eaf8ff;
+  background: linear-gradient(135deg, rgba(56, 189, 248, 0.25), rgba(34, 197, 94, 0.2));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.codedock-card,
+.codedock-stat-card {
+  background: rgba(15, 23, 36, 0.86);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 1.25rem;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(12px);
+}
+
+.codedock-badge {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  color: #b9c7d8;
+  font-weight: 500;
+}
+
+.codedock-eyebrow {
+  display: inline-block;
+  padding: 0.45rem 0.8rem;
+  border-radius: 999px;
+  background: rgba(56, 189, 248, 0.12);
+  color: #bfe9ff;
+  border: 1px solid rgba(56, 189, 248, 0.18);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.codedock-rate {
+  font-size: 3rem;
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: -0.05em;
+  margin-top: 0.35rem;
+}
+
+.codedock-progress {
+  height: 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.codedock-stat-label {
+  color: #7e91a8;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.85rem;
+}
+
+.codedock-stat-value {
+  font-size: 2.35rem;
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  margin-bottom: 0.55rem;
+}
+
+.codedock-runtime {
+  font-size: 1.7rem;
+}
+
+.codedock-border {
+  border-color: rgba(148, 163, 184, 0.12) !important;
+}
+
+.codedock-result-row {
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+}
+
+.codedock-result-row:last-child {
+  border-bottom: 0;
+}
+
+.codedock-result-row.is-pass {
+  background-image: linear-gradient(90deg, rgba(34, 197, 94, 0.04), transparent 16%);
+}
+
+.codedock-result-row.is-fail {
+  background-image: linear-gradient(90deg, rgba(239, 68, 68, 0.07), transparent 18%);
+}
+
+.codedock-status-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 1rem;
+}
+
+.status-pass {
+  background: rgba(34, 197, 94, 0.14);
+  color: #22c55e;
+  border: 1px solid rgba(34, 197, 94, 0.18);
+}
+
+.status-fail {
+  background: rgba(239, 68, 68, 0.14);
+  color: #ef4444;
+  border: 1px solid rgba(239, 68, 68, 0.18);
+}
+
+.codedock-category {
+  background: rgba(255, 255, 255, 0.05);
+  color: #b7c6d8;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.codedock-time {
+  color: #a9b8cb;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.84rem;
+  min-width: 72px;
+  text-align: right;
+}
+
+.codedock-failure {
+  background: rgba(239, 68, 68, 0.09);
+  border: 1px solid rgba(239, 68, 68, 0.16);
+  border-radius: 1rem;
+  padding: 1rem 1rem 0.95rem;
+}
+
+.codedock-failure-label {
+  color: #ffb6c1;
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.codedock-failure pre {
+  color: #ffd7de;
+  font-size: 0.8rem;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: "JetBrains Mono", monospace;
+}
+
+@media (max-width: 768px) {
+  .codedock-title {
+    font-size: 1.45rem;
+  }
+
+  .codedock-rate {
+    font-size: 2.4rem;
+  }
+
+  .codedock-stat-value {
+    font-size: 2rem;
+  }
+
+  .codedock-time {
+    text-align: left;
+  }
+}
