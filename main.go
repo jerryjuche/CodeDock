@@ -80,6 +80,7 @@ func connectDB() (*sql.DB, error) {
     }
 
 	
+
     connStr := fmt.Sprintf(
         "host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
         host, port, user, password, dbname, sslmode,
