@@ -1,0 +1,1158 @@
+============================================================
+CodeDock Debug Bundle
+Generated at: 2026-04-22T13:22:31+01:00
+Project root: /home/gamp/Desktop/CodeDock
+============================================================
+
+## Directory snapshot
+
+### extension/src
+extension/src/api.ts
+extension/src/auth.ts
+extension/src/chat.ts
+extension/src/cursor-manager.ts
+extension/src/extension.ts
+extension/src/protocol.ts
+extension/src/types.ts
+extension/src/utils.ts
+extension/src/websocket.ts
+extension/src/yjs-sync.ts
+
+### internal
+internal/auth/jwt.go
+internal/auth/jwt_test.go
+internal/auth/middleware.go
+internal/handlers/auth.go
+internal/handlers/integration_test.go
+internal/handlers/rooms.go
+internal/handlers/ws.go
+internal/hub/client.go
+internal/hub/hub.go
+internal/hub/hub_test.go
+internal/hub/message.go
+internal/services/invite.go
+internal/services/invite_test.go
+internal/services/room_service_test.go
+internal/services/rooms.go
+internal/services/snapshots.go
+internal/services/snapshot_test.go
+internal/services/users.go
+internal/services/users_test.go
+
+### migration
+migration/001_create_extensions.sql
+migration/002_create_enums.sql
+migration/003_create_users.sql
+migration/004_create_trigger_function.sql
+migration/005_create_rooms.sql
+migration/006_create_room_members.sql
+migration/007_create_snapshots.sql
+migration/008_create_invite_tokens.sql
+
+============================================================
+## Targeted file contents
+============================================================
+
+------------------------------------------------------------
+FILE: extension/src/yjs-sync.ts
+------------------------------------------------------------
+// extension/src/yjs-sync.ts
+
+import * as Y from 'yjs'
+import * as vscode from 'vscode'
+import { WebSocketManager } from './websocket'
+import { encodeSyncPayload, decodeSyncPayload } from './protocol'
+import { debounce } from './utils'
+import { SyncPayload } from './types'
+
+const DEBOUNCE_MS = 200
+
+export class YjsSync {
+    // one Y.Doc per open file, keyed by file path
+    private docs: Map<string, Y.Doc> = new Map()
+
+    // prevents infinite loop when applying remote updates
+    private isApplyingRemoteUpdate: boolean = false
+
+    // tracks VS Code event listener disposables per file
+    private listeners: Map<string, vscode.Disposable> = new Map()
+
+    private active: boolean = false
+
+    constructor(private readonly wsManager: WebSocketManager) {
+        // register this instance as the message handler
+        this.wsManager.onMessage((data) => this.handleIncoming(data))
+    }
+
+    // --- Public API ---
+
+    activate(): void {
+        this.active = true
+
+        // bind any already-open editors
+        vscode.window.visibleTextEditors.forEach((editor) => {
+            this.bindDocument(editor.document)
+        })
+
+        // bind new editors as they open
+        vscode.workspace.onDidOpenTextDocument((doc) => {
+            if (this.active) {
+                this.bindDocument(doc)
+            }
+        })
+
+        // clean up when files close
+        vscode.workspace.onDidCloseTextDocument((doc) => {
+            this.unbindDocument(doc.uri.fsPath)
+        })
+    }
+
+    dispose(): void {
+        this.active = false
+
+        // clean up all listeners
+        for (const disposable of this.listeners.values()) {
+            disposable.dispose()
+        }
+        this.listeners.clear()
+
+        // clean up all docs
+        for (const doc of this.docs.values()) {
+            doc.destroy()
+        }
+        this.docs.clear()
+    }
+
+    // --- Document Binding ---
+
+    private bindDocument(document: vscode.TextDocument): void {
+        const filePath = document.uri.fsPath
+
+        // skip if already bound
+        if (this.docs.has(filePath)) {
+            return
+        }
+
+        // skip non-file documents — output panels, git diffs, etc
+        if (document.uri.scheme !== 'file') {
+            return
+        }
+
+        // create a new Y.Doc for this file
+        const ydoc = new Y.Doc()
+        this.docs.set(filePath, ydoc)
+
+        // initialise Y.Text with current file content
+        const ytext = ydoc.getText('content')
+        ydoc.transact(() => {
+            ytext.insert(0, document.getText())
+        })
+
+        // watch for local changes — debounced to batch rapid keystrokes
+        const debouncedSend = debounce((update: Uint8Array) => {
+            const payload = encodeSyncPayload(filePath, update)
+            this.wsManager.send(payload)
+        }, DEBOUNCE_MS)
+
+        // listen for Yjs document updates caused by local changes
+        ydoc.on('update', (update: Uint8Array, origin: unknown) => {
+            // origin === null means local change
+            // skip if this update came from a remote apply
+            if (origin !== null || this.isApplyingRemoteUpdate) {
+                return
+            }
+            debouncedSend(update)
+        })
+
+        // watch VS Code text document changes
+        const listener = vscode.workspace.onDidChangeTextDocument((event) => {
+            if (event.document.uri.fsPath !== filePath) {
+                return
+            }
+
+            if (this.isApplyingRemoteUpdate) {
+                return
+            }
+
+            // translate VS Code changes into Yjs operations
+            ydoc.transact(() => {
+                for (const change of event.contentChanges) {
+                    const start = change.rangeOffset
+                    const deleteCount = change.rangeLength
+                    const insertText = change.text
+
+                    if (deleteCount > 0) {
+                        ytext.delete(start, deleteCount)
+                    }
+                    if (insertText.length > 0) {
+                        ytext.insert(start, insertText)
+                    }
+                }
+            }, null) // null origin = local change
+        })
+
+        this.listeners.set(filePath, listener)
+    }
+
+    private unbindDocument(filePath: string): void {
+        // dispose the VS Code listener
+        const listener = this.listeners.get(filePath)
+        if (listener) {
+            listener.dispose()
+            this.listeners.delete(filePath)
+        }
+
+        // destroy the Y.Doc and remove from map
+        const ydoc = this.docs.get(filePath)
+        if (ydoc) {
+            ydoc.destroy()
+            this.docs.delete(filePath)
+        }
+    }
+
+    // --- Incoming Message Handling ---
+
+    private handleIncoming(data: Uint8Array): void {
+        const payload = decodeSyncPayload(data)
+
+        if (!payload) {
+            return
+        }
+
+        this.applyRemoteUpdate(payload)
+    }
+
+    private applyRemoteUpdate(payload: SyncPayload): void {
+        const { filePath, update } = payload
+
+        // get or create Y.Doc for this file path
+        let ydoc = this.docs.get(filePath)
+        if (!ydoc) {
+            ydoc = new Y.Doc()
+            this.docs.set(filePath, ydoc)
+        }
+
+        // set guard — prevents local change handler from firing
+        this.isApplyingRemoteUpdate = true
+
+        try {
+            Y.applyUpdate(ydoc, update)
+
+            // patch the visible editor if this file is open
+            this.patchEditor(filePath, ydoc)
+
+        } finally {
+            // always clear guard — even if patch throws
+            this.isApplyingRemoteUpdate = false
+        }
+    }
+
+    private patchEditor(filePath: string, ydoc: Y.Doc): void {
+        const editor = vscode.window.visibleTextEditors.find(
+            (e) => e.document.uri.fsPath === filePath
+        )
+
+        if (!editor) {
+            return
+        }
+
+        const ytext = ydoc.getText('content')
+        const newContent = ytext.toString()
+        const currentContent = editor.document.getText()
+
+        if (newContent === currentContent) {
+            return
+        }
+
+        const fullRange = new vscode.Range(
+            editor.document.positionAt(0),
+            editor.document.positionAt(currentContent.length)
+        )
+
+        editor.edit((editBuilder) => {
+            editBuilder.replace(fullRange, newContent)
+        })
+    }
+}
+------------------------------------------------------------
+FILE: extension/src/cursor-manager.ts
+------------------------------------------------------------
+import * as vscode from "vscode";
+import { WebSocketManager } from "./websocket";
+import {
+  encodeAwarenessPayload,
+  decodeAwarenessPayload,
+  MessageType,
+} from "./protocol";
+import { throttle, colorFromUserId } from "./utils";
+import { AwarenessState } from "./types";
+
+const THROTTLE_MS = 50;
+const STALE_CURSOR_MS = 5000;
+const CLEANUP_INTERVAL_MS = 1000;
+
+export class CursorManager {
+  // one decoration type per remote user — never recreated
+  private decorations: Map<string, vscode.TextEditorDecorationType> = new Map();
+
+  // last known awareness state per remote user
+  private states: Map<string, AwarenessState> = new Map();
+
+  // last seen timestamp per remote user
+  private lastSeen: Map<string, number> = new Map();
+
+  // interval that checks for stale cursors
+  private cleanupTimer: NodeJS.Timeout | null = null;
+
+  private active: boolean = false;
+  private localUserId: string = "";
+  private localEmail: string = "";
+
+  constructor(private readonly wsManager: WebSocketManager) {
+    this.wsManager.onMessage((data) => this.handleIncoming(data));
+  }
+
+  // --- Public API ---
+
+  activate(userId: string, email: string): void {
+    this.active = true;
+    this.localUserId = userId;
+    this.localEmail = email;
+
+    // watch local cursor movements — throttled to 50ms
+    const throttledSend = throttle(() => {
+      this.sendLocalAwareness();
+    }, THROTTLE_MS);
+
+    vscode.window.onDidChangeTextEditorSelection(() => {
+      if (this.active) {
+        throttledSend();
+      }
+    });
+
+    // start stale cursor cleanup loop
+    this.cleanupTimer = setInterval(() => {
+      this.removeStalecursors();
+    }, CLEANUP_INTERVAL_MS);
+  }
+
+  dispose(): void {
+    this.active = false;
+
+    // stop cleanup loop
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
+
+    // dispose all decoration types
+    for (const decoration of this.decorations.values()) {
+      decoration.dispose();
+    }
+    this.decorations.clear();
+    this.states.clear();
+    this.lastSeen.clear();
+  }
+
+  // --- Local Awareness ---
+
+  private sendLocalAwareness(): void {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+      return;
+    }
+
+    const position = editor.selection.active;
+    const anchor = editor.selection.anchor;
+
+    const state: AwarenessState = {
+      userId: this.localUserId,
+      email: this.localEmail,
+      cursor: {
+        line: position.line,
+        character: position.character,
+      },
+      selection: {
+        anchor: { line: anchor.line, character: anchor.character },
+        active: { line: position.line, character: position.character },
+      },
+    };
+
+    const payload = encodeAwarenessPayload(state);
+    this.wsManager.send(payload);
+  }
+
+  // --- Incoming Awareness ---
+
+  private handleIncoming(data: Uint8Array): void {
+    // only handle awareness messages
+    if (data[0] !== MessageType.AWARENESS) {
+      return;
+    }
+
+    const state = decodeAwarenessPayload<AwarenessState>(data);
+    if (!state || !state.userId) {
+      return;
+    }
+
+    // ignore own awareness messages
+    if (state.userId === this.localUserId) {
+      return;
+    }
+
+    // update last seen timestamp
+    this.lastSeen.set(state.userId, Date.now());
+    this.states.set(state.userId, state);
+
+    // render the cursor
+    this.renderCursor(state);
+  }
+
+  // --- Cursor Rendering ---
+
+  private renderCursor(state: AwarenessState): void {
+    if (!state.cursor) {
+      return;
+    }
+
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+      return;
+    }
+
+    // get or create decoration type for this user
+    let decorationType = this.decorations.get(state.userId);
+    if (!decorationType) {
+      const color = colorFromUserId(state.userId);
+      decorationType = vscode.window.createTextEditorDecorationType({
+        borderWidth: "0 0 0 2px",
+        borderStyle: "solid",
+        borderColor: color,
+        after: {
+          contentText: ` ${state.email}`,
+          color: color,
+          fontStyle: "normal",
+          fontWeight: "normal",
+        },
+      });
+      this.decorations.set(state.userId, decorationType);
+    }
+
+    // build the decoration range — cursor is a single position
+    const position = new vscode.Position(
+      state.cursor.line,
+      state.cursor.character,
+    );
+    const range = new vscode.Range(position, position);
+
+    // apply decoration to the active editor
+    editor.setDecorations(decorationType, [range]);
+  }
+
+  // --- Stale Cursor Cleanup ---
+
+  private removeStalecursors(): void {
+    const now = Date.now();
+
+    for (const [userId, timestamp] of this.lastSeen.entries()) {
+      if (now - timestamp > STALE_CURSOR_MS) {
+        this.removeCursor(userId);
+      }
+    }
+  }
+
+  private removeCursor(userId: string): void {
+    // clear the decoration from all visible editors
+    const decoration = this.decorations.get(userId);
+    if (decoration) {
+      vscode.window.visibleTextEditors.forEach((editor) => {
+        editor.setDecorations(decoration, []);
+      });
+      decoration.dispose();
+      this.decorations.delete(userId);
+    }
+
+    this.states.delete(userId);
+    this.lastSeen.delete(userId);
+  }
+}
+
+------------------------------------------------------------
+FILE: extension/src/extension.ts
+------------------------------------------------------------
+import * as vscode from "vscode";
+import { EventEmitter } from "events";
+import { AuthManager } from "./auth";
+import { ApiClient } from "./api";
+import { WebSocketManager } from "./websocket";
+import { YjsSync } from "./yjs-sync";
+import { CursorManager } from "./cursor-manager";
+import { ChatManager } from "./chat";
+
+let authManager: AuthManager;
+let wsManager: WebSocketManager;
+let yjsSync: YjsSync;
+let cursorManager: CursorManager;
+let chatManager: ChatManager;
+let apiClient: ApiClient;
+
+export async function activate(
+  context: vscode.ExtensionContext,
+): Promise<void> {
+  const config = vscode.workspace.getConfiguration("codedock");
+  const serverUrl = config.get<string>("serverUrl", "http://localhost:8080");
+
+  // output channel for safe diagnostics — no secrets ever logged here
+  const outputChannel = vscode.window.createOutputChannel("CodeDock");
+  context.subscriptions.push(outputChannel);
+
+  // shared event emitter — auth announces login/logout, others listen
+  const emitter = new EventEmitter();
+
+  // wire dependencies — office manager hands out keys
+  apiClient = new ApiClient(serverUrl);
+  authManager = new AuthManager(context.secrets, apiClient, emitter);
+  wsManager = new WebSocketManager(serverUrl, outputChannel);
+  yjsSync = new YjsSync(wsManager);
+  cursorManager = new CursorManager(wsManager);
+  chatManager = new ChatManager(context, wsManager);
+
+  // observer — when login fires, activate collaboration features
+  emitter.on("login", (token: string, email: string) => {
+    cursorManager.activate(token, email);
+    chatManager.activate(token, email);
+  });
+
+  // observer — when logout fires, disconnect everything
+  emitter.on("logout", () => {
+    wsManager.disconnect("logout");
+    yjsSync.dispose();
+    cursorManager.dispose();
+    chatManager.dispose();
+  });
+
+  // register all commands into context.subscriptions
+  // VS Code disposes these automatically on deactivation
+  context.subscriptions.push(
+    vscode.commands.registerCommand("codedock.login", () =>
+      authManager.login(),
+    ),
+    vscode.commands.registerCommand("codedock.logout", () =>
+      authManager.logout(),
+    ),
+    vscode.commands.registerCommand("codedock.joinRoom", () =>
+      handleJoinRoom(),
+    ),
+    vscode.commands.registerCommand("codedock.createRoom", () =>
+      handleCreateRoom(),
+    ),
+    vscode.commands.registerCommand("codedock.openChat", () =>
+      chatManager.open(),
+    ),
+    vscode.commands.registerCommand("codedock.disconnectRoom", () =>
+      wsManager.disconnect("user"),
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.window.registerUriHandler({
+      handleUri(uri: vscode.Uri): void {
+        outputChannel.appendLine(`URI received: ${uri.toString()}`);
+
+        const params = new URLSearchParams(uri.query);
+        const code = params.get("code");
+        const roomId = params.get("room_id");
+
+        outputChannel.appendLine(`code: ${code}`);
+        outputChannel.appendLine(`room_id: ${roomId}`);
+
+        vscode.window.showInformationMessage(
+          `Deep link received — code: ${code}, room: ${roomId}`,
+        );
+      },
+    }),
+  );
+
+  // restore session or prompt login on startup
+  await restoreSession();
+}
+
+async function restoreSession(): Promise<void> {
+  const token = await authManager.getToken();
+
+  if (!token) {
+    vscode.window.showInformationMessage(
+      'CodeDock: Not logged in. Run "CodeDock: Login" to start.',
+    );
+    return;
+  }
+
+  const valid = await authManager.validateToken();
+
+  if (!valid) {
+    vscode.window
+      .showWarningMessage(
+        "CodeDock: Session expired. Please log in again.",
+        "Login",
+      )
+      .then((selection) => {
+        if (selection === "Login") {
+          authManager.login();
+        }
+      });
+    return;
+  }
+
+  vscode.window.showInformationMessage("CodeDock: Session restored.");
+}
+
+async function handleJoinRoom(): Promise<void> {
+  const token = await authManager.getToken();
+
+  if (!token) {
+    vscode.window.showErrorMessage(
+      "CodeDock: You must be logged in to join a room.",
+    );
+    return;
+  }
+
+  const roomId = await vscode.window.showInputBox({
+    prompt: "Enter Room ID",
+    placeHolder: "e.g. 550e8400-e29b-41d4-a716-446655440000",
+    ignoreFocusOut: true,
+    validateInput: (value) =>
+      value.trim().length === 0 ? "Room ID cannot be empty" : null,
+  });
+
+  if (!roomId) {
+    return;
+  }
+
+  await wsManager.connect(token, roomId.trim());
+  yjsSync.activate();
+}
+
+async function handleCreateRoom(): Promise<void> {
+  const token = await authManager.getToken();
+
+  if (!token) {
+    vscode.window.showErrorMessage(
+      "CodeDock: You must be logged in to create a room.",
+    );
+    return;
+  }
+
+  const roomName = await vscode.window.showInputBox({
+    prompt: "Enter a name for your room",
+    placeHolder: "e.g. my-project",
+    ignoreFocusOut: true,
+    validateInput: (value) =>
+      value.trim().length === 0 ? "Room name cannot be empty" : null,
+  });
+
+  if (!roomName) {
+    return;
+  }
+
+  try {
+    const room = await apiClient.createRoom(token, roomName.trim());
+    vscode.window.showInformationMessage(
+      `CodeDock: Room "${room.name}" created. ID: ${room.id}`,
+    );
+    await wsManager.connect(token, room.id);
+    yjsSync.activate();
+  } catch (err) {
+    vscode.window.showErrorMessage(
+      `CodeDock: Failed to create room — ${err instanceof Error ? err.message : "unknown error"}`,
+    );
+  }
+}
+
+export function deactivate(): void {
+  wsManager?.disconnect("extension_deactivated");
+  yjsSync?.dispose();
+  cursorManager?.dispose();
+  chatManager?.dispose();
+}
+
+------------------------------------------------------------
+FILE: extension/src/chat.ts
+------------------------------------------------------------
+// extension/src/chat.ts
+
+import * as vscode from 'vscode'
+import { WebSocketManager } from './websocket'
+import { encodeChatPayload, decodeChatPayload, MessageType } from './protocol'
+import { ChatMessage } from './types'
+
+export class ChatManager {
+    // single panel instance — revealed if exists, created if not
+    private panel: vscode.WebviewPanel | null = null
+    private messages: ChatMessage[] = []
+    private localUserId: string = ''
+    private localEmail: string = ''
+
+    constructor(
+        private readonly context: vscode.ExtensionContext,
+        private readonly wsManager: WebSocketManager
+    ) {
+        this.wsManager.onMessage((data) => this.handleIncoming(data))
+    }
+
+    // --- Public API ---
+
+    activate(userId: string, email: string): void {
+        this.localUserId = userId
+        this.localEmail = email
+    }
+
+    open(): void {
+        // reveal existing panel instead of creating a new one
+        if (this.panel) {
+            this.panel.reveal(vscode.ViewColumn.Beside)
+            return
+        }
+
+        // create panel — sandboxed webview
+        this.panel = vscode.window.createWebviewPanel(
+            'codedockChat',
+            'CodeDock Chat',
+            vscode.ViewColumn.Beside,
+            {
+                enableScripts: true,
+                retainContextWhenHidden: true
+            }
+        )
+
+        // render initial HTML
+        this.panel.webview.html = this.buildHtml()
+
+        // handle messages from the webview — user sending chat
+        this.panel.webview.onDidReceiveMessage((message) => {
+            if (message.type === 'send' && typeof message.content === 'string') {
+                this.sendMessage(message.content.trim())
+            }
+        })
+
+        // clean up when panel is closed by user
+        this.panel.onDidDispose(() => {
+            this.panel = null
+        })
+    }
+
+    dispose(): void {
+        this.panel?.dispose()
+        this.panel = null
+    }
+
+    // --- Outbound ---
+
+    private sendMessage(content: string): void {
+        if (!content) {
+            return
+        }
+
+        const message: ChatMessage = {
+            id: crypto.randomUUID(),
+            userId: this.localUserId,
+            email: this.localEmail,
+            content,
+            timestamp: Date.now()
+        }
+
+        const payload = encodeChatPayload(message)
+        this.wsManager.send(payload)
+
+        // render own message immediately — optimistic update
+        this.appendMessage(message)
+    }
+
+    // --- Inbound ---
+
+    private handleIncoming(data: Uint8Array): void {
+        if (data[0] !== MessageType.CHAT) {
+            return
+        }
+
+        const message = decodeChatPayload<ChatMessage>(data)
+        if (!message || !message.userId || !message.content) {
+            return
+        }
+
+        // skip own messages — already rendered optimistically
+        if (message.userId === this.localUserId) {
+            return
+        }
+
+        this.appendMessage(message)
+    }
+
+    private appendMessage(message: ChatMessage): void {
+        this.messages.push(message)
+
+        if (!this.panel) {
+            return
+        }
+
+        // send to webview — sanitized before rendering
+        this.panel.webview.postMessage({
+            type: 'append',
+            message: {
+                email: this.sanitize(message.email),
+                content: this.sanitize(message.content),
+                timestamp: message.timestamp
+            }
+        })
+    }
+
+    // --- Security ---
+
+    private sanitize(text: string): string {
+        return text
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;')
+    }
+
+    // --- Webview HTML ---
+
+    private buildHtml(): string {
+        return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'none'; script-src 'nonce-codedock'; style-src 'unsafe-inline';">
+    <title>CodeDock Chat</title>
+    <style>
+        body {
+            font-family: var(--vscode-font-family);
+            font-size: var(--vscode-font-size);
+            color: var(--vscode-foreground);
+            background: var(--vscode-editor-background);
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        #messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px;
+        }
+        .message {
+            margin-bottom: 10px;
+        }
+        .message .author {
+            font-weight: bold;
+            color: var(--vscode-textLink-foreground);
+            font-size: 0.85em;
+        }
+        .message .time {
+            color: var(--vscode-descriptionForeground);
+            font-size: 0.75em;
+            margin-left: 6px;
+        }
+        .message .content {
+            margin-top: 2px;
+            word-break: break-word;
+        }
+        #input-row {
+            display: flex;
+            padding: 8px;
+            gap: 8px;
+            border-top: 1px solid var(--vscode-panel-border);
+        }
+        #input {
+            flex: 1;
+            background: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
+            border: 1px solid var(--vscode-input-border);
+            padding: 6px 8px;
+            font-size: var(--vscode-font-size);
+            font-family: var(--vscode-font-family);
+        }
+        #send {
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border: none;
+            padding: 6px 14px;
+            cursor: pointer;
+        }
+        #send:hover {
+            background: var(--vscode-button-hoverBackground);
+        }
+    </style>
+</head>
+<body>
+    <div id="messages"></div>
+    <div id="input-row">
+        <input id="input" type="text" placeholder="Type a message..." />
+        <button id="send">Send</button>
+    </div>
+    <script nonce="codedock">
+        const vscode = acquireVsCodeApi();
+        const messagesEl = document.getElementById('messages');
+        const inputEl = document.getElementById('input');
+        const sendEl = document.getElementById('send');
+
+        function formatTime(ts) {
+            return new Date(ts).toLocaleTimeString([], {
+                hour: '2-digit', minute: '2-digit'
+            });
+        }
+
+        function appendMessage(msg) {
+            const div = document.createElement('div');
+            div.className = 'message';
+            // content is already sanitized by the extension host
+            div.innerHTML =
+                '<div class="author">' + msg.email +
+                '<span class="time">' + formatTime(msg.timestamp) + '</span></div>' +
+                '<div class="content">' + msg.content + '</div>';
+            messagesEl.appendChild(div);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+
+        function send() {
+            const content = inputEl.value.trim();
+            if (!content) return;
+            vscode.postMessage({ type: 'send', content });
+            inputEl.value = '';
+        }
+
+        sendEl.addEventListener('click', send);
+        inputEl.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') send();
+        });
+
+        window.addEventListener('message', (event) => {
+            const msg = event.data;
+            if (msg.type === 'append') {
+                appendMessage(msg.message);
+            }
+        });
+    </script>
+</body>
+</html>`
+    }
+}
+
+------------------------------------------------------------
+FILE: extension/package.json
+------------------------------------------------------------
+{
+  "name": "codedock",
+  "displayName": "CodeDock",
+  "description": "Self-hosted real-time collaborative coding for VS Code",
+  "version": "0.1.2",
+  "publisher": "jerryjuche",
+  "license": "MIT",
+  "icon": "images/codedock.jpg",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jerryjuche/CodeDock.git"
+  },
+  "homepage": "https://github.com/jerryjuche/CodeDock",
+  "bugs": {
+    "url": "https://github.com/jerryjuche/CodeDock/issues"
+  },
+  "keywords": [
+    "collaboration",
+    "realtime",
+    "coding",
+    "crdt",
+    "yjs",
+    "pair-programming",
+    "self-hosted"
+  ],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "codedock.login",
+        "title": "Login",
+        "category": "CodeDock"
+      },
+      {
+        "command": "codedock.logout",
+        "title": "Logout",
+        "category": "CodeDock"
+      },
+      {
+        "command": "codedock.joinRoom",
+        "title": "Join Room",
+        "category": "CodeDock"
+      },
+      {
+        "command": "codedock.createRoom",
+        "title": "Create Room",
+        "category": "CodeDock"
+      },
+      {
+        "command": "codedock.openChat",
+        "title": "Open Chat",
+        "category": "CodeDock"
+      },
+      {
+        "command": "codedock.disconnectRoom",
+        "title": "Disconnect from Room",
+        "category": "CodeDock"
+      }
+    ],
+    "configuration": {
+      "title": "CodeDock",
+      "properties": {
+        "codedock.serverUrl": {
+          "type": "string",
+          "default": "https://codedock.fly.dev",
+          "description": "Base URL of the CodeDock backend server",
+          "scope": "application"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc --noEmit && node esbuild.js",
+    "watch": "tsc -watch -p ./",
+    "build": "node esbuild.js",
+    "lint": "eslint src --ext ts"
+  },
+  "dependencies": {
+    "yjs": "^13.6.30"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.28.0",
+    "typescript": "^5.9.3"
+  }
+}
+
+------------------------------------------------------------
+FILE: go.mod
+------------------------------------------------------------
+module github.com/jerryjuche/CodeDock
+
+go 1.25.0
+
+require (
+	github.com/golang-jwt/jwt/v5 v5.3.1
+	github.com/joho/godotenv v1.5.1
+	github.com/lib/pq v1.12.0
+	golang.org/x/crypto v0.49.0
+)
+
+require github.com/gorilla/websocket v1.5.3
+
+------------------------------------------------------------
+FILE: main.go
+------------------------------------------------------------
+package main
+
+import (
+	"database/sql"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	
+
+	"github.com/jerryjuche/CodeDock/internal/auth"
+	"github.com/jerryjuche/CodeDock/internal/handlers"
+	"github.com/jerryjuche/CodeDock/internal/hub"
+	"github.com/jerryjuche/CodeDock/internal/services"
+	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
+)
+
+func main() {
+
+	if err := godotenv.Overload(); err != nil {
+		log.Println("no .env file found, reading from system environment")
+	}
+
+	db, err := connectDB()
+	if err != nil {
+		log.Fatalf("could not connect to database, %s", err)
+		return
+	}
+	defer db.Close()
+	log.Println("connected to database successfully")
+
+	snapshotStore := &services.DBSnapshotStore{DB: db}
+
+	// Initialise the Hub — central registry for all WebSocket connections
+	h := hub.New(snapshotStore)
+
+	authHandler := &handlers.AuthHandler{DB: db}
+	roomService := &services.RoomService{DB: db}
+	roomHandler := &handlers.RoomHandler{Services: roomService}
+
+	mux := http.NewServeMux()
+
+	// Auth routes
+	mux.HandleFunc("POST /auth/register", authHandler.Register)
+	mux.HandleFunc("POST /auth/login", authHandler.Login)
+	mux.HandleFunc("POST /auth/exchange", authHandler.ExchangeCode)
+
+	// Room routes — protected
+	mux.Handle("POST /rooms", auth.RequireAuth(http.HandlerFunc(roomHandler.CreateRoom)))
+	mux.Handle("GET /rooms", auth.RequireAuth(http.HandlerFunc(roomHandler.GetUserRooms)))
+	mux.Handle("GET /rooms/{id}", auth.RequireAuth(http.HandlerFunc(roomHandler.GetRoom)))
+	
+
+	// WebSocket route — auth handled inside the handler via query param
+	mux.HandleFunc("GET /ws", handlers.ServeWS(h))
+
+	port := os.Getenv("PORT")
+	
+	if port == "" {
+		port = "8080"
+	}
+
+	log.Printf("codedock server starting on port: %s", port)
+	if err := http.ListenAndServe(":"+port, mux); err != nil {
+		log.Fatalf("error, server failed to start up, %s", err)
+		return
+	}
+}
+
+func connectDB() (*sql.DB, error) {
+    host := os.Getenv("DB_HOST")
+    port := os.Getenv("DB_PORT")
+    user := os.Getenv("DB_USER")
+    password := os.Getenv("DB_PASSWORD")
+    dbname := os.Getenv("DB_NAME")
+    sslmode := os.Getenv("DB_SSLMODE")
+    if sslmode == "" {
+        sslmode = "disable" // safe local default
+    }
+
+    connStr := fmt.Sprintf(
+        "host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+        host, port, user, password, dbname, sslmode,
+    )
+
+    db, err := sql.Open("postgres", connStr)
+    if err != nil {
+        return nil, err
+    }
+    if err := db.Ping(); err != nil {
+        return nil, err
+    }
+    return db, nil
+}
