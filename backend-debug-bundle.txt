@@ -1,0 +1,376 @@
+------------------------------------------------------------
+FILE: internal/handlers/ws.go
+------------------------------------------------------------
+package handlers
+
+import (
+	"net/http"
+
+	"github.com/gorilla/websocket"
+	"github.com/jerryjuche/CodeDock/internal/auth"
+	"github.com/jerryjuche/CodeDock/internal/hub"
+)
+
+// upgrader converts an HTTP connection into a WebSocket connection.
+// CheckOrigin returns true to allow all origins during development.
+// Lock this down before production.
+var upgrader = websocket.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
+	CheckOrigin: func(r *http.Request) bool {
+		return true
+	},
+}
+
+type WSHandler struct {
+	Hub *hub.Hub
+	DB  interface {
+		QueryRow(query string, args ...any) interface {
+			Scan(dest ...any) error
+		}
+	}
+}
+
+// ServeWS handles incoming WebSocket connection requests.
+// Flow:
+//  1. Validate JWT from query param
+//  2. Validate room_id from query param
+//  3. Upgrade HTTP → WebSocket
+//  4. Register client with Hub
+//  5. Launch readPump and writePump goroutines
+func ServeWS(h *hub.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Step 1 — validate JWT from query param
+		// WebSocket connections cannot send headers after the handshake,
+		// so the token travels as a query parameter instead
+		tokenStr := r.URL.Query().Get("token")
+		if tokenStr == "" {
+			http.Error(w, "missing token", http.StatusUnauthorized)
+			return
+		}
+
+		claims, err := auth.VerifyToken(tokenStr)
+		if err != nil {
+			http.Error(w, "invalid token", http.StatusUnauthorized)
+			return
+		}
+
+		// Step 2 — validate room_id
+		roomID := r.URL.Query().Get("room_id")
+		if roomID == "" {
+			http.Error(w, "missing room_id", http.StatusBadRequest)
+			return
+		}
+
+		// Step 3 — upgrade HTTP connection to WebSocket
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			// Upgrade writes its own error response on failure
+			return
+		}
+
+		// Step 4 — create client and register with Hub
+		client := &hub.Client{
+			Conn:   conn,
+			Send:   make(chan []byte, 256),
+			RoomID: roomID,
+			UserID: claims.UserID,
+		}
+		h.Register(client)
+
+		// Step 5 — launch goroutines
+		// writePump runs in a goroutine — it blocks on the send channel
+		// readPump runs in the current goroutine — it blocks on the connection
+		go client.WritePump()
+		client.ReadPump(h)
+	}
+}
+
+------------------------------------------------------------
+FILE: internal/hub/client.go
+------------------------------------------------------------
+package hub
+
+import (
+	"log"
+	"time"
+
+	"github.com/gorilla/websocket"
+)
+
+const (
+	// Time allowed to write a message to the client
+	writeWait = 10 * time.Second
+
+	// Time allowed to read the next message from the client
+	pongWait = 60 * time.Second
+
+	// Send pings to client with this period — must be less than pongWait
+	pingPeriod = (pongWait * 9) / 10
+
+	// Maximum message size allowed from client
+	maxMessageSize = 512 * 1024 // 512KB
+)
+
+// ReadPump reads messages from the WebSocket connection and broadcasts them.
+// This runs in its own goroutine per client.
+// When this goroutine exits, the client is unregistered from the Hub.
+func (c *Client) ReadPump(h *Hub) {
+	defer func() {
+		h.Unregister(c)
+		c.Conn.Close()
+	}()
+
+	c.Conn.SetReadLimit(maxMessageSize)
+	c.Conn.SetReadDeadline(time.Now().Add(pongWait))
+	c.Conn.SetPongHandler(func(string) error {
+		c.Conn.SetReadDeadline(time.Now().Add(pongWait))
+		return nil
+	})
+
+	for {
+		_, raw, err := c.Conn.ReadMessage()
+		if err != nil {
+			if websocket.IsUnexpectedCloseError(err,
+				websocket.CloseGoingAway,
+				websocket.CloseAbnormalClosure,
+			) {
+				log.Printf("websocket error: %v", err)
+			}
+			break
+		}
+
+		// Every valid message must have at least a type byte
+		if len(raw) < 2 {
+			continue
+		}
+
+		msg := Message{
+			Type:    raw[0],
+			Payload: raw[1:],
+			Sender:  c,
+		}
+
+		h.Route(msg)
+	}
+}
+
+// WritePump reads from the client's send channel and writes to the WebSocket.
+// This runs in its own goroutine per client.
+// One goroutine per client ensures only one concurrent writer per connection.
+func (c *Client) WritePump() {
+	ticker := time.NewTicker(pingPeriod)
+	defer func() {
+		ticker.Stop()
+		c.Conn.Close()
+	}()
+
+	for {
+		select {
+		case message, ok := <-c.Send:
+			c.Conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if !ok {
+				// Hub closed the channel — client was unregistered
+				c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
+				return
+			}
+
+			if err := c.Conn.WriteMessage(websocket.BinaryMessage, message); err != nil {
+				return
+			}
+
+			
+		case <-ticker.C:
+			// Send a ping to keep the connection alive
+			c.Conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := c.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
+			}
+		}
+	}
+}
+
+------------------------------------------------------------
+FILE: internal/hub/hub.go
+------------------------------------------------------------
+package hub
+
+import (
+	"sync"
+
+	"github.com/gorilla/websocket"
+)
+
+type SnapshotStore interface {
+	Save(roomID, filePath string, state []byte) error
+	Get(roomID, filePath string) ([]byte, error)
+}
+
+type snapshotKey struct {
+	roomID   string
+	filePath string
+}
+
+const snapshotThreshold = 50
+
+// Client represents a single connected developer.
+// Each client belongs to one room and has a dedicated send channel.
+type Client struct {
+	Conn   *websocket.Conn
+	Send   chan []byte
+	RoomID string
+	UserID string
+}
+
+// Hub is the central registry of all connected clients, organised by room.
+// It is the only place where broadcast decisions are made.
+type Hub struct {
+	rooms     map[string]map[*Client]bool
+	mu        sync.RWMutex
+	snapshots SnapshotStore
+	counts    map[snapshotKey]int
+	countsMu  sync.Mutex
+}
+
+// New creates and returns an empty Hub.
+func New(store SnapshotStore) *Hub {
+	return &Hub{
+		rooms:     make(map[string]map[*Client]bool),
+		snapshots: store,
+		counts:    make(map[snapshotKey]int),
+	}
+}
+
+// Register adds a client to its room.
+func (h *Hub) Register(client *Client) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.rooms[client.RoomID] == nil {
+		h.rooms[client.RoomID] = make(map[*Client]bool)
+	}
+	h.rooms[client.RoomID][client] = true
+}
+
+// Unregister removes a client from its room and closes its send channel.
+func (h *Hub) Unregister(client *Client) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	room, ok := h.rooms[client.RoomID]
+	if !ok {
+		return
+	}
+
+	if _, exists := room[client]; exists {
+		delete(room, client)
+		close(client.Send)
+	}
+
+	// If the room is now empty, remove it from the map entirely
+	if len(room) == 0 {
+		delete(h.rooms, client.RoomID)
+	}
+}
+
+// Broadcast sends a message to all clients in a room except the sender.
+func (h *Hub) Broadcast(senderID string, roomID string, message []byte) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	for client := range h.rooms[roomID] {
+		if client.UserID == senderID {
+			continue // don't echo back to sender
+		}
+		select {
+		case client.Send <- message:
+		default:
+			// Client's send buffer is full — they are too slow or disconnected
+			// We drop the message rather than block the entire broadcast
+		}
+	}
+}
+
+// Route inspects the message type and dispatches accordingly.
+func (h *Hub) Route(msg Message) {
+	switch msg.Type {
+	case MessageTypeSync:
+		h.Broadcast(msg.Sender.UserID, msg.Sender.RoomID, append([]byte{MessageTypeSync}, msg.Payload...))
+		h.trackAndSnapshot(msg)
+
+	case MessageTypeAwareness:
+		h.BroadcastAll(msg.Sender.RoomID, append([]byte{MessageTypeAwareness}, msg.Payload...))
+
+	case MessageTypeChat:
+		h.Broadcast(msg.Sender.UserID, msg.Sender.RoomID, append([]byte{MessageTypeChat}, msg.Payload...))
+	}
+}
+
+func (h *Hub) trackAndSnapshot(msg Message) {
+	if h.snapshots == nil {
+		return
+	}
+
+	if len(msg.Payload) < 4 {
+		return
+	}
+
+	filePathLen := int(msg.Payload[0])<<8 | int(msg.Payload[1])
+
+	if filePathLen == 0 || 2+filePathLen >= len(msg.Payload) {
+		return
+	}
+
+	filePath := string(msg.Payload[2 : 2+filePathLen])
+	yjsUpdate := msg.Payload[2+filePathLen:]
+
+	key := snapshotKey{roomID: msg.Sender.RoomID, filePath: filePath}
+
+	h.countsMu.Lock()
+	h.counts[key]++
+	count := h.counts[key]
+	if count >= snapshotThreshold {
+		h.counts[key] = 0
+	}
+	h.countsMu.Unlock()
+
+	if count >= snapshotThreshold {
+		go func() {
+			_ = h.snapshots.Save(key.roomID, key.filePath, yjsUpdate)
+		}()
+	}
+}
+
+// BroadcastAll sends a message to every client in a room including the sender.
+func (h *Hub) BroadcastAll(roomID string, message []byte) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	for client := range h.rooms[roomID] {
+		select {
+		case client.Send <- message:
+		default:
+		}
+	}
+}
+
+------------------------------------------------------------
+FILE: internal/hub/message.go
+------------------------------------------------------------
+package hub
+
+// Message type constants.
+// The first byte of every WebSocket message identifies its type.
+const (
+	MessageTypeSync      byte = 0x01 // CRDT document update from Yjs
+	MessageTypeAwareness byte = 0x02 // cursor position and presence
+	MessageTypeChat      byte = 0x03 // chat message
+)
+
+// Message carries a decoded incoming message ready for routing.
+type Message struct {
+	Type    byte
+	Payload []byte
+	Sender  *Client
+}
+

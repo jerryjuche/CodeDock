@@ -3150,6 +3150,7 @@ var LazyStructWriter = class {
     this.clientStructs = [];
   }
 };
+var mergeUpdates = (updates) => mergeUpdatesV2(updates, UpdateDecoderV1, UpdateEncoderV1);
 var sliceStruct = (left, diff) => {
   if (left.constructor === GC) {
     const { client, clock } = left.id;
@@ -7824,22 +7825,9 @@ function decodeSyncPayload(buffer) {
   }
 }
 
-// src/utils.ts
-function debounce(fn, delay) {
-  let timer = null;
-  return (...args2) => {
-    if (timer) {
-      clearTimeout(timer);
-    }
-    timer = setTimeout(() => {
-      fn(...args2);
-      timer = null;
-    }, delay);
-  };
-}
-
 // src/yjs-sync.ts
-var DEBOUNCE_MS = 200;
+var OUTBOUND_BATCH_MS = 120;
+var INBOUND_RECONCILE_MS = 90;
 var LOCAL_CHANGE_ORIGIN = /* @__PURE__ */ Symbol("codedock-local-change");
 var INITIAL_DOCUMENT_ORIGIN = /* @__PURE__ */ Symbol("codedock-initial-document");
 var YjsSync = class {
@@ -7850,6 +7838,8 @@ var YjsSync = class {
     this.bindings = /* @__PURE__ */ new Map();
     this.globalDisposables = [];
     this.remoteApplyDepthByFile = /* @__PURE__ */ new Map();
+    this.outboundBatches = /* @__PURE__ */ new Map();
+    this.patchStates = /* @__PURE__ */ new Map();
     this.active = false;
     this.wsManager.onMessage((data) => this.handleIncoming(data));
   }
@@ -7874,6 +7864,23 @@ var YjsSync = class {
         this.unbindDocument(document2);
       })
     );
+    this.globalDisposables.push(
+      vscode3.window.onDidChangeVisibleTextEditors((editors) => {
+        if (!this.active) {
+          return;
+        }
+        this.log(`visible editors changed: count=${editors.length}`);
+        for (const editor of editors) {
+          this.bindDocument(editor.document);
+          const fileKey = this.getCanonicalFileKey(editor.document);
+          if (!fileKey || !this.docs.has(fileKey)) {
+            continue;
+          }
+          this.markFileDirty(fileKey);
+          this.scheduleReconcile(fileKey);
+        }
+      })
+    );
   }
   dispose() {
     this.log("dispose");
@@ -7886,6 +7893,18 @@ var YjsSync = class {
       binding.documentChangeDisposable.dispose();
     }
     this.bindings.clear();
+    for (const batch of this.outboundBatches.values()) {
+      if (batch.timer !== void 0) {
+        clearTimeout(batch.timer);
+      }
+    }
+    this.outboundBatches.clear();
+    for (const patchState of this.patchStates.values()) {
+      if (patchState.timer !== void 0) {
+        clearTimeout(patchState.timer);
+      }
+    }
+    this.patchStates.clear();
     for (const entry of this.docs.values()) {
       entry.ydoc.destroy();
     }
@@ -7916,6 +7935,8 @@ var YjsSync = class {
     }
     if (this.bindings.has(fileKey)) {
       this.log(`bind skipped: already bound (${fileKey})`);
+      this.markFileDirty(fileKey);
+      this.scheduleReconcile(fileKey);
       return;
     }
     this.log(`binding document (${fileKey})`);
@@ -7938,6 +7959,9 @@ var YjsSync = class {
       (event) => {
         const eventFileKey = this.getCanonicalFileKey(event.document);
         if (eventFileKey !== fileKey) {
+          return;
+        }
+        if (event.contentChanges.length === 0) {
           return;
         }
         if (this.isRemoteApplyInProgress(fileKey)) {
@@ -7964,7 +7988,8 @@ var YjsSync = class {
       }
     );
     this.bindings.set(fileKey, { documentChangeDisposable });
-    void this.patchEditor(fileKey, entry.ydoc);
+    this.markFileDirty(fileKey);
+    this.scheduleReconcile(fileKey);
   }
   unbindDocument(document2) {
     const fileKey = this.getCanonicalFileKey(document2);
@@ -8005,13 +8030,6 @@ var YjsSync = class {
     }
     this.log(`creating Y.Doc (${fileKey})`);
     const ydoc = new Doc();
-    const debouncedSend = debounce((update) => {
-      const payload = encodeSyncPayload(fileKey, update);
-      this.log(
-        `outbound sync send (${fileKey}, updateBytes=${update.length}, payloadBytes=${payload.length})`
-      );
-      this.wsManager.send(payload);
-    }, DEBOUNCE_MS);
     ydoc.on("update", (update, origin) => {
       if (!this.active) {
         this.log("Y.Doc update ignored: sync inactive");
@@ -8021,7 +8039,7 @@ var YjsSync = class {
         return;
       }
       this.log(`Y.Doc local update (${fileKey}, bytes=${update.length})`);
-      debouncedSend(update);
+      this.queueOutboundUpdate(fileKey, update);
     });
     const entry = {
       ydoc,
@@ -8030,6 +8048,41 @@ var YjsSync = class {
     };
     this.docs.set(fileKey, entry);
     return entry;
+  }
+  queueOutboundUpdate(fileKey, update) {
+    let state = this.outboundBatches.get(fileKey);
+    if (!state) {
+      state = { updates: [] };
+      this.outboundBatches.set(fileKey, state);
+    }
+    state.updates.push(update);
+    if (state.timer !== void 0) {
+      return;
+    }
+    state.timer = setTimeout(() => {
+      void this.flushOutboundUpdates(fileKey);
+    }, OUTBOUND_BATCH_MS);
+  }
+  async flushOutboundUpdates(fileKey) {
+    const state = this.outboundBatches.get(fileKey);
+    if (!state) {
+      return;
+    }
+    if (state.timer !== void 0) {
+      clearTimeout(state.timer);
+      state.timer = void 0;
+    }
+    if (state.updates.length === 0) {
+      return;
+    }
+    const updates = state.updates;
+    state.updates = [];
+    const mergedUpdate = updates.length === 1 ? updates[0] : mergeUpdates(updates);
+    const payload = encodeSyncPayload(fileKey, mergedUpdate);
+    this.log(
+      `outbound sync send (${fileKey}, mergedUpdates=${updates.length}, updateBytes=${mergedUpdate.length}, payloadBytes=${payload.length})`
+    );
+    this.wsManager.send(payload);
   }
   handleIncoming(data) {
     const type = data.length > 0 ? data[0] : -1;
@@ -8050,49 +8103,93 @@ var YjsSync = class {
     const entry = this.getOrCreateDocEntry(fileKey);
     entry.hasRemoteState = true;
     applyUpdate(entry.ydoc, update);
-    await this.patchEditor(fileKey, entry.ydoc);
+    this.markFileDirty(fileKey);
+    this.scheduleReconcile(fileKey);
   }
-  async patchEditor(fileKey, ydoc) {
-    const visibleEditorKeys = vscode3.window.visibleTextEditors.map((editor2) => this.getCanonicalFileKey(editor2.document)).filter((key) => Boolean(key));
-    const editor = vscode3.window.visibleTextEditors.find(
-      (candidate) => this.getCanonicalFileKey(candidate.document) === fileKey
-    );
-    if (!editor) {
-      this.log(
-        `patch skipped: no visible editor for (${fileKey}), visible=[${visibleEditorKeys.join(", ")}]`
-      );
+  getPatchState(fileKey) {
+    let state = this.patchStates.get(fileKey);
+    if (!state) {
+      state = {
+        inFlight: false,
+        dirty: false
+      };
+      this.patchStates.set(fileKey, state);
+    }
+    return state;
+  }
+  markFileDirty(fileKey) {
+    this.getPatchState(fileKey).dirty = true;
+  }
+  scheduleReconcile(fileKey) {
+    const state = this.getPatchState(fileKey);
+    if (state.timer !== void 0 || state.inFlight) {
       return;
     }
-    const ytext = ydoc.getText("content");
-    const newContent = ytext.toString();
-    const currentContent = editor.document.getText();
-    if (newContent === currentContent) {
-      this.log(`patch skipped: content already matches (${fileKey})`);
+    state.timer = setTimeout(() => {
+      state.timer = void 0;
+      void this.reconcileFile(fileKey);
+    }, INBOUND_RECONCILE_MS);
+  }
+  async reconcileFile(fileKey) {
+    const state = this.getPatchState(fileKey);
+    if (state.inFlight) {
       return;
     }
-    this.log(
-      `patching editor (${fileKey}, oldChars=${currentContent.length}, newChars=${newContent.length})`
-    );
-    const fullRange = new vscode3.Range(
-      editor.document.positionAt(0),
-      editor.document.positionAt(currentContent.length)
-    );
-    this.beginRemoteApply(fileKey);
+    state.inFlight = true;
     try {
-      const applied = await editor.edit(
-        (editBuilder) => {
-          editBuilder.replace(fullRange, newContent);
-        },
-        {
-          undoStopBefore: false,
-          undoStopAfter: false
+      while (state.dirty) {
+        state.dirty = false;
+        const entry = this.docs.get(fileKey);
+        if (!entry) {
+          return;
         }
-      );
-      this.log(
-        `patch result (${fileKey}) -> ${applied ? "applied" : "failed"}`
-      );
+        const visibleEditorKeys = vscode3.window.visibleTextEditors.map((editor2) => this.getCanonicalFileKey(editor2.document)).filter((key) => Boolean(key));
+        const editor = vscode3.window.visibleTextEditors.find(
+          (candidate) => this.getCanonicalFileKey(candidate.document) === fileKey
+        );
+        if (!editor) {
+          this.log(
+            `reconcile skipped: no visible editor for (${fileKey}), visible=[${visibleEditorKeys.join(", ")}]`
+          );
+          return;
+        }
+        const ytext = entry.ydoc.getText("content");
+        const newContent = ytext.toString();
+        const currentContent = editor.document.getText();
+        if (newContent === currentContent) {
+          this.log(`reconcile skipped: content already matches (${fileKey})`);
+          continue;
+        }
+        this.log(
+          `patching editor (${fileKey}, oldChars=${currentContent.length}, newChars=${newContent.length})`
+        );
+        const fullRange = new vscode3.Range(
+          editor.document.positionAt(0),
+          editor.document.positionAt(currentContent.length)
+        );
+        this.beginRemoteApply(fileKey);
+        try {
+          const applied = await editor.edit(
+            (editBuilder) => {
+              editBuilder.replace(fullRange, newContent);
+            },
+            {
+              undoStopBefore: false,
+              undoStopAfter: false
+            }
+          );
+          this.log(
+            `patch result (${fileKey}) -> ${applied ? "applied" : "failed"}`
+          );
+        } finally {
+          this.endRemoteApply(fileKey);
+        }
+      }
     } finally {
-      this.endRemoteApply(fileKey);
+      state.inFlight = false;
+      if (state.dirty) {
+        this.scheduleReconcile(fileKey);
+      }
     }
   }
   isRemoteApplyInProgress(fileKey) {

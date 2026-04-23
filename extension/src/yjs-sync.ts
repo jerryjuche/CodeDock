@@ -3,10 +3,10 @@ import * as vscode from "vscode";
 import * as Y from "yjs";
 import { WebSocketManager } from "./websocket";
 import { encodeSyncPayload, decodeSyncPayload } from "./protocol";
-import { debounce } from "./utils";
 import { SyncPayload } from "./types";
 
-const DEBOUNCE_MS = 200;
+const OUTBOUND_BATCH_MS = 120;
+const INBOUND_RECONCILE_MS = 90;
 
 const LOCAL_CHANGE_ORIGIN = Symbol("codedock-local-change");
 const INITIAL_DOCUMENT_ORIGIN = Symbol("codedock-initial-document");
@@ -21,11 +21,24 @@ type Binding = {
   documentChangeDisposable: vscode.Disposable;
 };
 
+type OutboundBatchState = {
+  updates: Uint8Array[];
+  timer?: ReturnType<typeof setTimeout>;
+};
+
+type PatchState = {
+  inFlight: boolean;
+  dirty: boolean;
+  timer?: ReturnType<typeof setTimeout>;
+};
+
 export class YjsSync {
   private docs: Map<string, DocEntry> = new Map();
   private bindings: Map<string, Binding> = new Map();
   private globalDisposables: vscode.Disposable[] = [];
   private remoteApplyDepthByFile: Map<string, number> = new Map();
+  private outboundBatches: Map<string, OutboundBatchState> = new Map();
+  private patchStates: Map<string, PatchState> = new Map();
   private active = false;
 
   constructor(
@@ -60,6 +73,28 @@ export class YjsSync {
         this.unbindDocument(document);
       }),
     );
+
+    this.globalDisposables.push(
+      vscode.window.onDidChangeVisibleTextEditors((editors) => {
+        if (!this.active) {
+          return;
+        }
+
+        this.log(`visible editors changed: count=${editors.length}`);
+
+        for (const editor of editors) {
+          this.bindDocument(editor.document);
+
+          const fileKey = this.getCanonicalFileKey(editor.document);
+          if (!fileKey || !this.docs.has(fileKey)) {
+            continue;
+          }
+
+          this.markFileDirty(fileKey);
+          this.scheduleReconcile(fileKey);
+        }
+      }),
+    );
   }
 
   dispose(): void {
@@ -76,6 +111,20 @@ export class YjsSync {
     }
     this.bindings.clear();
 
+    for (const batch of this.outboundBatches.values()) {
+      if (batch.timer !== undefined) {
+        clearTimeout(batch.timer);
+      }
+    }
+    this.outboundBatches.clear();
+
+    for (const patchState of this.patchStates.values()) {
+      if (patchState.timer !== undefined) {
+        clearTimeout(patchState.timer);
+      }
+    }
+    this.patchStates.clear();
+
     for (const entry of this.docs.values()) {
       entry.ydoc.destroy();
     }
@@ -86,6 +135,7 @@ export class YjsSync {
 
   private bindVisibleEditors(): void {
     const seen = new Set<string>();
+
     this.log(
       `bindVisibleEditors: visibleEditors=${vscode.window.visibleTextEditors.length}`,
     );
@@ -112,6 +162,8 @@ export class YjsSync {
 
     if (this.bindings.has(fileKey)) {
       this.log(`bind skipped: already bound (${fileKey})`);
+      this.markFileDirty(fileKey);
+      this.scheduleReconcile(fileKey);
       return;
     }
 
@@ -141,6 +193,10 @@ export class YjsSync {
       (event) => {
         const eventFileKey = this.getCanonicalFileKey(event.document);
         if (eventFileKey !== fileKey) {
+          return;
+        }
+
+        if (event.contentChanges.length === 0) {
           return;
         }
 
@@ -175,7 +231,8 @@ export class YjsSync {
 
     this.bindings.set(fileKey, { documentChangeDisposable });
 
-    void this.patchEditor(fileKey, entry.ydoc);
+    this.markFileDirty(fileKey);
+    this.scheduleReconcile(fileKey);
   }
 
   private unbindDocument(document: vscode.TextDocument): void {
@@ -230,14 +287,6 @@ export class YjsSync {
 
     const ydoc = new Y.Doc();
 
-    const debouncedSend = debounce((update: Uint8Array) => {
-      const payload = encodeSyncPayload(fileKey, update);
-      this.log(
-        `outbound sync send (${fileKey}, updateBytes=${update.length}, payloadBytes=${payload.length})`,
-      );
-      this.wsManager.send(payload);
-    }, DEBOUNCE_MS);
-
     ydoc.on("update", (update: Uint8Array, origin: unknown) => {
       if (!this.active) {
         this.log("Y.Doc update ignored: sync inactive");
@@ -249,7 +298,7 @@ export class YjsSync {
       }
 
       this.log(`Y.Doc local update (${fileKey}, bytes=${update.length})`);
-      debouncedSend(update);
+      this.queueOutboundUpdate(fileKey, update);
     });
 
     const entry: DocEntry = {
@@ -260,6 +309,54 @@ export class YjsSync {
 
     this.docs.set(fileKey, entry);
     return entry;
+  }
+
+  private queueOutboundUpdate(fileKey: string, update: Uint8Array): void {
+    let state = this.outboundBatches.get(fileKey);
+    if (!state) {
+      state = { updates: [] };
+      this.outboundBatches.set(fileKey, state);
+    }
+
+    state.updates.push(update);
+
+    if (state.timer !== undefined) {
+      return;
+    }
+
+    state.timer = setTimeout(() => {
+      void this.flushOutboundUpdates(fileKey);
+    }, OUTBOUND_BATCH_MS);
+  }
+
+  private async flushOutboundUpdates(fileKey: string): Promise<void> {
+    const state = this.outboundBatches.get(fileKey);
+    if (!state) {
+      return;
+    }
+
+    if (state.timer !== undefined) {
+      clearTimeout(state.timer);
+      state.timer = undefined;
+    }
+
+    if (state.updates.length === 0) {
+      return;
+    }
+
+    const updates = state.updates;
+    state.updates = [];
+
+    const mergedUpdate =
+      updates.length === 1 ? updates[0] : Y.mergeUpdates(updates);
+
+    const payload = encodeSyncPayload(fileKey, mergedUpdate);
+
+    this.log(
+      `outbound sync send (${fileKey}, mergedUpdates=${updates.length}, updateBytes=${mergedUpdate.length}, payloadBytes=${payload.length})`,
+    );
+
+    this.wsManager.send(payload);
   }
 
   private handleIncoming(data: Uint8Array): void {
@@ -289,61 +386,117 @@ export class YjsSync {
 
     Y.applyUpdate(entry.ydoc, update);
 
-    await this.patchEditor(fileKey, entry.ydoc);
+    this.markFileDirty(fileKey);
+    this.scheduleReconcile(fileKey);
   }
 
-  private async patchEditor(fileKey: string, ydoc: Y.Doc): Promise<void> {
-    const visibleEditorKeys = vscode.window.visibleTextEditors
-      .map((editor) => this.getCanonicalFileKey(editor.document))
-      .filter((key): key is string => Boolean(key));
+  private getPatchState(fileKey: string): PatchState {
+    let state = this.patchStates.get(fileKey);
+    if (!state) {
+      state = {
+        inFlight: false,
+        dirty: false,
+      };
+      this.patchStates.set(fileKey, state);
+    }
+    return state;
+  }
 
-    const editor = vscode.window.visibleTextEditors.find(
-      (candidate) => this.getCanonicalFileKey(candidate.document) === fileKey,
-    );
+  private markFileDirty(fileKey: string): void {
+    this.getPatchState(fileKey).dirty = true;
+  }
 
-    if (!editor) {
-      this.log(
-        `patch skipped: no visible editor for (${fileKey}), visible=[${visibleEditorKeys.join(", ")}]`,
-      );
+  private scheduleReconcile(fileKey: string): void {
+    const state = this.getPatchState(fileKey);
+
+    if (state.timer !== undefined || state.inFlight) {
       return;
     }
 
-    const ytext = ydoc.getText("content");
-    const newContent = ytext.toString();
-    const currentContent = editor.document.getText();
+    state.timer = setTimeout(() => {
+      state.timer = undefined;
+      void this.reconcileFile(fileKey);
+    }, INBOUND_RECONCILE_MS);
+  }
 
-    if (newContent === currentContent) {
-      this.log(`patch skipped: content already matches (${fileKey})`);
+  private async reconcileFile(fileKey: string): Promise<void> {
+    const state = this.getPatchState(fileKey);
+
+    if (state.inFlight) {
       return;
     }
 
-    this.log(
-      `patching editor (${fileKey}, oldChars=${currentContent.length}, newChars=${newContent.length})`,
-    );
-
-    const fullRange = new vscode.Range(
-      editor.document.positionAt(0),
-      editor.document.positionAt(currentContent.length),
-    );
-
-    this.beginRemoteApply(fileKey);
+    state.inFlight = true;
 
     try {
-      const applied = await editor.edit(
-        (editBuilder) => {
-          editBuilder.replace(fullRange, newContent);
-        },
-        {
-          undoStopBefore: false,
-          undoStopAfter: false,
-        },
-      );
+      while (state.dirty) {
+        state.dirty = false;
 
-      this.log(
-        `patch result (${fileKey}) -> ${applied ? "applied" : "failed"}`,
-      );
+        const entry = this.docs.get(fileKey);
+        if (!entry) {
+          return;
+        }
+
+        const visibleEditorKeys = vscode.window.visibleTextEditors
+          .map((editor) => this.getCanonicalFileKey(editor.document))
+          .filter((key): key is string => Boolean(key));
+
+        const editor = vscode.window.visibleTextEditors.find(
+          (candidate) =>
+            this.getCanonicalFileKey(candidate.document) === fileKey,
+        );
+
+        if (!editor) {
+          this.log(
+            `reconcile skipped: no visible editor for (${fileKey}), visible=[${visibleEditorKeys.join(", ")}]`,
+          );
+          return;
+        }
+
+        const ytext = entry.ydoc.getText("content");
+        const newContent = ytext.toString();
+        const currentContent = editor.document.getText();
+
+        if (newContent === currentContent) {
+          this.log(`reconcile skipped: content already matches (${fileKey})`);
+          continue;
+        }
+
+        this.log(
+          `patching editor (${fileKey}, oldChars=${currentContent.length}, newChars=${newContent.length})`,
+        );
+
+        const fullRange = new vscode.Range(
+          editor.document.positionAt(0),
+          editor.document.positionAt(currentContent.length),
+        );
+
+        this.beginRemoteApply(fileKey);
+
+        try {
+          const applied = await editor.edit(
+            (editBuilder) => {
+              editBuilder.replace(fullRange, newContent);
+            },
+            {
+              undoStopBefore: false,
+              undoStopAfter: false,
+            },
+          );
+
+          this.log(
+            `patch result (${fileKey}) -> ${applied ? "applied" : "failed"}`,
+          );
+        } finally {
+          this.endRemoteApply(fileKey);
+        }
+      }
     } finally {
-      this.endRemoteApply(fileKey);
+      state.inFlight = false;
+
+      if (state.dirty) {
+        this.scheduleReconcile(fileKey);
+      }
     }
   }
 

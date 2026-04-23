@@ -72,26 +72,26 @@ func (h *Hub) Unregister(client *Client) {
 		close(client.Send)
 	}
 
-	// If the room is now empty, remove it from the map entirely
 	if len(room) == 0 {
 		delete(h.rooms, client.RoomID)
 	}
 }
 
-// Broadcast sends a message to all clients in a room except the sender.
-func (h *Hub) Broadcast(senderID string, roomID string, message []byte) {
+// Broadcast sends a message to all clients in a room except the sending connection.
+func (h *Hub) Broadcast(sender *Client, roomID string, message []byte) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
 	for client := range h.rooms[roomID] {
-		if client.UserID == senderID {
-			continue // don't echo back to sender
+		if client == sender {
+			continue
 		}
+
 		select {
 		case client.Send <- message:
 		default:
-			// Client's send buffer is full — they are too slow or disconnected
-			// We drop the message rather than block the entire broadcast
+			// Client's send buffer is full — they are too slow or disconnected.
+			// Drop rather than block the room.
 		}
 	}
 }
@@ -100,14 +100,14 @@ func (h *Hub) Broadcast(senderID string, roomID string, message []byte) {
 func (h *Hub) Route(msg Message) {
 	switch msg.Type {
 	case MessageTypeSync:
-		h.Broadcast(msg.Sender.UserID, msg.Sender.RoomID, append([]byte{MessageTypeSync}, msg.Payload...))
+		h.Broadcast(msg.Sender, msg.Sender.RoomID, append([]byte{MessageTypeSync}, msg.Payload...))
 		h.trackAndSnapshot(msg)
 
 	case MessageTypeAwareness:
 		h.BroadcastAll(msg.Sender.RoomID, append([]byte{MessageTypeAwareness}, msg.Payload...))
 
 	case MessageTypeChat:
-		h.Broadcast(msg.Sender.UserID, msg.Sender.RoomID, append([]byte{MessageTypeChat}, msg.Payload...))
+		h.Broadcast(msg.Sender, msg.Sender.RoomID, append([]byte{MessageTypeChat}, msg.Payload...))
 	}
 }
 
