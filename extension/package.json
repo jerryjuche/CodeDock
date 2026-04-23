@@ -2,7 +2,7 @@
   "name": "codedock",
   "displayName": "CodeDock",
   "description": "Self-hosted real-time collaborative coding for VS Code",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "publisher": "jerryjuche",
   "license": "MIT",
   "icon": "images/codedock.jpg",

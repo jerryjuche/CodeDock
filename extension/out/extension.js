@@ -34,7 +34,7 @@ __export(extension_exports, {
   deactivate: () => deactivate
 });
 module.exports = __toCommonJS(extension_exports);
-var vscode6 = __toESM(require("vscode"));
+var vscode4 = __toESM(require("vscode"));
 var import_events = require("events");
 
 // src/auth.ts
@@ -171,7 +171,7 @@ var ApiClient = class {
       token
     );
   }
-  async request(path, options, authenticated, token) {
+  async request(path2, options, authenticated, token) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     const headers = {
@@ -182,7 +182,7 @@ var ApiClient = class {
       headers["Authorization"] = `Bearer ${token}`;
     }
     try {
-      const response = await fetch(`${this.baseUrl}${path}`, {
+      const response = await fetch(`${this.baseUrl}${path2}`, {
         ...options,
         headers,
         signal: controller.signal
@@ -218,16 +218,23 @@ var WebSocketManager = class {
     this.socket = null;
     this.state = "disconnected";
     this.queue = [];
-    this.reconnectTimer = null;
     this.attemptCount = 0;
     this.manualDisconnect = false;
     this.token = null;
     this.roomId = null;
-    this.messageHandler = null;
+    this.messageHandlers = /* @__PURE__ */ new Set();
   }
-  // --- Public API ---
   onMessage(handler) {
-    this.messageHandler = handler;
+    this.messageHandlers.add(handler);
+    this.outputChannel.appendLine(
+      `CodeDock[ws]: registered message handler (total=${this.messageHandlers.size})`
+    );
+    return new vscode2.Disposable(() => {
+      this.messageHandlers.delete(handler);
+      this.outputChannel.appendLine(
+        `CodeDock[ws]: removed message handler (total=${this.messageHandlers.size})`
+      );
+    });
   }
   connect(token, roomId) {
     if (!token || !roomId) {
@@ -237,104 +244,131 @@ var WebSocketManager = class {
       return;
     }
     if (this.state === "connecting" || this.state === "connected") {
+      this.outputChannel.appendLine(
+        `CodeDock[ws]: connect skipped (state=${this.state}, room=${this.roomId ?? "none"})`
+      );
       return;
     }
     this.token = token;
     this.roomId = roomId;
+    this.manualDisconnect = false;
     this.state = "connecting";
-    const wsUrl = this.serverUrl.replace("https://", "wss://").replace("http://", "ws://") + `/ws?token=${token}&room_id=${roomId}`;
+    const wsUrl = this.serverUrl.replace("https://", "wss://").replace("http://", "ws://") + `/ws?token=${encodeURIComponent(token)}&room_id=${encodeURIComponent(roomId)}`;
+    this.outputChannel.appendLine(
+      `CodeDock[ws]: connecting (room=${roomId}, handlers=${this.messageHandlers.size})`
+    );
     this.socket = new WebSocket(wsUrl);
     this.socket.binaryType = "arraybuffer";
     this.socket.onopen = () => this.handleOpen();
-    this.socket.onclose = () => this.handleClose();
+    this.socket.onclose = (event) => this.handleClose(event.code, event.reason ?? "");
     this.socket.onerror = () => this.handleError();
     this.socket.onmessage = (event) => this.handleMessage(event);
   }
   disconnect(reason = "user") {
     this.manualDisconnect = true;
-    if (this.reconnectTimer) {
+    if (this.reconnectTimer !== void 0) {
       clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
+      this.reconnectTimer = void 0;
     }
-    this.reconnectTimer = null;
+    this.outputChannel.appendLine(
+      `CodeDock[ws]: disconnect requested (reason=${reason}, room=${this.roomId ?? "none"})`
+    );
     this.socket?.close();
     this.socket = null;
     this.state = "disconnected";
-    this.outputChannel.appendLine(`CodeDock: Disconnected \u2014 ${reason}`);
   }
   send(message) {
+    const messageType = message.length > 0 ? message[0] : -1;
     if (this.state === "connected" && this.socket) {
-      this.socket.send(message);
-    } else {
-      this.queue.push(message);
       this.outputChannel.appendLine(
-        `CodeDock: Queued message \u2014 ${this.queue.length} pending`
+        `CodeDock[ws]: send -> type=${messageType}, bytes=${message.length}, room=${this.roomId ?? "none"}`
       );
+      this.socket.send(message);
+      return;
     }
+    this.queue.push(message);
+    this.outputChannel.appendLine(
+      `CodeDock[ws]: queued -> type=${messageType}, bytes=${message.length}, pending=${this.queue.length}`
+    );
   }
   dispose() {
     this.manualDisconnect = true;
-    if (this.reconnectTimer) {
+    if (this.reconnectTimer !== void 0) {
       clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
+      this.reconnectTimer = void 0;
     }
+    this.outputChannel.appendLine("CodeDock[ws]: dispose");
     this.socket?.close();
     this.socket = null;
     this.state = "disconnected";
+    this.messageHandlers.clear();
   }
-  // --- Private Handlers ---
+  getConnectionState() {
+    return this.state;
+  }
+  getRoomId() {
+    return this.roomId;
+  }
   handleOpen() {
     this.state = "connected";
     this.attemptCount = 0;
     this.manualDisconnect = false;
-    this.outputChannel.appendLine("CodeDock: WebSocket connected.");
+    this.outputChannel.appendLine(
+      `CodeDock[ws]: connected (room=${this.roomId ?? "none"})`
+    );
     vscode2.window.showInformationMessage("CodeDock: Connected to room.");
     this.flushQueue();
   }
-  handleClose() {
+  handleClose(code, reason) {
     this.socket = null;
+    this.outputChannel.appendLine(
+      `CodeDock[ws]: closed (code=${code}, reason=${reason || "none"}, manual=${this.manualDisconnect})`
+    );
     if (this.manualDisconnect) {
       this.state = "disconnected";
       return;
     }
     this.state = "reconnecting";
-    this.outputChannel.appendLine(
-      "CodeDock: Connection lost. Scheduling reconnect..."
-    );
+    this.outputChannel.appendLine("CodeDock[ws]: scheduling reconnect");
     this.scheduleReconnect();
   }
   handleError() {
-    this.outputChannel.appendLine(
-      "CodeDock: WebSocket error encountered."
-    );
+    this.outputChannel.appendLine("CodeDock[ws]: socket error");
   }
   handleMessage(event) {
     if (!(event.data instanceof ArrayBuffer)) {
       this.outputChannel.appendLine(
-        "CodeDock: Received non-binary message \u2014 ignored."
+        "CodeDock[ws]: inbound ignored (non-binary payload)"
       );
       return;
     }
     const data = new Uint8Array(event.data);
     if (data.length === 0) {
-      this.outputChannel.appendLine(
-        "CodeDock: Received empty message \u2014 ignored."
-      );
+      this.outputChannel.appendLine("CodeDock[ws]: inbound ignored (empty)");
       return;
     }
-    this.messageHandler?.(data);
+    this.outputChannel.appendLine(
+      `CodeDock[ws]: inbound <- type=${data[0]}, bytes=${data.length}, handlers=${this.messageHandlers.size}`
+    );
+    for (const handler of this.messageHandlers) {
+      try {
+        handler(data);
+      } catch (error) {
+        this.outputChannel.appendLine(
+          `CodeDock[ws]: handler failure -> ${error instanceof Error ? error.message : "unknown error"}`
+        );
+      }
+    }
   }
-  // --- Reconnection ---
   scheduleReconnect() {
     if (!this.token || !this.roomId) {
       this.outputChannel.appendLine(
-        "CodeDock: Cannot reconnect \u2014 credentials missing."
+        "CodeDock[ws]: reconnect aborted (missing token or room)"
       );
       return;
     }
-    if (this.reconnectTimer) {
+    if (this.reconnectTimer !== void 0) {
       clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
     }
     const base = Math.min(
       BASE_BACKOFF_MS * Math.pow(2, this.attemptCount),
@@ -342,20 +376,20 @@ var WebSocketManager = class {
     );
     const delay = base + Math.random() * base;
     this.outputChannel.appendLine(
-      `CodeDock: Reconnecting in ${Math.round(delay)}ms (attempt ${this.attemptCount + 1})`
+      `CodeDock[ws]: reconnect in ${Math.round(delay)}ms (attempt=${this.attemptCount + 1})`
     );
     this.reconnectTimer = setTimeout(() => {
       this.attemptCount++;
       this.connect(this.token, this.roomId);
     }, delay);
   }
-  // --- Queue ---
   flushQueue() {
     if (this.queue.length === 0) {
+      this.outputChannel.appendLine("CodeDock[ws]: flush skipped (queue empty)");
       return;
     }
     this.outputChannel.appendLine(
-      `CodeDock: Flushing ${this.queue.length} queued messages.`
+      `CodeDock[ws]: flushing queue (${this.queue.length} message(s))`
     );
     const pending = [...this.queue];
     this.queue = [];
@@ -364,6 +398,10 @@ var WebSocketManager = class {
     }
   }
 };
+
+// src/yjs-sync.ts
+var path = __toESM(require("path"));
+var vscode3 = __toESM(require("vscode"));
 
 // node_modules/lib0/map.js
 var create = () => /* @__PURE__ */ new Map();
@@ -3470,10 +3508,10 @@ var YEvent = class {
   }
 };
 var getPathTo = (parent, child) => {
-  const path = [];
+  const path2 = [];
   while (child._item !== null && child !== parent) {
     if (child._item.parentSub !== null) {
-      path.unshift(child._item.parentSub);
+      path2.unshift(child._item.parentSub);
     } else {
       let i = 0;
       let c = (
@@ -3486,12 +3524,12 @@ var getPathTo = (parent, child) => {
         }
         c = c.right;
       }
-      path.unshift(i);
+      path2.unshift(i);
     }
     child = /** @type {AbstractType<any>} */
     child._item.parent;
   }
-  return path;
+  return path2;
 };
 var warnPrematureAccess = () => {
   warn("Invalid access: Add Yjs type to a document before reading data.");
@@ -7735,9 +7773,6 @@ if (glo[importIdentifier] === true) {
 }
 glo[importIdentifier] = true;
 
-// src/yjs-sync.ts
-var vscode3 = __toESM(require("vscode"));
-
 // src/protocol.ts
 var MessageType = {
   SYNC: 1,
@@ -7788,48 +7823,6 @@ function decodeSyncPayload(buffer) {
     return null;
   }
 }
-function encodeAwarenessPayload(state) {
-  const encoder = new TextEncoder();
-  const json = JSON.stringify(state);
-  const jsonBytes = encoder.encode(json);
-  const buffer = new Uint8Array(1 + jsonBytes.length);
-  buffer[0] = MessageType.AWARENESS;
-  buffer.set(jsonBytes, 1);
-  return buffer;
-}
-function decodeAwarenessPayload(buffer) {
-  try {
-    if (buffer.length < 2 || buffer[0] !== MessageType.AWARENESS) {
-      return null;
-    }
-    const decoder = new TextDecoder();
-    const json = decoder.decode(buffer.slice(1));
-    return JSON.parse(json);
-  } catch {
-    return null;
-  }
-}
-function encodeChatPayload(message) {
-  const encoder = new TextEncoder();
-  const json = JSON.stringify(message);
-  const jsonBytes = encoder.encode(json);
-  const buffer = new Uint8Array(1 + jsonBytes.length);
-  buffer[0] = MessageType.CHAT;
-  buffer.set(jsonBytes, 1);
-  return buffer;
-}
-function decodeChatPayload(buffer) {
-  try {
-    if (buffer.length < 2 || buffer[0] !== MessageType.CHAT) {
-      return null;
-    }
-    const decoder = new TextDecoder();
-    const json = decoder.decode(buffer.slice(1));
-    return JSON.parse(json);
-  } catch {
-    return null;
-  }
-}
 
 // src/utils.ts
 function debounce(fn, delay) {
@@ -7844,539 +7837,281 @@ function debounce(fn, delay) {
     }, delay);
   };
 }
-function throttle(fn, interval) {
-  let lastFired = 0;
-  return (...args2) => {
-    const now = Date.now();
-    if (now - lastFired >= interval) {
-      lastFired = now;
-      fn(...args2);
-    }
-  };
-}
-function colorFromUserId(userId) {
-  let hash = 0;
-  for (let i = 0; i < userId.length; i++) {
-    hash = userId.charCodeAt(i) + ((hash << 5) - hash);
-    hash = hash & hash;
-  }
-  const r = hash >> 16 & 255;
-  const g = hash >> 8 & 255;
-  const b = hash & 255;
-  const brightness = (r * 299 + g * 587 + b * 114) / 1e3;
-  if (brightness < 80) {
-    return colorFromUserId(userId + "_");
-  }
-  return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
-}
 
 // src/yjs-sync.ts
 var DEBOUNCE_MS = 200;
+var LOCAL_CHANGE_ORIGIN = /* @__PURE__ */ Symbol("codedock-local-change");
+var INITIAL_DOCUMENT_ORIGIN = /* @__PURE__ */ Symbol("codedock-initial-document");
 var YjsSync = class {
-  constructor(wsManager2) {
+  constructor(wsManager2, outputChannel) {
     this.wsManager = wsManager2;
-    // one Y.Doc per open file, keyed by file path
+    this.outputChannel = outputChannel;
     this.docs = /* @__PURE__ */ new Map();
-    // prevents infinite loop when applying remote updates
-    this.isApplyingRemoteUpdate = false;
-    // tracks VS Code event listener disposables per file
-    this.listeners = /* @__PURE__ */ new Map();
+    this.bindings = /* @__PURE__ */ new Map();
+    this.globalDisposables = [];
+    this.remoteApplyDepthByFile = /* @__PURE__ */ new Map();
     this.active = false;
     this.wsManager.onMessage((data) => this.handleIncoming(data));
   }
-  // --- Public API ---
   activate() {
+    if (this.active) {
+      this.log("activate skipped: already active");
+      return;
+    }
     this.active = true;
-    vscode3.window.visibleTextEditors.forEach((editor) => {
-      this.bindDocument(editor.document);
-    });
-    vscode3.workspace.onDidOpenTextDocument((doc) => {
-      if (this.active) {
-        this.bindDocument(doc);
-      }
-    });
-    vscode3.workspace.onDidCloseTextDocument((doc) => {
-      this.unbindDocument(doc.uri.fsPath);
-    });
+    this.log("activate");
+    this.bindVisibleEditors();
+    this.globalDisposables.push(
+      vscode3.workspace.onDidOpenTextDocument((document2) => {
+        if (!this.active) {
+          return;
+        }
+        this.bindDocument(document2);
+      })
+    );
+    this.globalDisposables.push(
+      vscode3.workspace.onDidCloseTextDocument((document2) => {
+        this.unbindDocument(document2);
+      })
+    );
   }
   dispose() {
+    this.log("dispose");
     this.active = false;
-    for (const disposable of this.listeners.values()) {
+    for (const disposable of this.globalDisposables) {
       disposable.dispose();
     }
-    this.listeners.clear();
-    for (const doc of this.docs.values()) {
-      doc.destroy();
+    this.globalDisposables = [];
+    for (const binding of this.bindings.values()) {
+      binding.documentChangeDisposable.dispose();
+    }
+    this.bindings.clear();
+    for (const entry of this.docs.values()) {
+      entry.ydoc.destroy();
     }
     this.docs.clear();
+    this.remoteApplyDepthByFile.clear();
   }
-  // --- Document Binding ---
+  bindVisibleEditors() {
+    const seen = /* @__PURE__ */ new Set();
+    this.log(
+      `bindVisibleEditors: visibleEditors=${vscode3.window.visibleTextEditors.length}`
+    );
+    for (const editor of vscode3.window.visibleTextEditors) {
+      const fileKey = this.getCanonicalFileKey(editor.document);
+      if (!fileKey || seen.has(fileKey)) {
+        continue;
+      }
+      seen.add(fileKey);
+      this.bindDocument(editor.document);
+    }
+  }
   bindDocument(document2) {
-    const filePath = document2.uri.fsPath;
-    if (this.docs.has(filePath)) {
+    const fileKey = this.getCanonicalFileKey(document2);
+    if (!fileKey) {
+      this.log(
+        `bind skipped: no canonical key for uri=${document2.uri.toString()}`
+      );
       return;
     }
+    if (this.bindings.has(fileKey)) {
+      this.log(`bind skipped: already bound (${fileKey})`);
+      return;
+    }
+    this.log(`binding document (${fileKey})`);
+    const entry = this.getOrCreateDocEntry(fileKey);
+    if (!entry.initializedFromLocal && !entry.hasRemoteState) {
+      const ytext = entry.ydoc.getText("content");
+      const currentContent = document2.getText();
+      entry.ydoc.transact(() => {
+        ytext.delete(0, ytext.length);
+        if (currentContent.length > 0) {
+          ytext.insert(0, currentContent);
+        }
+      }, INITIAL_DOCUMENT_ORIGIN);
+      entry.initializedFromLocal = true;
+      this.log(
+        `initialized from local editor (${fileKey}, chars=${currentContent.length})`
+      );
+    }
+    const documentChangeDisposable = vscode3.workspace.onDidChangeTextDocument(
+      (event) => {
+        const eventFileKey = this.getCanonicalFileKey(event.document);
+        if (eventFileKey !== fileKey) {
+          return;
+        }
+        if (this.isRemoteApplyInProgress(fileKey)) {
+          this.log(`local change ignored during remote apply (${fileKey})`);
+          return;
+        }
+        this.log(
+          `local document change (${fileKey}, changes=${event.contentChanges.length})`
+        );
+        const ytext = entry.ydoc.getText("content");
+        entry.ydoc.transact(() => {
+          for (const change of event.contentChanges) {
+            const start = change.rangeOffset;
+            const deleteCount = change.rangeLength;
+            const insertText2 = change.text;
+            if (deleteCount > 0) {
+              ytext.delete(start, deleteCount);
+            }
+            if (insertText2.length > 0) {
+              ytext.insert(start, insertText2);
+            }
+          }
+        }, LOCAL_CHANGE_ORIGIN);
+      }
+    );
+    this.bindings.set(fileKey, { documentChangeDisposable });
+    void this.patchEditor(fileKey, entry.ydoc);
+  }
+  unbindDocument(document2) {
+    const fileKey = this.getCanonicalFileKey(document2);
+    if (!fileKey) {
+      return;
+    }
+    const binding = this.bindings.get(fileKey);
+    if (!binding) {
+      return;
+    }
+    this.log(`unbinding document (${fileKey})`);
+    binding.documentChangeDisposable.dispose();
+    this.bindings.delete(fileKey);
+  }
+  getCanonicalFileKey(document2) {
     if (document2.uri.scheme !== "file") {
-      return;
+      return null;
     }
+    const workspaceFolder = vscode3.workspace.getWorkspaceFolder(document2.uri);
+    if (!workspaceFolder) {
+      return null;
+    }
+    const workspaceRoot = workspaceFolder.uri.fsPath;
+    const absolutePath = document2.uri.fsPath;
+    const relativePath = path.relative(workspaceRoot, absolutePath);
+    if (!relativePath) {
+      return null;
+    }
+    if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+      return null;
+    }
+    return relativePath.replace(/\\/g, "/");
+  }
+  getOrCreateDocEntry(fileKey) {
+    const existing = this.docs.get(fileKey);
+    if (existing) {
+      return existing;
+    }
+    this.log(`creating Y.Doc (${fileKey})`);
     const ydoc = new Doc();
-    this.docs.set(filePath, ydoc);
-    const ytext = ydoc.getText("content");
-    ydoc.transact(() => {
-      ytext.insert(0, document2.getText());
-    });
     const debouncedSend = debounce((update) => {
-      const payload = encodeSyncPayload(filePath, update);
+      const payload = encodeSyncPayload(fileKey, update);
+      this.log(
+        `outbound sync send (${fileKey}, updateBytes=${update.length}, payloadBytes=${payload.length})`
+      );
       this.wsManager.send(payload);
     }, DEBOUNCE_MS);
     ydoc.on("update", (update, origin) => {
-      if (origin !== null || this.isApplyingRemoteUpdate) {
+      if (!this.active) {
+        this.log("Y.Doc update ignored: sync inactive");
         return;
       }
+      if (origin !== LOCAL_CHANGE_ORIGIN) {
+        return;
+      }
+      this.log(`Y.Doc local update (${fileKey}, bytes=${update.length})`);
       debouncedSend(update);
     });
-    const listener = vscode3.workspace.onDidChangeTextDocument((event) => {
-      if (event.document.uri.fsPath !== filePath) {
-        return;
-      }
-      if (this.isApplyingRemoteUpdate) {
-        return;
-      }
-      ydoc.transact(() => {
-        for (const change of event.contentChanges) {
-          const start = change.rangeOffset;
-          const deleteCount = change.rangeLength;
-          const insertText2 = change.text;
-          if (deleteCount > 0) {
-            ytext.delete(start, deleteCount);
-          }
-          if (insertText2.length > 0) {
-            ytext.insert(start, insertText2);
-          }
-        }
-      }, null);
-    });
-    this.listeners.set(filePath, listener);
+    const entry = {
+      ydoc,
+      initializedFromLocal: false,
+      hasRemoteState: false
+    };
+    this.docs.set(fileKey, entry);
+    return entry;
   }
-  unbindDocument(filePath) {
-    const listener = this.listeners.get(filePath);
-    if (listener) {
-      listener.dispose();
-      this.listeners.delete(filePath);
-    }
-    const ydoc = this.docs.get(filePath);
-    if (ydoc) {
-      ydoc.destroy();
-      this.docs.delete(filePath);
-    }
-  }
-  // --- Incoming Message Handling ---
   handleIncoming(data) {
+    const type = data.length > 0 ? data[0] : -1;
+    this.log(`inbound frame observed (type=${type}, bytes=${data.length})`);
     const payload = decodeSyncPayload(data);
     if (!payload) {
+      this.log("inbound frame ignored: decodeSyncPayload returned null");
       return;
     }
-    this.applyRemoteUpdate(payload);
+    this.log(
+      `inbound sync decoded (${payload.filePath}, updateBytes=${payload.update.length})`
+    );
+    void this.applyRemoteUpdate(payload);
   }
-  applyRemoteUpdate(payload) {
-    const { filePath, update } = payload;
-    let ydoc = this.docs.get(filePath);
-    if (!ydoc) {
-      ydoc = new Doc();
-      this.docs.set(filePath, ydoc);
-    }
-    this.isApplyingRemoteUpdate = true;
-    try {
-      applyUpdate(ydoc, update);
-      this.patchEditor(filePath, ydoc);
-    } finally {
-      this.isApplyingRemoteUpdate = false;
-    }
+  async applyRemoteUpdate(payload) {
+    const { filePath: fileKey, update } = payload;
+    this.log(`apply remote update (${fileKey}, bytes=${update.length})`);
+    const entry = this.getOrCreateDocEntry(fileKey);
+    entry.hasRemoteState = true;
+    applyUpdate(entry.ydoc, update);
+    await this.patchEditor(fileKey, entry.ydoc);
   }
-  patchEditor(filePath, ydoc) {
+  async patchEditor(fileKey, ydoc) {
+    const visibleEditorKeys = vscode3.window.visibleTextEditors.map((editor2) => this.getCanonicalFileKey(editor2.document)).filter((key) => Boolean(key));
     const editor = vscode3.window.visibleTextEditors.find(
-      (e) => e.document.uri.fsPath === filePath
+      (candidate) => this.getCanonicalFileKey(candidate.document) === fileKey
     );
     if (!editor) {
+      this.log(
+        `patch skipped: no visible editor for (${fileKey}), visible=[${visibleEditorKeys.join(", ")}]`
+      );
       return;
     }
     const ytext = ydoc.getText("content");
     const newContent = ytext.toString();
     const currentContent = editor.document.getText();
     if (newContent === currentContent) {
+      this.log(`patch skipped: content already matches (${fileKey})`);
       return;
     }
+    this.log(
+      `patching editor (${fileKey}, oldChars=${currentContent.length}, newChars=${newContent.length})`
+    );
     const fullRange = new vscode3.Range(
       editor.document.positionAt(0),
       editor.document.positionAt(currentContent.length)
     );
-    editor.edit((editBuilder) => {
-      editBuilder.replace(fullRange, newContent);
-    });
-  }
-};
-
-// src/cursor-manager.ts
-var vscode4 = __toESM(require("vscode"));
-var THROTTLE_MS = 50;
-var STALE_CURSOR_MS = 5e3;
-var CLEANUP_INTERVAL_MS = 1e3;
-var CursorManager = class {
-  constructor(wsManager2) {
-    this.wsManager = wsManager2;
-    // one decoration type per remote user — never recreated
-    this.decorations = /* @__PURE__ */ new Map();
-    // last known awareness state per remote user
-    this.states = /* @__PURE__ */ new Map();
-    // last seen timestamp per remote user
-    this.lastSeen = /* @__PURE__ */ new Map();
-    // interval that checks for stale cursors
-    this.cleanupTimer = null;
-    this.active = false;
-    this.localUserId = "";
-    this.localEmail = "";
-    this.wsManager.onMessage((data) => this.handleIncoming(data));
-  }
-  // --- Public API ---
-  activate(userId, email) {
-    this.active = true;
-    this.localUserId = userId;
-    this.localEmail = email;
-    const throttledSend = throttle(() => {
-      this.sendLocalAwareness();
-    }, THROTTLE_MS);
-    vscode4.window.onDidChangeTextEditorSelection(() => {
-      if (this.active) {
-        throttledSend();
-      }
-    });
-    this.cleanupTimer = setInterval(() => {
-      this.removeStalecursors();
-    }, CLEANUP_INTERVAL_MS);
-  }
-  dispose() {
-    this.active = false;
-    if (this.cleanupTimer) {
-      clearInterval(this.cleanupTimer);
-      this.cleanupTimer = null;
+    this.beginRemoteApply(fileKey);
+    try {
+      const applied = await editor.edit(
+        (editBuilder) => {
+          editBuilder.replace(fullRange, newContent);
+        },
+        {
+          undoStopBefore: false,
+          undoStopAfter: false
+        }
+      );
+      this.log(
+        `patch result (${fileKey}) -> ${applied ? "applied" : "failed"}`
+      );
+    } finally {
+      this.endRemoteApply(fileKey);
     }
-    for (const decoration of this.decorations.values()) {
-      decoration.dispose();
-    }
-    this.decorations.clear();
-    this.states.clear();
-    this.lastSeen.clear();
   }
-  // --- Local Awareness ---
-  sendLocalAwareness() {
-    const editor = vscode4.window.activeTextEditor;
-    if (!editor) {
+  isRemoteApplyInProgress(fileKey) {
+    return (this.remoteApplyDepthByFile.get(fileKey) ?? 0) > 0;
+  }
+  beginRemoteApply(fileKey) {
+    const currentDepth = this.remoteApplyDepthByFile.get(fileKey) ?? 0;
+    this.remoteApplyDepthByFile.set(fileKey, currentDepth + 1);
+  }
+  endRemoteApply(fileKey) {
+    const currentDepth = this.remoteApplyDepthByFile.get(fileKey) ?? 0;
+    if (currentDepth <= 1) {
+      this.remoteApplyDepthByFile.delete(fileKey);
       return;
     }
-    const position = editor.selection.active;
-    const anchor = editor.selection.anchor;
-    const state = {
-      userId: this.localUserId,
-      email: this.localEmail,
-      cursor: {
-        line: position.line,
-        character: position.character
-      },
-      selection: {
-        anchor: { line: anchor.line, character: anchor.character },
-        active: { line: position.line, character: position.character }
-      }
-    };
-    const payload = encodeAwarenessPayload(state);
-    this.wsManager.send(payload);
+    this.remoteApplyDepthByFile.set(fileKey, currentDepth - 1);
   }
-  // --- Incoming Awareness ---
-  handleIncoming(data) {
-    if (data[0] !== MessageType.AWARENESS) {
-      return;
-    }
-    const state = decodeAwarenessPayload(data);
-    if (!state || !state.userId) {
-      return;
-    }
-    if (state.userId === this.localUserId) {
-      return;
-    }
-    this.lastSeen.set(state.userId, Date.now());
-    this.states.set(state.userId, state);
-    this.renderCursor(state);
-  }
-  // --- Cursor Rendering ---
-  renderCursor(state) {
-    if (!state.cursor) {
-      return;
-    }
-    const editor = vscode4.window.activeTextEditor;
-    if (!editor) {
-      return;
-    }
-    let decorationType = this.decorations.get(state.userId);
-    if (!decorationType) {
-      const color = colorFromUserId(state.userId);
-      decorationType = vscode4.window.createTextEditorDecorationType({
-        borderWidth: "0 0 0 2px",
-        borderStyle: "solid",
-        borderColor: color,
-        after: {
-          contentText: ` ${state.email}`,
-          color,
-          fontStyle: "normal",
-          fontWeight: "normal"
-        }
-      });
-      this.decorations.set(state.userId, decorationType);
-    }
-    const position = new vscode4.Position(
-      state.cursor.line,
-      state.cursor.character
-    );
-    const range = new vscode4.Range(position, position);
-    editor.setDecorations(decorationType, [range]);
-  }
-  // --- Stale Cursor Cleanup ---
-  removeStalecursors() {
-    const now = Date.now();
-    for (const [userId, timestamp] of this.lastSeen.entries()) {
-      if (now - timestamp > STALE_CURSOR_MS) {
-        this.removeCursor(userId);
-      }
-    }
-  }
-  removeCursor(userId) {
-    const decoration = this.decorations.get(userId);
-    if (decoration) {
-      vscode4.window.visibleTextEditors.forEach((editor) => {
-        editor.setDecorations(decoration, []);
-      });
-      decoration.dispose();
-      this.decorations.delete(userId);
-    }
-    this.states.delete(userId);
-    this.lastSeen.delete(userId);
-  }
-};
-
-// src/chat.ts
-var vscode5 = __toESM(require("vscode"));
-var ChatManager = class {
-  constructor(context, wsManager2) {
-    this.context = context;
-    this.wsManager = wsManager2;
-    // single panel instance — revealed if exists, created if not
-    this.panel = null;
-    this.messages = [];
-    this.localUserId = "";
-    this.localEmail = "";
-    this.wsManager.onMessage((data) => this.handleIncoming(data));
-  }
-  // --- Public API ---
-  activate(userId, email) {
-    this.localUserId = userId;
-    this.localEmail = email;
-  }
-  open() {
-    if (this.panel) {
-      this.panel.reveal(vscode5.ViewColumn.Beside);
-      return;
-    }
-    this.panel = vscode5.window.createWebviewPanel(
-      "codedockChat",
-      "CodeDock Chat",
-      vscode5.ViewColumn.Beside,
-      {
-        enableScripts: true,
-        retainContextWhenHidden: true
-      }
-    );
-    this.panel.webview.html = this.buildHtml();
-    this.panel.webview.onDidReceiveMessage((message) => {
-      if (message.type === "send" && typeof message.content === "string") {
-        this.sendMessage(message.content.trim());
-      }
-    });
-    this.panel.onDidDispose(() => {
-      this.panel = null;
-    });
-  }
-  dispose() {
-    this.panel?.dispose();
-    this.panel = null;
-  }
-  // --- Outbound ---
-  sendMessage(content) {
-    if (!content) {
-      return;
-    }
-    const message = {
-      id: crypto.randomUUID(),
-      userId: this.localUserId,
-      email: this.localEmail,
-      content,
-      timestamp: Date.now()
-    };
-    const payload = encodeChatPayload(message);
-    this.wsManager.send(payload);
-    this.appendMessage(message);
-  }
-  // --- Inbound ---
-  handleIncoming(data) {
-    if (data[0] !== MessageType.CHAT) {
-      return;
-    }
-    const message = decodeChatPayload(data);
-    if (!message || !message.userId || !message.content) {
-      return;
-    }
-    if (message.userId === this.localUserId) {
-      return;
-    }
-    this.appendMessage(message);
-  }
-  appendMessage(message) {
-    this.messages.push(message);
-    if (!this.panel) {
-      return;
-    }
-    this.panel.webview.postMessage({
-      type: "append",
-      message: {
-        email: this.sanitize(message.email),
-        content: this.sanitize(message.content),
-        timestamp: message.timestamp
-      }
-    });
-  }
-  // --- Security ---
-  sanitize(text) {
-    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-  }
-  // --- Webview HTML ---
-  buildHtml() {
-    return `<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy"
-          content="default-src 'none'; script-src 'nonce-codedock'; style-src 'unsafe-inline';">
-    <title>CodeDock Chat</title>
-    <style>
-        body {
-            font-family: var(--vscode-font-family);
-            font-size: var(--vscode-font-size);
-            color: var(--vscode-foreground);
-            background: var(--vscode-editor-background);
-            margin: 0;
-            padding: 0;
-            display: flex;
-            flex-direction: column;
-            height: 100vh;
-        }
-        #messages {
-            flex: 1;
-            overflow-y: auto;
-            padding: 12px;
-        }
-        .message {
-            margin-bottom: 10px;
-        }
-        .message .author {
-            font-weight: bold;
-            color: var(--vscode-textLink-foreground);
-            font-size: 0.85em;
-        }
-        .message .time {
-            color: var(--vscode-descriptionForeground);
-            font-size: 0.75em;
-            margin-left: 6px;
-        }
-        .message .content {
-            margin-top: 2px;
-            word-break: break-word;
-        }
-        #input-row {
-            display: flex;
-            padding: 8px;
-            gap: 8px;
-            border-top: 1px solid var(--vscode-panel-border);
-        }
-        #input {
-            flex: 1;
-            background: var(--vscode-input-background);
-            color: var(--vscode-input-foreground);
-            border: 1px solid var(--vscode-input-border);
-            padding: 6px 8px;
-            font-size: var(--vscode-font-size);
-            font-family: var(--vscode-font-family);
-        }
-        #send {
-            background: var(--vscode-button-background);
-            color: var(--vscode-button-foreground);
-            border: none;
-            padding: 6px 14px;
-            cursor: pointer;
-        }
-        #send:hover {
-            background: var(--vscode-button-hoverBackground);
-        }
-    </style>
-</head>
-<body>
-    <div id="messages"></div>
-    <div id="input-row">
-        <input id="input" type="text" placeholder="Type a message..." />
-        <button id="send">Send</button>
-    </div>
-    <script nonce="codedock">
-        const vscode = acquireVsCodeApi();
-        const messagesEl = document.getElementById('messages');
-        const inputEl = document.getElementById('input');
-        const sendEl = document.getElementById('send');
-
-        function formatTime(ts) {
-            return new Date(ts).toLocaleTimeString([], {
-                hour: '2-digit', minute: '2-digit'
-            });
-        }
-
-        function appendMessage(msg) {
-            const div = document.createElement('div');
-            div.className = 'message';
-            // content is already sanitized by the extension host
-            div.innerHTML =
-                '<div class="author">' + msg.email +
-                '<span class="time">' + formatTime(msg.timestamp) + '</span></div>' +
-                '<div class="content">' + msg.content + '</div>';
-            messagesEl.appendChild(div);
-            messagesEl.scrollTop = messagesEl.scrollHeight;
-        }
-
-        function send() {
-            const content = inputEl.value.trim();
-            if (!content) return;
-            vscode.postMessage({ type: 'send', content });
-            inputEl.value = '';
-        }
-
-        sendEl.addEventListener('click', send);
-        inputEl.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') send();
-        });
-
-        window.addEventListener('message', (event) => {
-            const msg = event.data;
-            if (msg.type === 'append') {
-                appendMessage(msg.message);
-            }
-        });
-    </script>
-</body>
-</html>`;
+  log(message) {
+    this.outputChannel.appendLine(`CodeDock[sync]: ${message}`);
   }
 };
 
@@ -8384,59 +8119,59 @@ var ChatManager = class {
 var authManager;
 var wsManager;
 var yjsSync;
-var cursorManager;
-var chatManager;
 var apiClient;
 async function activate(context) {
-  const config = vscode6.workspace.getConfiguration("codedock");
+  const config = vscode4.workspace.getConfiguration("codedock");
   const serverUrl = config.get("serverUrl", "http://localhost:8080");
-  const outputChannel = vscode6.window.createOutputChannel("CodeDock");
+  const outputChannel = vscode4.window.createOutputChannel("CodeDock");
   context.subscriptions.push(outputChannel);
+  outputChannel.show(true);
+  outputChannel.appendLine("CodeDock: DIAG BUILD LOADED (SYNC-ONLY)");
+  vscode4.window.showInformationMessage("CodeDock: DIAG BUILD LOADED (SYNC-ONLY)");
   const emitter = new import_events.EventEmitter();
   apiClient = new ApiClient(serverUrl);
   authManager = new AuthManager(context.secrets, apiClient, emitter);
   wsManager = new WebSocketManager(serverUrl, outputChannel);
-  yjsSync = new YjsSync(wsManager);
-  cursorManager = new CursorManager(wsManager);
-  chatManager = new ChatManager(context, wsManager);
-  emitter.on("login", (token, email) => {
-    cursorManager.activate(token, email);
-    chatManager.activate(token, email);
+  yjsSync = new YjsSync(wsManager, outputChannel);
+  emitter.on("login", () => {
+    outputChannel.appendLine("CodeDock: login event received (sync-only mode)");
   });
   emitter.on("logout", () => {
+    outputChannel.appendLine("CodeDock: logout event received");
     wsManager.disconnect("logout");
     yjsSync.dispose();
-    cursorManager.dispose();
-    chatManager.dispose();
   });
   context.subscriptions.push(
-    vscode6.commands.registerCommand(
+    vscode4.commands.registerCommand(
       "codedock.login",
       () => authManager.login()
     ),
-    vscode6.commands.registerCommand(
+    vscode4.commands.registerCommand(
       "codedock.logout",
       () => authManager.logout()
     ),
-    vscode6.commands.registerCommand(
+    vscode4.commands.registerCommand(
       "codedock.joinRoom",
-      () => handleJoinRoom()
+      () => handleJoinRoom(outputChannel)
     ),
-    vscode6.commands.registerCommand(
+    vscode4.commands.registerCommand(
       "codedock.createRoom",
-      () => handleCreateRoom()
+      () => handleCreateRoom(outputChannel)
     ),
-    vscode6.commands.registerCommand(
+    vscode4.commands.registerCommand(
       "codedock.openChat",
-      () => chatManager.open()
+      () => vscode4.window.showWarningMessage(
+        "CodeDock Chat is temporarily disabled in sync-only diagnostic mode."
+      )
     ),
-    vscode6.commands.registerCommand(
-      "codedock.disconnectRoom",
-      () => wsManager.disconnect("user")
-    )
+    vscode4.commands.registerCommand("codedock.disconnectRoom", () => {
+      outputChannel.appendLine("CodeDock: user requested room disconnect");
+      wsManager.disconnect("user");
+      yjsSync.dispose();
+    })
   );
   context.subscriptions.push(
-    vscode6.window.registerUriHandler({
+    vscode4.window.registerUriHandler({
       handleUri(uri) {
         outputChannel.appendLine(`URI received: ${uri.toString()}`);
         const params2 = new URLSearchParams(uri.query);
@@ -8444,7 +8179,7 @@ async function activate(context) {
         const roomId = params2.get("room_id");
         outputChannel.appendLine(`code: ${code}`);
         outputChannel.appendLine(`room_id: ${roomId}`);
-        vscode6.window.showInformationMessage(
+        vscode4.window.showInformationMessage(
           `Deep link received \u2014 code: ${code}, room: ${roomId}`
         );
       }
@@ -8455,14 +8190,14 @@ async function activate(context) {
 async function restoreSession() {
   const token = await authManager.getToken();
   if (!token) {
-    vscode6.window.showInformationMessage(
+    vscode4.window.showInformationMessage(
       'CodeDock: Not logged in. Run "CodeDock: Login" to start.'
     );
     return;
   }
   const valid = await authManager.validateToken();
   if (!valid) {
-    vscode6.window.showWarningMessage(
+    vscode4.window.showWarningMessage(
       "CodeDock: Session expired. Please log in again.",
       "Login"
     ).then((selection) => {
@@ -8472,17 +8207,17 @@ async function restoreSession() {
     });
     return;
   }
-  vscode6.window.showInformationMessage("CodeDock: Session restored.");
+  vscode4.window.showInformationMessage("CodeDock: Session restored.");
 }
-async function handleJoinRoom() {
+async function handleJoinRoom(outputChannel) {
   const token = await authManager.getToken();
   if (!token) {
-    vscode6.window.showErrorMessage(
+    vscode4.window.showErrorMessage(
       "CodeDock: You must be logged in to join a room."
     );
     return;
   }
-  const roomId = await vscode6.window.showInputBox({
+  const roomId = await vscode4.window.showInputBox({
     prompt: "Enter Room ID",
     placeHolder: "e.g. 550e8400-e29b-41d4-a716-446655440000",
     ignoreFocusOut: true,
@@ -8491,18 +8226,20 @@ async function handleJoinRoom() {
   if (!roomId) {
     return;
   }
-  await wsManager.connect(token, roomId.trim());
+  const normalizedRoomId = roomId.trim();
+  outputChannel.appendLine(`CodeDock: joining room ${normalizedRoomId}`);
+  wsManager.connect(token, normalizedRoomId);
   yjsSync.activate();
 }
-async function handleCreateRoom() {
+async function handleCreateRoom(outputChannel) {
   const token = await authManager.getToken();
   if (!token) {
-    vscode6.window.showErrorMessage(
+    vscode4.window.showErrorMessage(
       "CodeDock: You must be logged in to create a room."
     );
     return;
   }
-  const roomName = await vscode6.window.showInputBox({
+  const roomName = await vscode4.window.showInputBox({
     prompt: "Enter a name for your room",
     placeHolder: "e.g. my-project",
     ignoreFocusOut: true,
@@ -8513,13 +8250,14 @@ async function handleCreateRoom() {
   }
   try {
     const room = await apiClient.createRoom(token, roomName.trim());
-    vscode6.window.showInformationMessage(
+    vscode4.window.showInformationMessage(
       `CodeDock: Room "${room.name}" created. ID: ${room.id}`
     );
-    await wsManager.connect(token, room.id);
+    outputChannel.appendLine(`CodeDock: created room ${room.id}`);
+    wsManager.connect(token, room.id);
     yjsSync.activate();
   } catch (err) {
-    vscode6.window.showErrorMessage(
+    vscode4.window.showErrorMessage(
       `CodeDock: Failed to create room \u2014 ${err instanceof Error ? err.message : "unknown error"}`
     );
   }
@@ -8527,8 +8265,6 @@ async function handleCreateRoom() {
 function deactivate() {
   wsManager?.disconnect("extension_deactivated");
   yjsSync?.dispose();
-  cursorManager?.dispose();
-  chatManager?.dispose();
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {

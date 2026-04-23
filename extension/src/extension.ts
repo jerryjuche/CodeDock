@@ -4,14 +4,10 @@ import { AuthManager } from "./auth";
 import { ApiClient } from "./api";
 import { WebSocketManager } from "./websocket";
 import { YjsSync } from "./yjs-sync";
-import { CursorManager } from "./cursor-manager";
-import { ChatManager } from "./chat";
 
 let authManager: AuthManager;
 let wsManager: WebSocketManager;
 let yjsSync: YjsSync;
-let cursorManager: CursorManager;
-let chatManager: ChatManager;
 let apiClient: ApiClient;
 
 export async function activate(
@@ -20,37 +16,31 @@ export async function activate(
   const config = vscode.workspace.getConfiguration("codedock");
   const serverUrl = config.get<string>("serverUrl", "http://localhost:8080");
 
-  // output channel for safe diagnostics — no secrets ever logged here
   const outputChannel = vscode.window.createOutputChannel("CodeDock");
   context.subscriptions.push(outputChannel);
 
-  // shared event emitter — auth announces login/logout, others listen
+  // Sync-only diagnostic canary
+  outputChannel.show(true);
+  outputChannel.appendLine("CodeDock: DIAG BUILD LOADED (SYNC-ONLY)");
+  vscode.window.showInformationMessage("CodeDock: DIAG BUILD LOADED (SYNC-ONLY)");
+
   const emitter = new EventEmitter();
 
-  // wire dependencies — office manager hands out keys
   apiClient = new ApiClient(serverUrl);
   authManager = new AuthManager(context.secrets, apiClient, emitter);
   wsManager = new WebSocketManager(serverUrl, outputChannel);
-  yjsSync = new YjsSync(wsManager);
-  cursorManager = new CursorManager(wsManager);
-  chatManager = new ChatManager(context, wsManager);
+  yjsSync = new YjsSync(wsManager, outputChannel);
 
-  // observer — when login fires, activate collaboration features
-  emitter.on("login", (token: string, email: string) => {
-    cursorManager.activate(token, email);
-    chatManager.activate(token, email);
+  emitter.on("login", () => {
+    outputChannel.appendLine("CodeDock: login event received (sync-only mode)");
   });
 
-  // observer — when logout fires, disconnect everything
   emitter.on("logout", () => {
+    outputChannel.appendLine("CodeDock: logout event received");
     wsManager.disconnect("logout");
     yjsSync.dispose();
-    cursorManager.dispose();
-    chatManager.dispose();
   });
 
-  // register all commands into context.subscriptions
-  // VS Code disposes these automatically on deactivation
   context.subscriptions.push(
     vscode.commands.registerCommand("codedock.login", () =>
       authManager.login(),
@@ -59,17 +49,21 @@ export async function activate(
       authManager.logout(),
     ),
     vscode.commands.registerCommand("codedock.joinRoom", () =>
-      handleJoinRoom(),
+      handleJoinRoom(outputChannel),
     ),
     vscode.commands.registerCommand("codedock.createRoom", () =>
-      handleCreateRoom(),
+      handleCreateRoom(outputChannel),
     ),
     vscode.commands.registerCommand("codedock.openChat", () =>
-      chatManager.open(),
+      vscode.window.showWarningMessage(
+        "CodeDock Chat is temporarily disabled in sync-only diagnostic mode.",
+      ),
     ),
-    vscode.commands.registerCommand("codedock.disconnectRoom", () =>
-      wsManager.disconnect("user"),
-    ),
+    vscode.commands.registerCommand("codedock.disconnectRoom", () => {
+      outputChannel.appendLine("CodeDock: user requested room disconnect");
+      wsManager.disconnect("user");
+      yjsSync.dispose();
+    }),
   );
 
   context.subscriptions.push(
@@ -91,7 +85,6 @@ export async function activate(
     }),
   );
 
-  // restore session or prompt login on startup
   await restoreSession();
 }
 
@@ -124,7 +117,9 @@ async function restoreSession(): Promise<void> {
   vscode.window.showInformationMessage("CodeDock: Session restored.");
 }
 
-async function handleJoinRoom(): Promise<void> {
+async function handleJoinRoom(
+  outputChannel: vscode.OutputChannel,
+): Promise<void> {
   const token = await authManager.getToken();
 
   if (!token) {
@@ -146,11 +141,15 @@ async function handleJoinRoom(): Promise<void> {
     return;
   }
 
-  await wsManager.connect(token, roomId.trim());
+  const normalizedRoomId = roomId.trim();
+  outputChannel.appendLine(`CodeDock: joining room ${normalizedRoomId}`);
+  wsManager.connect(token, normalizedRoomId);
   yjsSync.activate();
 }
 
-async function handleCreateRoom(): Promise<void> {
+async function handleCreateRoom(
+  outputChannel: vscode.OutputChannel,
+): Promise<void> {
   const token = await authManager.getToken();
 
   if (!token) {
@@ -177,11 +176,15 @@ async function handleCreateRoom(): Promise<void> {
     vscode.window.showInformationMessage(
       `CodeDock: Room "${room.name}" created. ID: ${room.id}`,
     );
-    await wsManager.connect(token, room.id);
+
+    outputChannel.appendLine(`CodeDock: created room ${room.id}`);
+    wsManager.connect(token, room.id);
     yjsSync.activate();
   } catch (err) {
     vscode.window.showErrorMessage(
-      `CodeDock: Failed to create room — ${err instanceof Error ? err.message : "unknown error"}`,
+      `CodeDock: Failed to create room — ${
+        err instanceof Error ? err.message : "unknown error"
+      }`,
     );
   }
 }
@@ -189,6 +192,4 @@ async function handleCreateRoom(): Promise<void> {
 export function deactivate(): void {
   wsManager?.disconnect("extension_deactivated");
   yjsSync?.dispose();
-  cursorManager?.dispose();
-  chatManager?.dispose();
 }
