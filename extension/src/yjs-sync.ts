@@ -7,9 +7,12 @@ import { SyncPayload } from "./types";
 
 const OUTBOUND_BATCH_MS = 120;
 const INBOUND_RECONCILE_MS = 90;
+const GUEST_HYDRATION_WAIT_MS = 1200;
 
 const LOCAL_CHANGE_ORIGIN = Symbol("codedock-local-change");
 const INITIAL_DOCUMENT_ORIGIN = Symbol("codedock-initial-document");
+
+type SessionRole = "host" | "guest";
 
 type DocEntry = {
   ydoc: Y.Doc;
@@ -23,6 +26,7 @@ type Binding = {
 
 type OutboundBatchState = {
   updates: Uint8Array[];
+  forceFullState: boolean;
   timer?: ReturnType<typeof setTimeout>;
 };
 
@@ -39,13 +43,21 @@ export class YjsSync {
   private remoteApplyDepthByFile: Map<string, number> = new Map();
   private outboundBatches: Map<string, OutboundBatchState> = new Map();
   private patchStates: Map<string, PatchState> = new Map();
+  private hydrationTimers: Map<string, ReturnType<typeof setTimeout>> =
+    new Map();
   private active = false;
+  private sessionRole: SessionRole = "guest";
 
   constructor(
     private readonly wsManager: WebSocketManager,
     private readonly outputChannel: vscode.OutputChannel,
   ) {
     this.wsManager.onMessage((data) => this.handleIncoming(data));
+  }
+
+  setSessionRole(role: SessionRole): void {
+    this.sessionRole = role;
+    this.log(`session role set (${role})`);
   }
 
   activate(): void {
@@ -55,7 +67,7 @@ export class YjsSync {
     }
 
     this.active = true;
-    this.log("activate");
+    this.log(`activate (${this.sessionRole})`);
 
     this.bindVisibleEditors();
 
@@ -125,6 +137,11 @@ export class YjsSync {
     }
     this.patchStates.clear();
 
+    for (const timer of this.hydrationTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.hydrationTimers.clear();
+
     for (const entry of this.docs.values()) {
       entry.ydoc.destroy();
     }
@@ -171,22 +188,12 @@ export class YjsSync {
 
     const entry = this.getOrCreateDocEntry(fileKey);
 
-    if (!entry.initializedFromLocal && !entry.hasRemoteState) {
-      const ytext = entry.ydoc.getText("content");
-      const currentContent = document.getText();
-
-      entry.ydoc.transact(() => {
-        ytext.delete(0, ytext.length);
-
-        if (currentContent.length > 0) {
-          ytext.insert(0, currentContent);
-        }
-      }, INITIAL_DOCUMENT_ORIGIN);
-
-      entry.initializedFromLocal = true;
-      this.log(
-        `initialized from local editor (${fileKey}, chars=${currentContent.length})`,
-      );
+    if (this.sessionRole === "host") {
+      this.seedFromLocalDocument(document, entry, fileKey, "host initial seed");
+      this.queueForceFullState(fileKey);
+    } else {
+      this.log(`guest waiting for remote hydration (${fileKey})`);
+      this.startGuestHydrationFallback(document, entry, fileKey);
     }
 
     const documentChangeDisposable = vscode.workspace.onDidChangeTextDocument(
@@ -203,6 +210,16 @@ export class YjsSync {
         if (this.isRemoteApplyInProgress(fileKey)) {
           this.log(`local change ignored during remote apply (${fileKey})`);
           return;
+        }
+
+        if (!entry.initializedFromLocal && !entry.hasRemoteState) {
+          this.seedFromLocalDocument(
+            event.document,
+            entry,
+            fileKey,
+            "guest fallback seed on local edit",
+          );
+          this.queueForceFullState(fileKey);
         }
 
         this.log(
@@ -250,6 +267,77 @@ export class YjsSync {
 
     binding.documentChangeDisposable.dispose();
     this.bindings.delete(fileKey);
+  }
+
+  private startGuestHydrationFallback(
+    document: vscode.TextDocument,
+    entry: DocEntry,
+    fileKey: string,
+  ): void {
+    if (this.hydrationTimers.has(fileKey)) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      this.hydrationTimers.delete(fileKey);
+
+      if (entry.hasRemoteState || entry.initializedFromLocal) {
+        return;
+      }
+
+      const currentContent = document.getText();
+      if (currentContent.length === 0) {
+        this.log(
+          `guest hydration fallback skipped: local file empty (${fileKey})`,
+        );
+        return;
+      }
+
+      this.seedFromLocalDocument(
+        document,
+        entry,
+        fileKey,
+        "guest hydration timeout fallback",
+      );
+      this.queueForceFullState(fileKey);
+    }, GUEST_HYDRATION_WAIT_MS);
+
+    this.hydrationTimers.set(fileKey, timer);
+  }
+
+  private clearHydrationTimer(fileKey: string): void {
+    const timer = this.hydrationTimers.get(fileKey);
+    if (!timer) {
+      return;
+    }
+
+    clearTimeout(timer);
+    this.hydrationTimers.delete(fileKey);
+  }
+
+  private seedFromLocalDocument(
+    document: vscode.TextDocument,
+    entry: DocEntry,
+    fileKey: string,
+    reason: string,
+  ): void {
+    if (entry.initializedFromLocal) {
+      return;
+    }
+
+    const currentContent = document.getText();
+    const ytext = entry.ydoc.getText("content");
+
+    entry.ydoc.transact(() => {
+      ytext.delete(0, ytext.length);
+
+      if (currentContent.length > 0) {
+        ytext.insert(0, currentContent);
+      }
+    }, INITIAL_DOCUMENT_ORIGIN);
+
+    entry.initializedFromLocal = true;
+    this.log(`${reason} (${fileKey}, chars=${currentContent.length})`);
   }
 
   private getCanonicalFileKey(document: vscode.TextDocument): string | null {
@@ -314,11 +402,35 @@ export class YjsSync {
   private queueOutboundUpdate(fileKey: string, update: Uint8Array): void {
     let state = this.outboundBatches.get(fileKey);
     if (!state) {
-      state = { updates: [] };
+      state = {
+        updates: [],
+        forceFullState: false,
+      };
       this.outboundBatches.set(fileKey, state);
     }
 
     state.updates.push(update);
+
+    if (state.timer !== undefined) {
+      return;
+    }
+
+    state.timer = setTimeout(() => {
+      void this.flushOutboundUpdates(fileKey);
+    }, OUTBOUND_BATCH_MS);
+  }
+
+  private queueForceFullState(fileKey: string): void {
+    let state = this.outboundBatches.get(fileKey);
+    if (!state) {
+      state = {
+        updates: [],
+        forceFullState: false,
+      };
+      this.outboundBatches.set(fileKey, state);
+    }
+
+    state.forceFullState = true;
 
     if (state.timer !== undefined) {
       return;
@@ -340,20 +452,38 @@ export class YjsSync {
       state.timer = undefined;
     }
 
-    if (state.updates.length === 0) {
+    const entry = this.docs.get(fileKey);
+    if (!entry) {
+      state.updates = [];
+      state.forceFullState = false;
       return;
     }
 
-    const updates = state.updates;
+    const pendingUpdates = state.updates;
     state.updates = [];
 
-    const mergedUpdate =
-      updates.length === 1 ? updates[0] : Y.mergeUpdates(updates);
+    let updateToSend: Uint8Array | null = null;
+    let mode = "incremental";
 
-    const payload = encodeSyncPayload(fileKey, mergedUpdate);
+    if (this.sessionRole === "host" || state.forceFullState) {
+      updateToSend = Y.encodeStateAsUpdate(entry.ydoc);
+      mode = "full-state";
+      state.forceFullState = false;
+    } else if (pendingUpdates.length > 0) {
+      updateToSend =
+        pendingUpdates.length === 1
+          ? pendingUpdates[0]
+          : Y.mergeUpdates(pendingUpdates);
+    }
+
+    if (!updateToSend) {
+      return;
+    }
+
+    const payload = encodeSyncPayload(fileKey, updateToSend);
 
     this.log(
-      `outbound sync send (${fileKey}, mergedUpdates=${updates.length}, updateBytes=${mergedUpdate.length}, payloadBytes=${payload.length})`,
+      `outbound sync send (${fileKey}, mode=${mode}, mergedUpdates=${pendingUpdates.length}, updateBytes=${updateToSend.length}, payloadBytes=${payload.length})`,
     );
 
     this.wsManager.send(payload);
@@ -383,6 +513,7 @@ export class YjsSync {
 
     const entry = this.getOrCreateDocEntry(fileKey);
     entry.hasRemoteState = true;
+    this.clearHydrationTimer(fileKey);
 
     Y.applyUpdate(entry.ydoc, update);
 
@@ -512,6 +643,7 @@ export class YjsSync {
   private endRemoteApply(fileKey: string): void {
     const currentDepth = this.remoteApplyDepthByFile.get(fileKey) ?? 0;
 
+    
     if (currentDepth <= 1) {
       this.remoteApplyDepthByFile.delete(fileKey);
       return;

@@ -19,7 +19,6 @@ export async function activate(
   const outputChannel = vscode.window.createOutputChannel("CodeDock");
   context.subscriptions.push(outputChannel);
 
-  // Sync-only diagnostic canary
   outputChannel.show(true);
   outputChannel.appendLine("CodeDock: DIAG BUILD LOADED (SYNC-ONLY)");
   vscode.window.showInformationMessage("CodeDock: DIAG BUILD LOADED (SYNC-ONLY)");
@@ -143,6 +142,8 @@ async function handleJoinRoom(
 
   const normalizedRoomId = roomId.trim();
   outputChannel.appendLine(`CodeDock: joining room ${normalizedRoomId}`);
+
+  yjsSync.setSessionRole("guest");
   wsManager.connect(token, normalizedRoomId);
   yjsSync.activate();
 }
@@ -178,6 +179,8 @@ async function handleCreateRoom(
     );
 
     outputChannel.appendLine(`CodeDock: created room ${room.id}`);
+
+    yjsSync.setSessionRole("host");
     wsManager.connect(token, room.id);
     yjsSync.activate();
   } catch (err) {

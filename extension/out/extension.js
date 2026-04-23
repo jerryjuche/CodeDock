@@ -1274,6 +1274,7 @@ var callAll = (fs, args2, i = 0) => {
     }
   }
 };
+var id = (a) => a;
 var isOneOf = (value, options) => options.includes(value);
 
 // node_modules/lib0/environment.js
@@ -1554,6 +1555,29 @@ var addToDeleteSet = (ds, client, clock, length2) => {
   )).push(new DeleteItem(clock, length2));
 };
 var createDeleteSet = () => new DeleteSet();
+var createDeleteSetFromStructStore = (ss) => {
+  const ds = createDeleteSet();
+  ss.clients.forEach((structs, client) => {
+    const dsitems = [];
+    for (let i = 0; i < structs.length; i++) {
+      const struct = structs[i];
+      if (struct.deleted) {
+        const clock = struct.id.clock;
+        let len = struct.length;
+        if (i + 1 < structs.length) {
+          for (let next = structs[i + 1]; i + 1 < structs.length && next.deleted; next = structs[++i + 1]) {
+            len += next.length;
+          }
+        }
+        dsitems.push(new DeleteItem(clock, len));
+      }
+    }
+    if (dsitems.length > 0) {
+      ds.clients.set(client, dsitems);
+    }
+  });
+  return ds;
+};
 var writeDeleteSet = (encoder, ds) => {
   writeVarUint(encoder.restEncoder, ds.clients.size);
   from(ds.clients.entries()).sort((a, b) => b[0] - a[0]).forEach(([client, dsitems]) => {
@@ -2652,6 +2676,41 @@ var applyUpdateV2 = (ydoc, update, transactionOrigin, YDecoder = UpdateDecoderV2
   readUpdateV2(decoder, ydoc, transactionOrigin, new YDecoder(decoder));
 };
 var applyUpdate = (ydoc, update, transactionOrigin) => applyUpdateV2(ydoc, update, transactionOrigin, UpdateDecoderV1);
+var writeStateAsUpdate = (encoder, doc, targetStateVector = /* @__PURE__ */ new Map()) => {
+  writeClientsStructs(encoder, doc.store, targetStateVector);
+  writeDeleteSet(encoder, createDeleteSetFromStructStore(doc.store));
+};
+var encodeStateAsUpdateV2 = (doc, encodedTargetStateVector = new Uint8Array([0]), encoder = new UpdateEncoderV2()) => {
+  const targetStateVector = decodeStateVector(encodedTargetStateVector);
+  writeStateAsUpdate(encoder, doc, targetStateVector);
+  const updates = [encoder.toUint8Array()];
+  if (doc.store.pendingDs) {
+    updates.push(doc.store.pendingDs);
+  }
+  if (doc.store.pendingStructs) {
+    updates.push(diffUpdateV2(doc.store.pendingStructs.update, encodedTargetStateVector));
+  }
+  if (updates.length > 1) {
+    if (encoder.constructor === UpdateEncoderV1) {
+      return mergeUpdates(updates.map((update, i) => i === 0 ? update : convertUpdateFormatV2ToV1(update)));
+    } else if (encoder.constructor === UpdateEncoderV2) {
+      return mergeUpdatesV2(updates);
+    }
+  }
+  return updates[0];
+};
+var encodeStateAsUpdate = (doc, encodedTargetStateVector) => encodeStateAsUpdateV2(doc, encodedTargetStateVector, new UpdateEncoderV1());
+var readStateVector = (decoder) => {
+  const ss = /* @__PURE__ */ new Map();
+  const ssLength = readVarUint(decoder.restDecoder);
+  for (let i = 0; i < ssLength; i++) {
+    const client = readVarUint(decoder.restDecoder);
+    const clock = readVarUint(decoder.restDecoder);
+    ss.set(client, clock);
+  }
+  return ss;
+};
+var decodeStateVector = (decodedState) => readStateVector(new DSDecoderV1(createDecoder(decodedState)));
 var EventHandler = class {
   constructor() {
     this.l = [];
@@ -3280,6 +3339,38 @@ var mergeUpdatesV2 = (updates, YDecoder = UpdateDecoderV2, YEncoder = UpdateEnco
   writeDeleteSet(updateEncoder, ds);
   return updateEncoder.toUint8Array();
 };
+var diffUpdateV2 = (update, sv, YDecoder = UpdateDecoderV2, YEncoder = UpdateEncoderV2) => {
+  const state = decodeStateVector(sv);
+  const encoder = new YEncoder();
+  const lazyStructWriter = new LazyStructWriter(encoder);
+  const decoder = new YDecoder(createDecoder(update));
+  const reader = new LazyStructReader(decoder, false);
+  while (reader.curr) {
+    const curr = reader.curr;
+    const currClient = curr.id.client;
+    const svClock = state.get(currClient) || 0;
+    if (reader.curr.constructor === Skip) {
+      reader.next();
+      continue;
+    }
+    if (curr.id.clock + curr.length > svClock) {
+      writeStructToLazyStructWriter(lazyStructWriter, curr, max(svClock - curr.id.clock, 0));
+      reader.next();
+      while (reader.curr && reader.curr.id.client === currClient) {
+        writeStructToLazyStructWriter(lazyStructWriter, reader.curr, 0);
+        reader.next();
+      }
+    } else {
+      while (reader.curr && reader.curr.id.client === currClient && reader.curr.id.clock + reader.curr.length <= svClock) {
+        reader.next();
+      }
+    }
+  }
+  finishLazyStructWriting(lazyStructWriter);
+  const ds = readDeleteSet(decoder);
+  writeDeleteSet(encoder, ds);
+  return encoder.toUint8Array();
+};
 var flushLazyStructWriter = (lazyWriter) => {
   if (lazyWriter.written > 0) {
     lazyWriter.clientStructs.push({ written: lazyWriter.written, restEncoder: toUint8Array(lazyWriter.encoder.restEncoder) });
@@ -3309,6 +3400,20 @@ var finishLazyStructWriting = (lazyWriter) => {
     writeUint8Array(restEncoder, partStructs.restEncoder);
   }
 };
+var convertUpdateFormat = (update, blockTransformer, YDecoder, YEncoder) => {
+  const updateDecoder = new YDecoder(createDecoder(update));
+  const lazyDecoder = new LazyStructReader(updateDecoder, false);
+  const updateEncoder = new YEncoder();
+  const lazyWriter = new LazyStructWriter(updateEncoder);
+  for (let curr = lazyDecoder.curr; curr !== null; curr = lazyDecoder.next()) {
+    writeStructToLazyStructWriter(lazyWriter, blockTransformer(curr), 0);
+  }
+  finishLazyStructWriting(lazyWriter);
+  const ds = readDeleteSet(updateDecoder);
+  writeDeleteSet(updateEncoder, ds);
+  return updateEncoder.toUint8Array();
+};
+var convertUpdateFormatV2ToV1 = (update) => convertUpdateFormat(update, id, UpdateDecoderV2, UpdateEncoderV1);
 var errorComputeChanges = "You must not compute changes after the event-handler fired.";
 var YEvent = class {
   /**
@@ -7828,6 +7933,7 @@ function decodeSyncPayload(buffer) {
 // src/yjs-sync.ts
 var OUTBOUND_BATCH_MS = 120;
 var INBOUND_RECONCILE_MS = 90;
+var GUEST_HYDRATION_WAIT_MS = 1200;
 var LOCAL_CHANGE_ORIGIN = /* @__PURE__ */ Symbol("codedock-local-change");
 var INITIAL_DOCUMENT_ORIGIN = /* @__PURE__ */ Symbol("codedock-initial-document");
 var YjsSync = class {
@@ -7840,8 +7946,14 @@ var YjsSync = class {
     this.remoteApplyDepthByFile = /* @__PURE__ */ new Map();
     this.outboundBatches = /* @__PURE__ */ new Map();
     this.patchStates = /* @__PURE__ */ new Map();
+    this.hydrationTimers = /* @__PURE__ */ new Map();
     this.active = false;
+    this.sessionRole = "guest";
     this.wsManager.onMessage((data) => this.handleIncoming(data));
+  }
+  setSessionRole(role) {
+    this.sessionRole = role;
+    this.log(`session role set (${role})`);
   }
   activate() {
     if (this.active) {
@@ -7849,7 +7961,7 @@ var YjsSync = class {
       return;
     }
     this.active = true;
-    this.log("activate");
+    this.log(`activate (${this.sessionRole})`);
     this.bindVisibleEditors();
     this.globalDisposables.push(
       vscode3.workspace.onDidOpenTextDocument((document2) => {
@@ -7905,6 +8017,10 @@ var YjsSync = class {
       }
     }
     this.patchStates.clear();
+    for (const timer of this.hydrationTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.hydrationTimers.clear();
     for (const entry of this.docs.values()) {
       entry.ydoc.destroy();
     }
@@ -7941,19 +8057,12 @@ var YjsSync = class {
     }
     this.log(`binding document (${fileKey})`);
     const entry = this.getOrCreateDocEntry(fileKey);
-    if (!entry.initializedFromLocal && !entry.hasRemoteState) {
-      const ytext = entry.ydoc.getText("content");
-      const currentContent = document2.getText();
-      entry.ydoc.transact(() => {
-        ytext.delete(0, ytext.length);
-        if (currentContent.length > 0) {
-          ytext.insert(0, currentContent);
-        }
-      }, INITIAL_DOCUMENT_ORIGIN);
-      entry.initializedFromLocal = true;
-      this.log(
-        `initialized from local editor (${fileKey}, chars=${currentContent.length})`
-      );
+    if (this.sessionRole === "host") {
+      this.seedFromLocalDocument(document2, entry, fileKey, "host initial seed");
+      this.queueForceFullState(fileKey);
+    } else {
+      this.log(`guest waiting for remote hydration (${fileKey})`);
+      this.startGuestHydrationFallback(document2, entry, fileKey);
     }
     const documentChangeDisposable = vscode3.workspace.onDidChangeTextDocument(
       (event) => {
@@ -7967,6 +8076,15 @@ var YjsSync = class {
         if (this.isRemoteApplyInProgress(fileKey)) {
           this.log(`local change ignored during remote apply (${fileKey})`);
           return;
+        }
+        if (!entry.initializedFromLocal && !entry.hasRemoteState) {
+          this.seedFromLocalDocument(
+            event.document,
+            entry,
+            fileKey,
+            "guest fallback seed on local edit"
+          );
+          this.queueForceFullState(fileKey);
         }
         this.log(
           `local document change (${fileKey}, changes=${event.contentChanges.length})`
@@ -8003,6 +8121,55 @@ var YjsSync = class {
     this.log(`unbinding document (${fileKey})`);
     binding.documentChangeDisposable.dispose();
     this.bindings.delete(fileKey);
+  }
+  startGuestHydrationFallback(document2, entry, fileKey) {
+    if (this.hydrationTimers.has(fileKey)) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      this.hydrationTimers.delete(fileKey);
+      if (entry.hasRemoteState || entry.initializedFromLocal) {
+        return;
+      }
+      const currentContent = document2.getText();
+      if (currentContent.length === 0) {
+        this.log(
+          `guest hydration fallback skipped: local file empty (${fileKey})`
+        );
+        return;
+      }
+      this.seedFromLocalDocument(
+        document2,
+        entry,
+        fileKey,
+        "guest hydration timeout fallback"
+      );
+      this.queueForceFullState(fileKey);
+    }, GUEST_HYDRATION_WAIT_MS);
+    this.hydrationTimers.set(fileKey, timer);
+  }
+  clearHydrationTimer(fileKey) {
+    const timer = this.hydrationTimers.get(fileKey);
+    if (!timer) {
+      return;
+    }
+    clearTimeout(timer);
+    this.hydrationTimers.delete(fileKey);
+  }
+  seedFromLocalDocument(document2, entry, fileKey, reason) {
+    if (entry.initializedFromLocal) {
+      return;
+    }
+    const currentContent = document2.getText();
+    const ytext = entry.ydoc.getText("content");
+    entry.ydoc.transact(() => {
+      ytext.delete(0, ytext.length);
+      if (currentContent.length > 0) {
+        ytext.insert(0, currentContent);
+      }
+    }, INITIAL_DOCUMENT_ORIGIN);
+    entry.initializedFromLocal = true;
+    this.log(`${reason} (${fileKey}, chars=${currentContent.length})`);
   }
   getCanonicalFileKey(document2) {
     if (document2.uri.scheme !== "file") {
@@ -8052,10 +8219,30 @@ var YjsSync = class {
   queueOutboundUpdate(fileKey, update) {
     let state = this.outboundBatches.get(fileKey);
     if (!state) {
-      state = { updates: [] };
+      state = {
+        updates: [],
+        forceFullState: false
+      };
       this.outboundBatches.set(fileKey, state);
     }
     state.updates.push(update);
+    if (state.timer !== void 0) {
+      return;
+    }
+    state.timer = setTimeout(() => {
+      void this.flushOutboundUpdates(fileKey);
+    }, OUTBOUND_BATCH_MS);
+  }
+  queueForceFullState(fileKey) {
+    let state = this.outboundBatches.get(fileKey);
+    if (!state) {
+      state = {
+        updates: [],
+        forceFullState: false
+      };
+      this.outboundBatches.set(fileKey, state);
+    }
+    state.forceFullState = true;
     if (state.timer !== void 0) {
       return;
     }
@@ -8072,15 +8259,29 @@ var YjsSync = class {
       clearTimeout(state.timer);
       state.timer = void 0;
     }
-    if (state.updates.length === 0) {
+    const entry = this.docs.get(fileKey);
+    if (!entry) {
+      state.updates = [];
+      state.forceFullState = false;
       return;
     }
-    const updates = state.updates;
+    const pendingUpdates = state.updates;
     state.updates = [];
-    const mergedUpdate = updates.length === 1 ? updates[0] : mergeUpdates(updates);
-    const payload = encodeSyncPayload(fileKey, mergedUpdate);
+    let updateToSend = null;
+    let mode = "incremental";
+    if (this.sessionRole === "host" || state.forceFullState) {
+      updateToSend = encodeStateAsUpdate(entry.ydoc);
+      mode = "full-state";
+      state.forceFullState = false;
+    } else if (pendingUpdates.length > 0) {
+      updateToSend = pendingUpdates.length === 1 ? pendingUpdates[0] : mergeUpdates(pendingUpdates);
+    }
+    if (!updateToSend) {
+      return;
+    }
+    const payload = encodeSyncPayload(fileKey, updateToSend);
     this.log(
-      `outbound sync send (${fileKey}, mergedUpdates=${updates.length}, updateBytes=${mergedUpdate.length}, payloadBytes=${payload.length})`
+      `outbound sync send (${fileKey}, mode=${mode}, mergedUpdates=${pendingUpdates.length}, updateBytes=${updateToSend.length}, payloadBytes=${payload.length})`
     );
     this.wsManager.send(payload);
   }
@@ -8102,6 +8303,7 @@ var YjsSync = class {
     this.log(`apply remote update (${fileKey}, bytes=${update.length})`);
     const entry = this.getOrCreateDocEntry(fileKey);
     entry.hasRemoteState = true;
+    this.clearHydrationTimer(fileKey);
     applyUpdate(entry.ydoc, update);
     this.markFileDirty(fileKey);
     this.scheduleReconcile(fileKey);
@@ -8325,6 +8527,7 @@ async function handleJoinRoom(outputChannel) {
   }
   const normalizedRoomId = roomId.trim();
   outputChannel.appendLine(`CodeDock: joining room ${normalizedRoomId}`);
+  yjsSync.setSessionRole("guest");
   wsManager.connect(token, normalizedRoomId);
   yjsSync.activate();
 }
@@ -8351,6 +8554,7 @@ async function handleCreateRoom(outputChannel) {
       `CodeDock: Room "${room.name}" created. ID: ${room.id}`
     );
     outputChannel.appendLine(`CodeDock: created room ${room.id}`);
+    yjsSync.setSessionRole("host");
     wsManager.connect(token, room.id);
     yjsSync.activate();
   } catch (err) {
