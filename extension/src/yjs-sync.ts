@@ -643,11 +643,12 @@ export class YjsSync {
   private endRemoteApply(fileKey: string): void {
     const currentDepth = this.remoteApplyDepthByFile.get(fileKey) ?? 0;
 
-    
+
     if (currentDepth <= 1) {
       this.remoteApplyDepthByFile.delete(fileKey);
       return;
     }
+    
 
     this.remoteApplyDepthByFile.set(fileKey, currentDepth - 1);
   }
