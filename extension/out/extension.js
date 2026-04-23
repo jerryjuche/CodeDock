@@ -7934,6 +7934,8 @@ function decodeSyncPayload(buffer) {
 var OUTBOUND_BATCH_MS = 120;
 var INBOUND_RECONCILE_MS = 90;
 var GUEST_HYDRATION_WAIT_MS = 1200;
+var MESSAGE_TYPE_SYNC = 1;
+var MESSAGE_TYPE_HYDRATION_REQUEST = 4;
 var LOCAL_CHANGE_ORIGIN = /* @__PURE__ */ Symbol("codedock-local-change");
 var INITIAL_DOCUMENT_ORIGIN = /* @__PURE__ */ Symbol("codedock-initial-document");
 var YjsSync = class {
@@ -8062,6 +8064,7 @@ var YjsSync = class {
       this.queueForceFullState(fileKey);
     } else {
       this.log(`guest waiting for remote hydration (${fileKey})`);
+      this.sendHydrationRequest(fileKey);
       this.startGuestHydrationFallback(document2, entry, fileKey);
     }
     const documentChangeDisposable = vscode3.workspace.onDidChangeTextDocument(
@@ -8288,6 +8291,14 @@ var YjsSync = class {
   handleIncoming(data) {
     const type = data.length > 0 ? data[0] : -1;
     this.log(`inbound frame observed (type=${type}, bytes=${data.length})`);
+    if (type === MESSAGE_TYPE_HYDRATION_REQUEST) {
+      this.handleHydrationRequest(data);
+      return;
+    }
+    if (type !== MESSAGE_TYPE_SYNC) {
+      this.log(`inbound frame ignored: unsupported type (${type})`);
+      return;
+    }
     const payload = decodeSyncPayload(data);
     if (!payload) {
       this.log("inbound frame ignored: decodeSyncPayload returned null");
@@ -8297,6 +8308,54 @@ var YjsSync = class {
       `inbound sync decoded (${payload.filePath}, updateBytes=${payload.update.length})`
     );
     void this.applyRemoteUpdate(payload);
+  }
+  handleHydrationRequest(data) {
+    const fileKey = this.decodeHydrationRequest(data);
+    if (!fileKey) {
+      this.log("hydration request ignored: invalid payload");
+      return;
+    }
+    if (this.sessionRole !== "host") {
+      this.log(`hydration request ignored: not host (${fileKey})`);
+      return;
+    }
+    const entry = this.docs.get(fileKey);
+    if (!entry) {
+      this.log(`hydration request ignored: no doc entry (${fileKey})`);
+      return;
+    }
+    const fullState = encodeStateAsUpdate(entry.ydoc);
+    const payload = encodeSyncPayload(fileKey, fullState);
+    this.log(
+      `responding to hydration request (${fileKey}, updateBytes=${fullState.length}, payloadBytes=${payload.length})`
+    );
+    this.wsManager.send(payload);
+  }
+  sendHydrationRequest(fileKey) {
+    const payload = this.encodeHydrationRequest(fileKey);
+    this.log(
+      `sending hydration request (${fileKey}, payloadBytes=${payload.length})`
+    );
+    this.wsManager.send(payload);
+  }
+  encodeHydrationRequest(fileKey) {
+    const filePathBytes = new TextEncoder().encode(fileKey);
+    const result = new Uint8Array(1 + 2 + filePathBytes.length);
+    result[0] = MESSAGE_TYPE_HYDRATION_REQUEST;
+    result[1] = filePathBytes.length >> 8 & 255;
+    result[2] = filePathBytes.length & 255;
+    result.set(filePathBytes, 3);
+    return result;
+  }
+  decodeHydrationRequest(data) {
+    if (data.length < 3) {
+      return null;
+    }
+    const filePathLen = data[1] << 8 | data[2];
+    if (filePathLen <= 0 || 3 + filePathLen > data.length) {
+      return null;
+    }
+    return new TextDecoder().decode(data.slice(3, 3 + filePathLen));
   }
   async applyRemoteUpdate(payload) {
     const { filePath: fileKey, update } = payload;

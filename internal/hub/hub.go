@@ -108,6 +108,9 @@ func (h *Hub) Route(msg Message) {
 
 	case MessageTypeChat:
 		h.Broadcast(msg.Sender, msg.Sender.RoomID, append([]byte{MessageTypeChat}, msg.Payload...))
+
+	case MessageTypeHydrationRequest:
+		h.Broadcast(msg.Sender, msg.Sender.RoomID, append([]byte{MessageTypeHydrationRequest}, msg.Payload...))
 	}
 }
 
