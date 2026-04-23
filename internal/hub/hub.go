@@ -111,6 +111,18 @@ func (h *Hub) Route(msg Message) {
 
 	case MessageTypeHydrationRequest:
 		h.Broadcast(msg.Sender, msg.Sender.RoomID, append([]byte{MessageTypeHydrationRequest}, msg.Payload...))
+
+	case MessageTypeWorkspaceManifestReq:
+		h.Broadcast(msg.Sender, msg.Sender.RoomID, append([]byte{MessageTypeWorkspaceManifestReq}, msg.Payload...))
+
+	case MessageTypeWorkspaceManifestRes:
+		h.Broadcast(msg.Sender, msg.Sender.RoomID, append([]byte{MessageTypeWorkspaceManifestRes}, msg.Payload...))
+
+	case MessageTypeFileBootstrapReq:
+		h.Broadcast(msg.Sender, msg.Sender.RoomID, append([]byte{MessageTypeFileBootstrapReq}, msg.Payload...))
+
+	case MessageTypeFileBootstrapRes:
+		h.Broadcast(msg.Sender, msg.Sender.RoomID, append([]byte{MessageTypeFileBootstrapRes}, msg.Payload...))
 	}
 }
 

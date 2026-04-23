@@ -400,6 +400,7 @@ var WebSocketManager = class {
 };
 
 // src/yjs-sync.ts
+var fs = __toESM(require("fs/promises"));
 var path = __toESM(require("path"));
 var vscode3 = __toESM(require("vscode"));
 
@@ -1263,14 +1264,14 @@ var deepFreeze = (o) => {
 };
 
 // node_modules/lib0/function.js
-var callAll = (fs, args2, i = 0) => {
+var callAll = (fs2, args2, i = 0) => {
   try {
-    for (; i < fs.length; i++) {
-      fs[i](...args2);
+    for (; i < fs2.length; i++) {
+      fs2[i](...args2);
     }
   } finally {
-    if (i < fs.length) {
-      callAll(fs, args2, i + 1);
+    if (i < fs2.length) {
+      callAll(fs2, args2, i + 1);
     }
   }
 };
@@ -3000,15 +3001,15 @@ var cleanupTransactions = (transactionCleanups, i) => {
       sortAndMergeDeleteSet(ds);
       transaction.afterState = getStateVector(transaction.doc.store);
       doc.emit("beforeObserverCalls", [transaction, doc]);
-      const fs = [];
+      const fs2 = [];
       transaction.changed.forEach(
-        (subs, itemtype) => fs.push(() => {
+        (subs, itemtype) => fs2.push(() => {
           if (itemtype._item === null || !itemtype._item.deleted) {
             itemtype._callObserver(transaction, subs);
           }
         })
       );
-      fs.push(() => {
+      fs2.push(() => {
         transaction.changedParentTypes.forEach((events, type) => {
           if (type._dEH.l.length > 0 && (type._item === null || !type._item.deleted)) {
             events = events.filter(
@@ -3019,19 +3020,19 @@ var cleanupTransactions = (transactionCleanups, i) => {
               event._path = null;
             });
             events.sort((event1, event2) => event1.path.length - event2.path.length);
-            fs.push(() => {
+            fs2.push(() => {
               callEventHandlerListeners(type._dEH, events, transaction);
             });
           }
         });
-        fs.push(() => doc.emit("afterTransaction", [transaction, doc]));
-        fs.push(() => {
+        fs2.push(() => doc.emit("afterTransaction", [transaction, doc]));
+        fs2.push(() => {
           if (transaction._needFormattingCleanup) {
             cleanupYTextAfterTransaction(transaction);
           }
         });
       });
-      callAll(fs, []);
+      callAll(fs2, []);
     } finally {
       if (doc.gc) {
         tryGcDeleteSet(ds, store, doc.gcFilter);
@@ -7883,13 +7884,20 @@ glo[importIdentifier] = true;
 var MessageType = {
   SYNC: 1,
   AWARENESS: 2,
-  CHAT: 3
+  CHAT: 3,
+  HYDRATION_REQUEST: 4,
+  WORKSPACE_MANIFEST_REQUEST: 5,
+  WORKSPACE_MANIFEST_RESPONSE: 6,
+  FILE_BOOTSTRAP_REQUEST: 7,
+  FILE_BOOTSTRAP_RESPONSE: 8
 };
 function encodeSyncPayload(filePath, update) {
   const encoder = new TextEncoder();
   const filePathBytes = encoder.encode(filePath);
   if (filePathBytes.length > 65535) {
-    throw new Error(`File path too long: ${filePathBytes.length} bytes. Maximum is 65535.`);
+    throw new Error(
+      `File path too long: ${filePathBytes.length} bytes. Maximum is 65535.`
+    );
   }
   const buffer = new Uint8Array(1 + 2 + filePathBytes.length + update.length);
   let offset = 0;
@@ -7929,15 +7937,169 @@ function decodeSyncPayload(buffer) {
     return null;
   }
 }
+function encodeJsonPayload(type, payload) {
+  const encoder = new TextEncoder();
+  const json = JSON.stringify(payload);
+  const jsonBytes = encoder.encode(json);
+  const buffer = new Uint8Array(1 + jsonBytes.length);
+  buffer[0] = type;
+  buffer.set(jsonBytes, 1);
+  return buffer;
+}
+function decodeJsonPayload(buffer, expectedType) {
+  try {
+    if (buffer.length < 2 || buffer[0] !== expectedType) {
+      return null;
+    }
+    const decoder = new TextDecoder();
+    const json = decoder.decode(buffer.slice(1));
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+function encodeHydrationRequest(filePath) {
+  const filePathBytes = new TextEncoder().encode(filePath);
+  const result = new Uint8Array(1 + 2 + filePathBytes.length);
+  result[0] = MessageType.HYDRATION_REQUEST;
+  result[1] = filePathBytes.length >> 8 & 255;
+  result[2] = filePathBytes.length & 255;
+  result.set(filePathBytes, 3);
+  return result;
+}
+function decodeHydrationRequest(buffer) {
+  try {
+    if (buffer.length < 3 || buffer[0] !== MessageType.HYDRATION_REQUEST) {
+      return null;
+    }
+    const filePathLen = buffer[1] << 8 | buffer[2];
+    if (filePathLen <= 0 || 3 + filePathLen > buffer.length) {
+      return null;
+    }
+    return new TextDecoder().decode(buffer.slice(3, 3 + filePathLen));
+  } catch {
+    return null;
+  }
+}
+function encodeWorkspaceManifestRequest() {
+  const request = {
+    requestedAt: Date.now()
+  };
+  return encodeJsonPayload(MessageType.WORKSPACE_MANIFEST_REQUEST, request);
+}
+function decodeWorkspaceManifestRequest(buffer) {
+  return decodeJsonPayload(
+    buffer,
+    MessageType.WORKSPACE_MANIFEST_REQUEST
+  );
+}
+function encodeWorkspaceManifestResponse(manifest) {
+  return encodeJsonPayload(MessageType.WORKSPACE_MANIFEST_RESPONSE, manifest);
+}
+function decodeWorkspaceManifestResponse(buffer) {
+  return decodeJsonPayload(
+    buffer,
+    MessageType.WORKSPACE_MANIFEST_RESPONSE
+  );
+}
+function encodeFileBootstrapRequest(request) {
+  return encodeJsonPayload(MessageType.FILE_BOOTSTRAP_REQUEST, request);
+}
+function decodeFileBootstrapRequest(buffer) {
+  return decodeJsonPayload(
+    buffer,
+    MessageType.FILE_BOOTSTRAP_REQUEST
+  );
+}
+function encodeFileBootstrapResponse(response) {
+  return encodeJsonPayload(MessageType.FILE_BOOTSTRAP_RESPONSE, response);
+}
+function decodeFileBootstrapResponse(buffer) {
+  return decodeJsonPayload(
+    buffer,
+    MessageType.FILE_BOOTSTRAP_RESPONSE
+  );
+}
 
 // src/yjs-sync.ts
 var OUTBOUND_BATCH_MS = 120;
 var INBOUND_RECONCILE_MS = 90;
 var GUEST_HYDRATION_WAIT_MS = 1200;
-var MESSAGE_TYPE_SYNC = 1;
-var MESSAGE_TYPE_HYDRATION_REQUEST = 4;
+var WORKSPACE_MANIFEST_RETRY_MS = 1e3;
+var MAX_MANIFEST_RETRIES = 6;
+var MAX_BOOTSTRAP_FILE_BYTES = 400 * 1024;
 var LOCAL_CHANGE_ORIGIN = /* @__PURE__ */ Symbol("codedock-local-change");
 var INITIAL_DOCUMENT_ORIGIN = /* @__PURE__ */ Symbol("codedock-initial-document");
+var IGNORED_DIR_NAMES = /* @__PURE__ */ new Set([
+  ".git",
+  "node_modules",
+  "dist",
+  "build",
+  ".next",
+  ".codedock",
+  ".vscode"
+]);
+var IGNORED_FILE_NAMES = /* @__PURE__ */ new Set([
+  ".DS_Store",
+  ".env",
+  ".env.local",
+  ".env.development",
+  ".env.production",
+  ".env.test"
+]);
+var TEXT_EXTENSIONS = /* @__PURE__ */ new Set([
+  ".go",
+  ".ts",
+  ".tsx",
+  ".js",
+  ".jsx",
+  ".json",
+  ".md",
+  ".txt",
+  ".yaml",
+  ".yml",
+  ".toml",
+  ".ini",
+  ".cfg",
+  ".conf",
+  ".sh",
+  ".bash",
+  ".zsh",
+  ".css",
+  ".scss",
+  ".html",
+  ".xml",
+  ".sql",
+  ".proto",
+  ".graphql",
+  ".gql"
+]);
+var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".ico",
+  ".pdf",
+  ".zip",
+  ".gz",
+  ".tar",
+  ".tgz",
+  ".jar",
+  ".so",
+  ".dll",
+  ".exe",
+  ".bin",
+  ".woff",
+  ".woff2",
+  ".ttf",
+  ".otf",
+  ".mp4",
+  ".mp3",
+  ".avi",
+  ".mov"
+]);
 var YjsSync = class {
   constructor(wsManager2, outputChannel) {
     this.wsManager = wsManager2;
@@ -7949,6 +8111,10 @@ var YjsSync = class {
     this.outboundBatches = /* @__PURE__ */ new Map();
     this.patchStates = /* @__PURE__ */ new Map();
     this.hydrationTimers = /* @__PURE__ */ new Map();
+    this.pendingFileBootstrapRequests = /* @__PURE__ */ new Set();
+    this.workspaceManifestReceived = false;
+    this.workspaceManifestRetryCount = 0;
+    this.guestMaterializationRoot = null;
     this.active = false;
     this.sessionRole = "guest";
     this.wsManager.onMessage((data) => this.handleIncoming(data));
@@ -7956,6 +8122,12 @@ var YjsSync = class {
   setSessionRole(role) {
     this.sessionRole = role;
     this.log(`session role set (${role})`);
+  }
+  setGuestMaterializationRoot(root) {
+    this.guestMaterializationRoot = root;
+    this.log(
+      `guest materialization root ${root ? `set (${root.fsPath})` : "cleared"}`
+    );
   }
   activate() {
     if (this.active) {
@@ -7965,6 +8137,10 @@ var YjsSync = class {
     this.active = true;
     this.log(`activate (${this.sessionRole})`);
     this.bindVisibleEditors();
+    if (this.sessionRole === "guest") {
+      this.requestWorkspaceManifest();
+      this.scheduleWorkspaceManifestRetry();
+    }
     this.globalDisposables.push(
       vscode3.workspace.onDidOpenTextDocument((document2) => {
         if (!this.active) {
@@ -8023,6 +8199,14 @@ var YjsSync = class {
       clearTimeout(timer);
     }
     this.hydrationTimers.clear();
+    if (this.workspaceManifestRetryTimer !== void 0) {
+      clearTimeout(this.workspaceManifestRetryTimer);
+      this.workspaceManifestRetryTimer = void 0;
+    }
+    this.pendingFileBootstrapRequests.clear();
+    this.workspaceManifestReceived = false;
+    this.workspaceManifestRetryCount = 0;
+    this.guestMaterializationRoot = null;
     for (const entry of this.docs.values()) {
       entry.ydoc.destroy();
     }
@@ -8125,6 +8309,35 @@ var YjsSync = class {
     binding.documentChangeDisposable.dispose();
     this.bindings.delete(fileKey);
   }
+  requestWorkspaceManifest() {
+    const payload = encodeWorkspaceManifestRequest();
+    this.log(`requesting workspace manifest (payloadBytes=${payload.length})`);
+    this.wsManager.send(payload);
+  }
+  scheduleWorkspaceManifestRetry() {
+    if (this.sessionRole !== "guest" || this.workspaceManifestReceived) {
+      return;
+    }
+    if (this.workspaceManifestRetryTimer !== void 0) {
+      return;
+    }
+    this.workspaceManifestRetryTimer = setTimeout(() => {
+      this.workspaceManifestRetryTimer = void 0;
+      if (this.workspaceManifestReceived || !this.active) {
+        return;
+      }
+      this.workspaceManifestRetryCount++;
+      if (this.workspaceManifestRetryCount > MAX_MANIFEST_RETRIES) {
+        this.log("workspace manifest retry limit reached");
+        return;
+      }
+      this.log(
+        `workspace manifest retry (${this.workspaceManifestRetryCount}/${MAX_MANIFEST_RETRIES})`
+      );
+      this.requestWorkspaceManifest();
+      this.scheduleWorkspaceManifestRetry();
+    }, WORKSPACE_MANIFEST_RETRY_MS);
+  }
   startGuestHydrationFallback(document2, entry, fileKey) {
     if (this.hydrationTimers.has(fileKey)) {
       return;
@@ -8192,6 +8405,20 @@ var YjsSync = class {
       return null;
     }
     return relativePath.replace(/\\/g, "/");
+  }
+  getWorkspaceRoot() {
+    const folders = vscode3.workspace.workspaceFolders;
+    if (!folders || folders.length === 0) {
+      return null;
+    }
+    return folders[0].uri;
+  }
+  getMaterializationRoot() {
+    const workspaceRoot = this.getWorkspaceRoot();
+    if (workspaceRoot) {
+      return workspaceRoot;
+    }
+    return this.guestMaterializationRoot;
   }
   getOrCreateDocEntry(fileKey) {
     const existing = this.docs.get(fileKey);
@@ -8291,13 +8518,27 @@ var YjsSync = class {
   handleIncoming(data) {
     const type = data.length > 0 ? data[0] : -1;
     this.log(`inbound frame observed (type=${type}, bytes=${data.length})`);
-    if (type === MESSAGE_TYPE_HYDRATION_REQUEST) {
-      this.handleHydrationRequest(data);
-      return;
-    }
-    if (type !== MESSAGE_TYPE_SYNC) {
-      this.log(`inbound frame ignored: unsupported type (${type})`);
-      return;
+    switch (type) {
+      case MessageType.HYDRATION_REQUEST:
+        this.handleHydrationRequest(data);
+        return;
+      case MessageType.WORKSPACE_MANIFEST_REQUEST:
+        void this.handleWorkspaceManifestRequest(data);
+        return;
+      case MessageType.WORKSPACE_MANIFEST_RESPONSE:
+        void this.handleWorkspaceManifestResponse(data);
+        return;
+      case MessageType.FILE_BOOTSTRAP_REQUEST:
+        void this.handleFileBootstrapRequest(data);
+        return;
+      case MessageType.FILE_BOOTSTRAP_RESPONSE:
+        void this.handleFileBootstrapResponse(data);
+        return;
+      case MessageType.SYNC:
+        break;
+      default:
+        this.log(`inbound frame ignored: unsupported type (${type})`);
+        return;
     }
     const payload = decodeSyncPayload(data);
     if (!payload) {
@@ -8310,7 +8551,7 @@ var YjsSync = class {
     void this.applyRemoteUpdate(payload);
   }
   handleHydrationRequest(data) {
-    const fileKey = this.decodeHydrationRequest(data);
+    const fileKey = decodeHydrationRequest(data);
     if (!fileKey) {
       this.log("hydration request ignored: invalid payload");
       return;
@@ -8332,30 +8573,309 @@ var YjsSync = class {
     this.wsManager.send(payload);
   }
   sendHydrationRequest(fileKey) {
-    const payload = this.encodeHydrationRequest(fileKey);
+    const payload = encodeHydrationRequest(fileKey);
     this.log(
       `sending hydration request (${fileKey}, payloadBytes=${payload.length})`
     );
     this.wsManager.send(payload);
   }
-  encodeHydrationRequest(fileKey) {
-    const filePathBytes = new TextEncoder().encode(fileKey);
-    const result = new Uint8Array(1 + 2 + filePathBytes.length);
-    result[0] = MESSAGE_TYPE_HYDRATION_REQUEST;
-    result[1] = filePathBytes.length >> 8 & 255;
-    result[2] = filePathBytes.length & 255;
-    result.set(filePathBytes, 3);
-    return result;
+  async handleWorkspaceManifestRequest(data) {
+    const request = decodeWorkspaceManifestRequest(data);
+    if (!request) {
+      this.log("workspace manifest request ignored: invalid payload");
+      return;
+    }
+    if (this.sessionRole !== "host") {
+      this.log("workspace manifest request ignored: not host");
+      return;
+    }
+    const manifest = await this.buildWorkspaceManifest();
+    if (!manifest) {
+      this.log("workspace manifest response skipped: no workspace root");
+      return;
+    }
+    const payload = encodeWorkspaceManifestResponse(manifest);
+    this.log(
+      `responding to workspace manifest request (requestedAt=${request.requestedAt}, entries=${manifest.entries.length}, payloadBytes=${payload.length})`
+    );
+    this.wsManager.send(payload);
   }
-  decodeHydrationRequest(data) {
-    if (data.length < 3) {
+  async handleWorkspaceManifestResponse(data) {
+    const manifest = decodeWorkspaceManifestResponse(data);
+    if (!manifest) {
+      this.log("workspace manifest response ignored: invalid payload");
+      return;
+    }
+    if (this.sessionRole !== "guest") {
+      this.log("workspace manifest response ignored: not guest");
+      return;
+    }
+    this.workspaceManifestReceived = true;
+    if (this.workspaceManifestRetryTimer !== void 0) {
+      clearTimeout(this.workspaceManifestRetryTimer);
+      this.workspaceManifestRetryTimer = void 0;
+    }
+    this.log(
+      `received workspace manifest (root=${manifest.rootName}, entries=${manifest.entries.length})`
+    );
+    await this.materializeWorkspaceManifest(manifest);
+  }
+  async handleFileBootstrapRequest(data) {
+    const request = decodeFileBootstrapRequest(data);
+    if (!request) {
+      this.log("file bootstrap request ignored: invalid payload");
+      return;
+    }
+    if (this.sessionRole !== "host") {
+      this.log(`file bootstrap request ignored: not host (${request.path})`);
+      return;
+    }
+    const rootUri = this.getWorkspaceRoot();
+    if (!rootUri) {
+      this.log("file bootstrap request ignored: no workspace root");
+      return;
+    }
+    const targetUri = this.resolveWorkspacePath(rootUri, request.path);
+    if (!targetUri) {
+      this.log(`file bootstrap request ignored: invalid path (${request.path})`);
+      return;
+    }
+    try {
+      const bytes = await fs.readFile(targetUri.fsPath);
+      if (bytes.length > MAX_BOOTSTRAP_FILE_BYTES) {
+        this.log(
+          `file bootstrap skipped: file too large (${request.path}, bytes=${bytes.length})`
+        );
+        return;
+      }
+      if (!this.isProbablyTextBuffer(bytes, request.path)) {
+        this.log(`file bootstrap skipped: non-text file (${request.path})`);
+        return;
+      }
+      const response = {
+        path: request.path,
+        content: new TextDecoder().decode(bytes)
+      };
+      const payload = encodeFileBootstrapResponse(response);
+      this.log(
+        `responding to file bootstrap request (${request.path}, payloadBytes=${payload.length})`
+      );
+      this.wsManager.send(payload);
+    } catch (error) {
+      this.log(
+        `file bootstrap request failed (${request.path}): ${this.describeError(error)}`
+      );
+    }
+  }
+  async handleFileBootstrapResponse(data) {
+    const response = decodeFileBootstrapResponse(data);
+    if (!response) {
+      this.log("file bootstrap response ignored: invalid payload");
+      return;
+    }
+    this.pendingFileBootstrapRequests.delete(response.path);
+    if (this.sessionRole !== "guest") {
+      this.log(`file bootstrap response ignored: not guest (${response.path})`);
+      return;
+    }
+    const rootUri = this.getMaterializationRoot();
+    if (!rootUri) {
+      this.log("file bootstrap response ignored: no materialization root");
+      return;
+    }
+    if (this.bindings.has(response.path)) {
+      this.log(
+        `file bootstrap response skipped: file currently bound (${response.path})`
+      );
+      return;
+    }
+    const targetUri = this.resolveWorkspacePath(rootUri, response.path);
+    if (!targetUri) {
+      this.log(`file bootstrap response ignored: invalid path (${response.path})`);
+      return;
+    }
+    try {
+      const existingContent = await this.readFileTextIfExists(targetUri);
+      if (existingContent !== null && existingContent.length > 0 && existingContent !== response.content) {
+        this.log(
+          `file bootstrap response skipped: local file has conflicting content (${response.path})`
+        );
+        return;
+      }
+      await this.ensureParentDirectory(targetUri);
+      await vscode3.workspace.fs.writeFile(
+        targetUri,
+        new TextEncoder().encode(response.content)
+      );
+      this.log(
+        `file bootstrap response applied (${response.path}, chars=${response.content.length})`
+      );
+    } catch (error) {
+      this.log(
+        `file bootstrap response failed (${response.path}): ${this.describeError(error)}`
+      );
+    }
+  }
+  async buildWorkspaceManifest() {
+    const rootUri = this.getWorkspaceRoot();
+    if (!rootUri) {
       return null;
     }
-    const filePathLen = data[1] << 8 | data[2];
-    if (filePathLen <= 0 || 3 + filePathLen > data.length) {
+    const entries = [];
+    await this.walkWorkspace(rootUri.fsPath, rootUri.fsPath, entries);
+    entries.sort((a, b) => a.path.localeCompare(b.path));
+    return {
+      rootName: path.basename(rootUri.fsPath),
+      entries,
+      generatedAt: Date.now()
+    };
+  }
+  async walkWorkspace(rootFsPath, currentFsPath, entries) {
+    const dirents = await fs.readdir(currentFsPath, { withFileTypes: true });
+    dirents.sort((a, b) => a.name.localeCompare(b.name));
+    for (const dirent of dirents) {
+      const absolutePath = path.join(currentFsPath, dirent.name);
+      const relativePath = path.relative(rootFsPath, absolutePath).replace(/\\/g, "/");
+      if (!relativePath || this.shouldIgnoreRelativePath(relativePath)) {
+        continue;
+      }
+      if (dirent.isDirectory()) {
+        entries.push({
+          path: relativePath,
+          kind: "dir"
+        });
+        await this.walkWorkspace(rootFsPath, absolutePath, entries);
+        continue;
+      }
+      if (!dirent.isFile()) {
+        continue;
+      }
+      const stat2 = await fs.stat(absolutePath);
+      const isText = this.looksLikeTextPath(relativePath);
+      entries.push({
+        path: relativePath,
+        kind: "file",
+        isText,
+        size: stat2.size
+      });
+    }
+  }
+  async materializeWorkspaceManifest(manifest) {
+    const rootUri = this.getMaterializationRoot();
+    if (!rootUri) {
+      this.log("workspace manifest materialization skipped: no materialization root");
+      return;
+    }
+    const dirs = manifest.entries.filter((entry) => entry.kind === "dir").sort((a, b) => a.path.length - b.path.length);
+    for (const entry of dirs) {
+      const dirUri = this.resolveWorkspacePath(rootUri, entry.path);
+      if (!dirUri) {
+        continue;
+      }
+      await vscode3.workspace.fs.createDirectory(dirUri);
+    }
+    const files = manifest.entries.filter((entry) => entry.kind === "file");
+    for (const entry of files) {
+      const fileUri = this.resolveWorkspacePath(rootUri, entry.path);
+      if (!fileUri) {
+        continue;
+      }
+      await this.ensureParentDirectory(fileUri);
+      const exists = await this.fileExists(fileUri);
+      if (!exists && entry.isText) {
+        await vscode3.workspace.fs.writeFile(fileUri, new Uint8Array());
+      }
+      if (entry.isText) {
+        const alreadyBound = this.bindings.has(entry.path);
+        if (!alreadyBound) {
+          this.requestFileBootstrap(entry.path);
+        }
+      }
+    }
+    this.log(
+      `workspace manifest materialized (dirs=${dirs.length}, files=${files.length})`
+    );
+  }
+  requestFileBootstrap(filePath) {
+    if (this.pendingFileBootstrapRequests.has(filePath)) {
+      return;
+    }
+    this.pendingFileBootstrapRequests.add(filePath);
+    const request = { path: filePath };
+    const payload = encodeFileBootstrapRequest(request);
+    this.log(
+      `requesting file bootstrap (${filePath}, payloadBytes=${payload.length})`
+    );
+    this.wsManager.send(payload);
+  }
+  resolveWorkspacePath(rootUri, relativePath) {
+    const normalized = relativePath.replace(/\\/g, "/");
+    if (normalized.length === 0 || normalized.startsWith("/") || path.isAbsolute(normalized)) {
       return null;
     }
-    return new TextDecoder().decode(data.slice(3, 3 + filePathLen));
+    const segments = normalized.split("/").filter(Boolean);
+    if (segments.length === 0 || segments.some((segment) => segment === "..")) {
+      return null;
+    }
+    return vscode3.Uri.joinPath(rootUri, ...segments);
+  }
+  shouldIgnoreRelativePath(relativePath) {
+    const normalized = relativePath.replace(/\\/g, "/");
+    const segments = normalized.split("/").filter(Boolean);
+    const basename2 = segments[segments.length - 1] ?? "";
+    if (segments.some((segment) => IGNORED_DIR_NAMES.has(segment))) {
+      return true;
+    }
+    if (IGNORED_FILE_NAMES.has(basename2)) {
+      return true;
+    }
+    return false;
+  }
+  looksLikeTextPath(relativePath) {
+    const basename2 = path.basename(relativePath);
+    if (IGNORED_FILE_NAMES.has(basename2)) {
+      return false;
+    }
+    const ext = path.extname(relativePath).toLowerCase();
+    if (BINARY_EXTENSIONS.has(ext)) {
+      return false;
+    }
+    if (TEXT_EXTENSIONS.has(ext)) {
+      return true;
+    }
+    return ext === "";
+  }
+  isProbablyTextBuffer(buffer, relativePath) {
+    if (!this.looksLikeTextPath(relativePath)) {
+      return false;
+    }
+    const sampleLength = Math.min(buffer.length, 8192);
+    for (let i = 0; i < sampleLength; i++) {
+      if (buffer[i] === 0) {
+        return false;
+      }
+    }
+    return true;
+  }
+  async fileExists(uri) {
+    try {
+      await vscode3.workspace.fs.stat(uri);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  async ensureParentDirectory(fileUri) {
+    const parentDir = path.dirname(fileUri.fsPath);
+    await vscode3.workspace.fs.createDirectory(vscode3.Uri.file(parentDir));
+  }
+  async readFileTextIfExists(uri) {
+    try {
+      const bytes = await vscode3.workspace.fs.readFile(uri);
+      return new TextDecoder().decode(bytes);
+    } catch {
+      return null;
+    }
   }
   async applyRemoteUpdate(payload) {
     const { filePath: fileKey, update } = payload;
@@ -8467,6 +8987,9 @@ var YjsSync = class {
       return;
     }
     this.remoteApplyDepthByFile.set(fileKey, currentDepth - 1);
+  }
+  describeError(error) {
+    return error instanceof Error ? error.message : "unknown error";
   }
   log(message) {
     this.outputChannel.appendLine(`CodeDock[sync]: ${message}`);
@@ -8585,10 +9108,29 @@ async function handleJoinRoom(outputChannel) {
     return;
   }
   const normalizedRoomId = roomId.trim();
-  outputChannel.appendLine(`CodeDock: joining room ${normalizedRoomId}`);
-  yjsSync.setSessionRole("guest");
-  wsManager.connect(token, normalizedRoomId);
-  yjsSync.activate();
+  if (!hasWorkspaceRoot()) {
+    const selected = await vscode4.window.showOpenDialog({
+      canSelectMany: false,
+      canSelectFiles: false,
+      canSelectFolders: true,
+      openLabel: "Use Folder for CodeDock Room",
+      title: "Choose a folder where CodeDock should hydrate the host project"
+    });
+    if (!selected || selected.length === 0) {
+      outputChannel.appendLine(
+        "CodeDock: join cancelled (no guest workspace folder selected)"
+      );
+      return;
+    }
+    const destinationRoot = selected[0];
+    outputChannel.appendLine(
+      `CodeDock: guest materialization root set to ${destinationRoot.fsPath}`
+    );
+    yjsSync.setGuestMaterializationRoot(destinationRoot);
+  } else {
+    yjsSync.setGuestMaterializationRoot(null);
+  }
+  await joinRoomNow(token, normalizedRoomId, outputChannel);
 }
 async function handleCreateRoom(outputChannel) {
   const token = await authManager.getToken();
@@ -8596,6 +9138,16 @@ async function handleCreateRoom(outputChannel) {
     vscode4.window.showErrorMessage(
       "CodeDock: You must be logged in to create a room."
     );
+    return;
+  }
+  if (!hasWorkspaceRoot()) {
+    const selection = await vscode4.window.showErrorMessage(
+      "CodeDock: Open the project folder you want to share before creating a room.",
+      "Open Folder"
+    );
+    if (selection === "Open Folder") {
+      await vscode4.commands.executeCommand("workbench.action.files.openFolder");
+    }
     return;
   }
   const roomName = await vscode4.window.showInputBox({
@@ -8614,6 +9166,7 @@ async function handleCreateRoom(outputChannel) {
     );
     outputChannel.appendLine(`CodeDock: created room ${room.id}`);
     yjsSync.setSessionRole("host");
+    yjsSync.setGuestMaterializationRoot(null);
     wsManager.connect(token, room.id);
     yjsSync.activate();
   } catch (err) {
@@ -8621,6 +9174,16 @@ async function handleCreateRoom(outputChannel) {
       `CodeDock: Failed to create room \u2014 ${err instanceof Error ? err.message : "unknown error"}`
     );
   }
+}
+async function joinRoomNow(token, roomId, outputChannel) {
+  outputChannel.appendLine(`CodeDock: joining room ${roomId}`);
+  yjsSync.setSessionRole("guest");
+  wsManager.connect(token, roomId);
+  yjsSync.activate();
+}
+function hasWorkspaceRoot() {
+  const folders = vscode4.workspace.workspaceFolders;
+  return Array.isArray(folders) && folders.length > 0;
 }
 function deactivate() {
   wsManager?.disconnect("extension_deactivated");

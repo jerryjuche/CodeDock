@@ -49,6 +49,32 @@ export interface DocumentBinding {
   dispose: () => void;
 }
 
+export interface WorkspaceManifestRequest {
+  requestedAt: number;
+}
+
+export interface WorkspaceManifestEntry {
+  path: string;
+  kind: "file" | "dir";
+  isText?: boolean;
+  size?: number;
+}
+
+export interface WorkspaceManifest {
+  rootName: string;
+  entries: WorkspaceManifestEntry[];
+  generatedAt: number;
+}
+
+export interface FileBootstrapRequest {
+  path: string;
+}
+
+export interface FileBootstrapResponse {
+  path: string;
+  content: string;
+}
+
 export class ApiError extends Error {
   constructor(
     public readonly status: number,

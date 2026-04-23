@@ -1,19 +1,114 @@
+import * as fs from "fs/promises";
 import * as path from "path";
 import * as vscode from "vscode";
 import * as Y from "yjs";
 import { WebSocketManager } from "./websocket";
-import { encodeSyncPayload, decodeSyncPayload } from "./protocol";
-import { SyncPayload } from "./types";
+import {
+  decodeFileBootstrapRequest,
+  decodeFileBootstrapResponse,
+  decodeHydrationRequest,
+  decodeSyncPayload,
+  decodeWorkspaceManifestRequest,
+  decodeWorkspaceManifestResponse,
+  encodeFileBootstrapRequest,
+  encodeFileBootstrapResponse,
+  encodeHydrationRequest,
+  encodeSyncPayload,
+  encodeWorkspaceManifestRequest,
+  encodeWorkspaceManifestResponse,
+  MessageType,
+} from "./protocol";
+import {
+  FileBootstrapRequest,
+  FileBootstrapResponse,
+  SyncPayload,
+  WorkspaceManifest,
+  WorkspaceManifestEntry,
+} from "./types";
 
 const OUTBOUND_BATCH_MS = 120;
 const INBOUND_RECONCILE_MS = 90;
 const GUEST_HYDRATION_WAIT_MS = 1200;
-
-const MESSAGE_TYPE_SYNC = 0x01;
-const MESSAGE_TYPE_HYDRATION_REQUEST = 0x04;
+const WORKSPACE_MANIFEST_RETRY_MS = 1000;
+const MAX_MANIFEST_RETRIES = 6;
+const MAX_BOOTSTRAP_FILE_BYTES = 400 * 1024;
 
 const LOCAL_CHANGE_ORIGIN = Symbol("codedock-local-change");
 const INITIAL_DOCUMENT_ORIGIN = Symbol("codedock-initial-document");
+
+const IGNORED_DIR_NAMES = new Set([
+  ".git",
+  "node_modules",
+  "dist",
+  "build",
+  ".next",
+  ".codedock",
+  ".vscode",
+]);
+
+const IGNORED_FILE_NAMES = new Set([
+  ".DS_Store",
+  ".env",
+  ".env.local",
+  ".env.development",
+  ".env.production",
+  ".env.test",
+]);
+
+const TEXT_EXTENSIONS = new Set([
+  ".go",
+  ".ts",
+  ".tsx",
+  ".js",
+  ".jsx",
+  ".json",
+  ".md",
+  ".txt",
+  ".yaml",
+  ".yml",
+  ".toml",
+  ".ini",
+  ".cfg",
+  ".conf",
+  ".sh",
+  ".bash",
+  ".zsh",
+  ".css",
+  ".scss",
+  ".html",
+  ".xml",
+  ".sql",
+  ".proto",
+  ".graphql",
+  ".gql",
+]);
+
+const BINARY_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".ico",
+  ".pdf",
+  ".zip",
+  ".gz",
+  ".tar",
+  ".tgz",
+  ".jar",
+  ".so",
+  ".dll",
+  ".exe",
+  ".bin",
+  ".woff",
+  ".woff2",
+  ".ttf",
+  ".otf",
+  ".mp4",
+  ".mp3",
+  ".avi",
+  ".mov",
+]);
 
 type SessionRole = "host" | "guest";
 
@@ -48,6 +143,13 @@ export class YjsSync {
   private patchStates: Map<string, PatchState> = new Map();
   private hydrationTimers: Map<string, ReturnType<typeof setTimeout>> =
     new Map();
+  private pendingFileBootstrapRequests: Set<string> = new Set();
+
+  private workspaceManifestReceived = false;
+  private workspaceManifestRetryCount = 0;
+  private workspaceManifestRetryTimer?: ReturnType<typeof setTimeout>;
+
+  private guestMaterializationRoot: vscode.Uri | null = null;
   private active = false;
   private sessionRole: SessionRole = "guest";
 
@@ -63,6 +165,13 @@ export class YjsSync {
     this.log(`session role set (${role})`);
   }
 
+  setGuestMaterializationRoot(root: vscode.Uri | null): void {
+    this.guestMaterializationRoot = root;
+    this.log(
+      `guest materialization root ${root ? `set (${root.fsPath})` : "cleared"}`,
+    );
+  }
+
   activate(): void {
     if (this.active) {
       this.log("activate skipped: already active");
@@ -73,6 +182,11 @@ export class YjsSync {
     this.log(`activate (${this.sessionRole})`);
 
     this.bindVisibleEditors();
+
+    if (this.sessionRole === "guest") {
+      this.requestWorkspaceManifest();
+      this.scheduleWorkspaceManifestRetry();
+    }
 
     this.globalDisposables.push(
       vscode.workspace.onDidOpenTextDocument((document) => {
@@ -144,6 +258,16 @@ export class YjsSync {
       clearTimeout(timer);
     }
     this.hydrationTimers.clear();
+
+    if (this.workspaceManifestRetryTimer !== undefined) {
+      clearTimeout(this.workspaceManifestRetryTimer);
+      this.workspaceManifestRetryTimer = undefined;
+    }
+
+    this.pendingFileBootstrapRequests.clear();
+    this.workspaceManifestReceived = false;
+    this.workspaceManifestRetryCount = 0;
+    this.guestMaterializationRoot = null;
 
     for (const entry of this.docs.values()) {
       entry.ydoc.destroy();
@@ -273,6 +397,44 @@ export class YjsSync {
     this.bindings.delete(fileKey);
   }
 
+  private requestWorkspaceManifest(): void {
+    const payload = encodeWorkspaceManifestRequest();
+
+    this.log(`requesting workspace manifest (payloadBytes=${payload.length})`);
+    this.wsManager.send(payload);
+  }
+
+  private scheduleWorkspaceManifestRetry(): void {
+    if (this.sessionRole !== "guest" || this.workspaceManifestReceived) {
+      return;
+    }
+
+    if (this.workspaceManifestRetryTimer !== undefined) {
+      return;
+    }
+
+    this.workspaceManifestRetryTimer = setTimeout(() => {
+      this.workspaceManifestRetryTimer = undefined;
+
+      if (this.workspaceManifestReceived || !this.active) {
+        return;
+      }
+
+      this.workspaceManifestRetryCount++;
+
+      if (this.workspaceManifestRetryCount > MAX_MANIFEST_RETRIES) {
+        this.log("workspace manifest retry limit reached");
+        return;
+      }
+
+      this.log(
+        `workspace manifest retry (${this.workspaceManifestRetryCount}/${MAX_MANIFEST_RETRIES})`,
+      );
+      this.requestWorkspaceManifest();
+      this.scheduleWorkspaceManifestRetry();
+    }, WORKSPACE_MANIFEST_RETRY_MS);
+  }
+
   private startGuestHydrationFallback(
     document: vscode.TextDocument,
     entry: DocEntry,
@@ -367,6 +529,24 @@ export class YjsSync {
     }
 
     return relativePath.replace(/\\/g, "/");
+  }
+
+  private getWorkspaceRoot(): vscode.Uri | null {
+    const folders = vscode.workspace.workspaceFolders;
+    if (!folders || folders.length === 0) {
+      return null;
+    }
+
+    return folders[0].uri;
+  }
+
+  private getMaterializationRoot(): vscode.Uri | null {
+    const workspaceRoot = this.getWorkspaceRoot();
+    if (workspaceRoot) {
+      return workspaceRoot;
+    }
+
+    return this.guestMaterializationRoot;
   }
 
   private getOrCreateDocEntry(fileKey: string): DocEntry {
@@ -497,14 +677,33 @@ export class YjsSync {
     const type = data.length > 0 ? data[0] : -1;
     this.log(`inbound frame observed (type=${type}, bytes=${data.length})`);
 
-    if (type === MESSAGE_TYPE_HYDRATION_REQUEST) {
-      this.handleHydrationRequest(data);
-      return;
-    }
+    switch (type) {
+      case MessageType.HYDRATION_REQUEST:
+        this.handleHydrationRequest(data);
+        return;
 
-    if (type !== MESSAGE_TYPE_SYNC) {
-      this.log(`inbound frame ignored: unsupported type (${type})`);
-      return;
+      case MessageType.WORKSPACE_MANIFEST_REQUEST:
+        void this.handleWorkspaceManifestRequest(data);
+        return;
+
+      case MessageType.WORKSPACE_MANIFEST_RESPONSE:
+        void this.handleWorkspaceManifestResponse(data);
+        return;
+
+      case MessageType.FILE_BOOTSTRAP_REQUEST:
+        void this.handleFileBootstrapRequest(data);
+        return;
+
+      case MessageType.FILE_BOOTSTRAP_RESPONSE:
+        void this.handleFileBootstrapResponse(data);
+        return;
+
+      case MessageType.SYNC:
+        break;
+
+      default:
+        this.log(`inbound frame ignored: unsupported type (${type})`);
+        return;
     }
 
     const payload = decodeSyncPayload(data);
@@ -521,7 +720,7 @@ export class YjsSync {
   }
 
   private handleHydrationRequest(data: Uint8Array): void {
-    const fileKey = this.decodeHydrationRequest(data);
+    const fileKey = decodeHydrationRequest(data);
     if (!fileKey) {
       this.log("hydration request ignored: invalid payload");
       return;
@@ -549,7 +748,7 @@ export class YjsSync {
   }
 
   private sendHydrationRequest(fileKey: string): void {
-    const payload = this.encodeHydrationRequest(fileKey);
+    const payload = encodeHydrationRequest(fileKey);
 
     this.log(
       `sending hydration request (${fileKey}, payloadBytes=${payload.length})`,
@@ -558,29 +757,408 @@ export class YjsSync {
     this.wsManager.send(payload);
   }
 
-  private encodeHydrationRequest(fileKey: string): Uint8Array {
-    const filePathBytes = new TextEncoder().encode(fileKey);
-    const result = new Uint8Array(1 + 2 + filePathBytes.length);
+  private async handleWorkspaceManifestRequest(data: Uint8Array): Promise<void> {
+    const request = decodeWorkspaceManifestRequest(data);
+    if (!request) {
+      this.log("workspace manifest request ignored: invalid payload");
+      return;
+    }
 
-    result[0] = MESSAGE_TYPE_HYDRATION_REQUEST;
-    result[1] = (filePathBytes.length >> 8) & 0xff;
-    result[2] = filePathBytes.length & 0xff;
-    result.set(filePathBytes, 3);
+    if (this.sessionRole !== "host") {
+      this.log("workspace manifest request ignored: not host");
+      return;
+    }
 
-    return result;
+    const manifest = await this.buildWorkspaceManifest();
+    if (!manifest) {
+      this.log("workspace manifest response skipped: no workspace root");
+      return;
+    }
+
+    const payload = encodeWorkspaceManifestResponse(manifest);
+
+    this.log(
+      `responding to workspace manifest request (requestedAt=${request.requestedAt}, entries=${manifest.entries.length}, payloadBytes=${payload.length})`,
+    );
+
+    this.wsManager.send(payload);
   }
 
-  private decodeHydrationRequest(data: Uint8Array): string | null {
-    if (data.length < 3) {
+  private async handleWorkspaceManifestResponse(
+    data: Uint8Array,
+  ): Promise<void> {
+    const manifest = decodeWorkspaceManifestResponse(data);
+    if (!manifest) {
+      this.log("workspace manifest response ignored: invalid payload");
+      return;
+    }
+
+    if (this.sessionRole !== "guest") {
+      this.log("workspace manifest response ignored: not guest");
+      return;
+    }
+
+    this.workspaceManifestReceived = true;
+    if (this.workspaceManifestRetryTimer !== undefined) {
+      clearTimeout(this.workspaceManifestRetryTimer);
+      this.workspaceManifestRetryTimer = undefined;
+    }
+
+    this.log(
+      `received workspace manifest (root=${manifest.rootName}, entries=${manifest.entries.length})`,
+    );
+
+    await this.materializeWorkspaceManifest(manifest);
+  }
+
+  private async handleFileBootstrapRequest(data: Uint8Array): Promise<void> {
+    const request = decodeFileBootstrapRequest(data);
+    if (!request) {
+      this.log("file bootstrap request ignored: invalid payload");
+      return;
+    }
+
+    if (this.sessionRole !== "host") {
+      this.log(`file bootstrap request ignored: not host (${request.path})`);
+      return;
+    }
+
+    const rootUri = this.getWorkspaceRoot();
+    if (!rootUri) {
+      this.log("file bootstrap request ignored: no workspace root");
+      return;
+    }
+
+    const targetUri = this.resolveWorkspacePath(rootUri, request.path);
+    if (!targetUri) {
+      this.log(`file bootstrap request ignored: invalid path (${request.path})`);
+      return;
+    }
+
+    try {
+      const bytes = await fs.readFile(targetUri.fsPath);
+
+      if (bytes.length > MAX_BOOTSTRAP_FILE_BYTES) {
+        this.log(
+          `file bootstrap skipped: file too large (${request.path}, bytes=${bytes.length})`,
+        );
+        return;
+      }
+
+      if (!this.isProbablyTextBuffer(bytes, request.path)) {
+        this.log(`file bootstrap skipped: non-text file (${request.path})`);
+        return;
+      }
+
+      const response: FileBootstrapResponse = {
+        path: request.path,
+        content: new TextDecoder().decode(bytes),
+      };
+
+      const payload = encodeFileBootstrapResponse(response);
+
+      this.log(
+        `responding to file bootstrap request (${request.path}, payloadBytes=${payload.length})`,
+      );
+
+      this.wsManager.send(payload);
+    } catch (error) {
+      this.log(
+        `file bootstrap request failed (${request.path}): ${this.describeError(error)}`,
+      );
+    }
+  }
+
+  private async handleFileBootstrapResponse(data: Uint8Array): Promise<void> {
+    const response = decodeFileBootstrapResponse(data);
+    if (!response) {
+      this.log("file bootstrap response ignored: invalid payload");
+      return;
+    }
+
+    this.pendingFileBootstrapRequests.delete(response.path);
+
+    if (this.sessionRole !== "guest") {
+      this.log(`file bootstrap response ignored: not guest (${response.path})`);
+      return;
+    }
+
+    const rootUri = this.getMaterializationRoot();
+    if (!rootUri) {
+      this.log("file bootstrap response ignored: no materialization root");
+      return;
+    }
+
+    if (this.bindings.has(response.path)) {
+      this.log(
+        `file bootstrap response skipped: file currently bound (${response.path})`,
+      );
+      return;
+    }
+
+    const targetUri = this.resolveWorkspacePath(rootUri, response.path);
+    if (!targetUri) {
+      this.log(`file bootstrap response ignored: invalid path (${response.path})`);
+      return;
+    }
+
+    try {
+      const existingContent = await this.readFileTextIfExists(targetUri);
+
+      if (
+        existingContent !== null &&
+        existingContent.length > 0 &&
+        existingContent !== response.content
+      ) {
+        this.log(
+          `file bootstrap response skipped: local file has conflicting content (${response.path})`,
+        );
+        return;
+      }
+
+      await this.ensureParentDirectory(targetUri);
+      await vscode.workspace.fs.writeFile(
+        targetUri,
+        new TextEncoder().encode(response.content),
+      );
+
+      this.log(
+        `file bootstrap response applied (${response.path}, chars=${response.content.length})`,
+      );
+    } catch (error) {
+      this.log(
+        `file bootstrap response failed (${response.path}): ${this.describeError(error)}`,
+      );
+    }
+  }
+
+  private async buildWorkspaceManifest(): Promise<WorkspaceManifest | null> {
+    const rootUri = this.getWorkspaceRoot();
+    if (!rootUri) {
       return null;
     }
 
-    const filePathLen = (data[1] << 8) | data[2];
-    if (filePathLen <= 0 || 3 + filePathLen > data.length) {
+    const entries: WorkspaceManifestEntry[] = [];
+    await this.walkWorkspace(rootUri.fsPath, rootUri.fsPath, entries);
+
+    entries.sort((a, b) => a.path.localeCompare(b.path));
+
+    return {
+      rootName: path.basename(rootUri.fsPath),
+      entries,
+      generatedAt: Date.now(),
+    };
+  }
+
+  private async walkWorkspace(
+    rootFsPath: string,
+    currentFsPath: string,
+    entries: WorkspaceManifestEntry[],
+  ): Promise<void> {
+    const dirents = await fs.readdir(currentFsPath, { withFileTypes: true });
+
+    dirents.sort((a, b) => a.name.localeCompare(b.name));
+
+    for (const dirent of dirents) {
+      const absolutePath = path.join(currentFsPath, dirent.name);
+      const relativePath = path
+        .relative(rootFsPath, absolutePath)
+        .replace(/\\/g, "/");
+
+      if (!relativePath || this.shouldIgnoreRelativePath(relativePath)) {
+        continue;
+      }
+
+      if (dirent.isDirectory()) {
+        entries.push({
+          path: relativePath,
+          kind: "dir",
+        });
+
+        await this.walkWorkspace(rootFsPath, absolutePath, entries);
+        continue;
+      }
+
+      if (!dirent.isFile()) {
+        continue;
+      }
+
+      const stat = await fs.stat(absolutePath);
+      const isText = this.looksLikeTextPath(relativePath);
+
+      entries.push({
+        path: relativePath,
+        kind: "file",
+        isText,
+        size: stat.size,
+      });
+    }
+  }
+
+  private async materializeWorkspaceManifest(
+    manifest: WorkspaceManifest,
+  ): Promise<void> {
+    const rootUri = this.getMaterializationRoot();
+    if (!rootUri) {
+      this.log("workspace manifest materialization skipped: no materialization root");
+      return;
+    }
+
+    const dirs = manifest.entries
+      .filter((entry) => entry.kind === "dir")
+      .sort((a, b) => a.path.length - b.path.length);
+
+    for (const entry of dirs) {
+      const dirUri = this.resolveWorkspacePath(rootUri, entry.path);
+      if (!dirUri) {
+        continue;
+      }
+
+      await vscode.workspace.fs.createDirectory(dirUri);
+    }
+
+    const files = manifest.entries.filter((entry) => entry.kind === "file");
+
+    for (const entry of files) {
+      const fileUri = this.resolveWorkspacePath(rootUri, entry.path);
+      if (!fileUri) {
+        continue;
+      }
+
+      await this.ensureParentDirectory(fileUri);
+
+      const exists = await this.fileExists(fileUri);
+
+      if (!exists && entry.isText) {
+        await vscode.workspace.fs.writeFile(fileUri, new Uint8Array());
+      }
+
+      if (entry.isText) {
+        const alreadyBound = this.bindings.has(entry.path);
+        if (!alreadyBound) {
+          this.requestFileBootstrap(entry.path);
+        }
+      }
+    }
+
+    this.log(
+      `workspace manifest materialized (dirs=${dirs.length}, files=${files.length})`,
+    );
+  }
+
+  private requestFileBootstrap(filePath: string): void {
+    if (this.pendingFileBootstrapRequests.has(filePath)) {
+      return;
+    }
+
+    this.pendingFileBootstrapRequests.add(filePath);
+
+    const request: FileBootstrapRequest = { path: filePath };
+    const payload = encodeFileBootstrapRequest(request);
+
+    this.log(
+      `requesting file bootstrap (${filePath}, payloadBytes=${payload.length})`,
+    );
+
+    this.wsManager.send(payload);
+  }
+
+  private resolveWorkspacePath(
+    rootUri: vscode.Uri,
+    relativePath: string,
+  ): vscode.Uri | null {
+    const normalized = relativePath.replace(/\\/g, "/");
+
+    if (
+      normalized.length === 0 ||
+      normalized.startsWith("/") ||
+      path.isAbsolute(normalized)
+    ) {
       return null;
     }
 
-    return new TextDecoder().decode(data.slice(3, 3 + filePathLen));
+    const segments = normalized.split("/").filter(Boolean);
+    if (segments.length === 0 || segments.some((segment) => segment === "..")) {
+      return null;
+    }
+
+    return vscode.Uri.joinPath(rootUri, ...segments);
+  }
+
+  private shouldIgnoreRelativePath(relativePath: string): boolean {
+    const normalized = relativePath.replace(/\\/g, "/");
+    const segments = normalized.split("/").filter(Boolean);
+    const basename = segments[segments.length - 1] ?? "";
+
+    if (segments.some((segment) => IGNORED_DIR_NAMES.has(segment))) {
+      return true;
+    }
+
+    if (IGNORED_FILE_NAMES.has(basename)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  private looksLikeTextPath(relativePath: string): boolean {
+    const basename = path.basename(relativePath);
+    if (IGNORED_FILE_NAMES.has(basename)) {
+      return false;
+    }
+
+    const ext = path.extname(relativePath).toLowerCase();
+
+    if (BINARY_EXTENSIONS.has(ext)) {
+      return false;
+    }
+
+    if (TEXT_EXTENSIONS.has(ext)) {
+      return true;
+    }
+
+    return ext === "";
+  }
+
+  private isProbablyTextBuffer(
+    buffer: Uint8Array,
+    relativePath: string,
+  ): boolean {
+    if (!this.looksLikeTextPath(relativePath)) {
+      return false;
+    }
+
+    const sampleLength = Math.min(buffer.length, 8192);
+    for (let i = 0; i < sampleLength; i++) {
+      if (buffer[i] === 0) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private async fileExists(uri: vscode.Uri): Promise<boolean> {
+    try {
+      await vscode.workspace.fs.stat(uri);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async ensureParentDirectory(fileUri: vscode.Uri): Promise<void> {
+    const parentDir = path.dirname(fileUri.fsPath);
+    await vscode.workspace.fs.createDirectory(vscode.Uri.file(parentDir));
+  }
+
+  private async readFileTextIfExists(uri: vscode.Uri): Promise<string | null> {
+    try {
+      const bytes = await vscode.workspace.fs.readFile(uri);
+      return new TextDecoder().decode(bytes);
+    } catch {
+      return null;
+    }
   }
 
   private async applyRemoteUpdate(payload: SyncPayload): Promise<void> {
@@ -726,6 +1304,10 @@ export class YjsSync {
     }
 
     this.remoteApplyDepthByFile.set(fileKey, currentDepth - 1);
+  }
+
+  private describeError(error: unknown): string {
+    return error instanceof Error ? error.message : "unknown error";
   }
 
   private log(message: string): void {

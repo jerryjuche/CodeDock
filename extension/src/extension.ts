@@ -141,11 +141,34 @@ async function handleJoinRoom(
   }
 
   const normalizedRoomId = roomId.trim();
-  outputChannel.appendLine(`CodeDock: joining room ${normalizedRoomId}`);
 
-  yjsSync.setSessionRole("guest");
-  wsManager.connect(token, normalizedRoomId);
-  yjsSync.activate();
+  if (!hasWorkspaceRoot()) {
+    const selected = await vscode.window.showOpenDialog({
+      canSelectMany: false,
+      canSelectFiles: false,
+      canSelectFolders: true,
+      openLabel: "Use Folder for CodeDock Room",
+      title: "Choose a folder where CodeDock should hydrate the host project",
+    });
+
+    if (!selected || selected.length === 0) {
+      outputChannel.appendLine(
+        "CodeDock: join cancelled (no guest workspace folder selected)",
+      );
+      return;
+    }
+
+    const destinationRoot = selected[0];
+    outputChannel.appendLine(
+      `CodeDock: guest materialization root set to ${destinationRoot.fsPath}`,
+    );
+
+    yjsSync.setGuestMaterializationRoot(destinationRoot);
+  } else {
+    yjsSync.setGuestMaterializationRoot(null);
+  }
+
+  await joinRoomNow(token, normalizedRoomId, outputChannel);
 }
 
 async function handleCreateRoom(
@@ -157,6 +180,19 @@ async function handleCreateRoom(
     vscode.window.showErrorMessage(
       "CodeDock: You must be logged in to create a room.",
     );
+    return;
+  }
+
+  if (!hasWorkspaceRoot()) {
+    const selection = await vscode.window.showErrorMessage(
+      "CodeDock: Open the project folder you want to share before creating a room.",
+      "Open Folder",
+    );
+
+    if (selection === "Open Folder") {
+      await vscode.commands.executeCommand("workbench.action.files.openFolder");
+    }
+
     return;
   }
 
@@ -181,6 +217,7 @@ async function handleCreateRoom(
     outputChannel.appendLine(`CodeDock: created room ${room.id}`);
 
     yjsSync.setSessionRole("host");
+    yjsSync.setGuestMaterializationRoot(null);
     wsManager.connect(token, room.id);
     yjsSync.activate();
   } catch (err) {
@@ -190,6 +227,23 @@ async function handleCreateRoom(
       }`,
     );
   }
+}
+
+async function joinRoomNow(
+  token: string,
+  roomId: string,
+  outputChannel: vscode.OutputChannel,
+): Promise<void> {
+  outputChannel.appendLine(`CodeDock: joining room ${roomId}`);
+
+  yjsSync.setSessionRole("guest");
+  wsManager.connect(token, roomId);
+  yjsSync.activate();
+}
+
+function hasWorkspaceRoot(): boolean {
+  const folders = vscode.workspace.workspaceFolders;
+  return Array.isArray(folders) && folders.length > 0;
 }
 
 export function deactivate(): void {
