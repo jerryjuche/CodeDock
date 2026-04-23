@@ -20,6 +20,7 @@ onClose(handler: CloseHandler): vscode.Disposable {
 const MAX_BACKOFF_MS = 30_000;
 const BASE_BACKOFF_MS = 1_000;
 
+
 export class WebSocketManager {
   private socket: WebSocket | null = null;
   private state: ConnectionState = "disconnected";
