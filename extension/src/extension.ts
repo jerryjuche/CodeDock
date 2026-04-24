@@ -1,9 +1,13 @@
+import * as path from "path";
 import * as vscode from "vscode";
 import { EventEmitter } from "events";
 import { AuthManager } from "./auth";
 import { ApiClient } from "./api";
 import { WebSocketManager } from "./websocket";
 import { YjsSync } from "./yjs-sync";
+
+const PENDING_HYDRATED_ROOM_ID_KEY = "codedock.pendingHydrated.roomId";
+const PENDING_HYDRATED_ROOT_KEY = "codedock.pendingHydrated.rootPath";
 
 let authManager: AuthManager;
 let wsManager: WebSocketManager;
@@ -28,7 +32,7 @@ export async function activate(
   apiClient = new ApiClient(serverUrl);
   authManager = new AuthManager(context.secrets, apiClient, emitter);
   wsManager = new WebSocketManager(serverUrl, outputChannel);
-  yjsSync = new YjsSync(wsManager, outputChannel);
+  yjsSync = new YjsSync(wsManager, outputChannel, context.globalState);
 
   emitter.on("login", () => {
     outputChannel.appendLine("CodeDock: login event received (sync-only mode)");
@@ -36,6 +40,9 @@ export async function activate(
 
   emitter.on("logout", () => {
     outputChannel.appendLine("CodeDock: logout event received");
+    void clearPendingHydratedJoin(context);
+    yjsSync.setActiveRoomId(null);
+    yjsSync.setGuestMaterializationRoot(null);
     wsManager.disconnect("logout");
     yjsSync.dispose();
   });
@@ -48,7 +55,7 @@ export async function activate(
       authManager.logout(),
     ),
     vscode.commands.registerCommand("codedock.joinRoom", () =>
-      handleJoinRoom(outputChannel),
+      handleJoinRoom(context, outputChannel),
     ),
     vscode.commands.registerCommand("codedock.createRoom", () =>
       handleCreateRoom(outputChannel),
@@ -60,6 +67,9 @@ export async function activate(
     ),
     vscode.commands.registerCommand("codedock.disconnectRoom", () => {
       outputChannel.appendLine("CodeDock: user requested room disconnect");
+      void clearPendingHydratedJoin(context);
+      yjsSync.setActiveRoomId(null);
+      yjsSync.setGuestMaterializationRoot(null);
       wsManager.disconnect("user");
       yjsSync.dispose();
     }),
@@ -84,17 +94,21 @@ export async function activate(
     }),
   );
 
-  await restoreSession();
+  const sessionReady = await restoreSession();
+
+  if (sessionReady) {
+    await resumePendingHydratedJoin(context, outputChannel);
+  }
 }
 
-async function restoreSession(): Promise<void> {
+async function restoreSession(): Promise<boolean> {
   const token = await authManager.getToken();
 
   if (!token) {
     vscode.window.showInformationMessage(
       'CodeDock: Not logged in. Run "CodeDock: Login" to start.',
     );
-    return;
+    return false;
   }
 
   const valid = await authManager.validateToken();
@@ -110,13 +124,15 @@ async function restoreSession(): Promise<void> {
           authManager.login();
         }
       });
-    return;
+    return false;
   }
 
   vscode.window.showInformationMessage("CodeDock: Session restored.");
+  return true;
 }
 
 async function handleJoinRoom(
+  context: vscode.ExtensionContext,
   outputChannel: vscode.OutputChannel,
 ): Promise<void> {
   const token = await authManager.getToken();
@@ -168,6 +184,7 @@ async function handleJoinRoom(
     yjsSync.setGuestMaterializationRoot(null);
   }
 
+  await clearPendingHydratedJoin(context);
   await joinRoomNow(token, normalizedRoomId, outputChannel);
 }
 
@@ -217,6 +234,7 @@ async function handleCreateRoom(
     outputChannel.appendLine(`CodeDock: created room ${room.id}`);
 
     yjsSync.setSessionRole("host");
+    yjsSync.setActiveRoomId(room.id);
     yjsSync.setGuestMaterializationRoot(null);
     wsManager.connect(token, room.id);
     yjsSync.activate();
@@ -237,13 +255,66 @@ async function joinRoomNow(
   outputChannel.appendLine(`CodeDock: joining room ${roomId}`);
 
   yjsSync.setSessionRole("guest");
+  yjsSync.setActiveRoomId(roomId);
   wsManager.connect(token, roomId);
   yjsSync.activate();
+}
+
+async function resumePendingHydratedJoin(
+  context: vscode.ExtensionContext,
+  outputChannel: vscode.OutputChannel,
+): Promise<void> {
+  const pendingRoomId = context.globalState.get<string>(
+    PENDING_HYDRATED_ROOM_ID_KEY,
+  );
+  const pendingRootPath = context.globalState.get<string>(
+    PENDING_HYDRATED_ROOT_KEY,
+  );
+
+  if (!pendingRoomId || !pendingRootPath) {
+    return;
+  }
+
+  const currentRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!currentRoot) {
+    return;
+  }
+
+  if (normalizeFsPath(currentRoot) !== normalizeFsPath(pendingRootPath)) {
+    return;
+  }
+
+  const token = await authManager.getToken();
+  if (!token) {
+    outputChannel.appendLine(
+      "CodeDock: pending hydrated project reopen found, but no valid session is available",
+    );
+    return;
+  }
+
+  outputChannel.appendLine(
+    `CodeDock: resuming room ${pendingRoomId} in hydrated project window`,
+  );
+
+  yjsSync.setGuestMaterializationRoot(null);
+  await joinRoomNow(token, pendingRoomId, outputChannel);
+  await clearPendingHydratedJoin(context);
+}
+
+async function clearPendingHydratedJoin(
+  context: vscode.ExtensionContext,
+): Promise<void> {
+  await context.globalState.update(PENDING_HYDRATED_ROOM_ID_KEY, undefined);
+  await context.globalState.update(PENDING_HYDRATED_ROOT_KEY, undefined);
 }
 
 function hasWorkspaceRoot(): boolean {
   const folders = vscode.workspace.workspaceFolders;
   return Array.isArray(folders) && folders.length > 0;
+}
+
+function normalizeFsPath(fsPath: string): string {
+  return path.resolve(fsPath);
 }
 
 export function deactivate(): void {

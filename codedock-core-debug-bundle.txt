@@ -1,0 +1,4648 @@
+------------------------------------------------------------
+FILE: internal/hub/client.go
+------------------------------------------------------------
+package hub
+
+import (
+	"log"
+	"time"
+
+	"github.com/gorilla/websocket"
+)
+
+const (
+	// Time allowed to write a message to the client
+	writeWait = 10 * time.Second
+
+	// Time allowed to read the next message from the client
+	pongWait = 60 * time.Second
+
+	// Send pings to client with this period — must be less than pongWait
+	pingPeriod = (pongWait * 9) / 10
+
+	// Maximum message size allowed from client
+	maxMessageSize = 512 * 1024 // 512KB
+)
+
+// ReadPump reads messages from the WebSocket connection and broadcasts them.
+// This runs in its own goroutine per client.
+// When this goroutine exits, the client is unregistered from the Hub.
+func (c *Client) ReadPump(h *Hub) {
+	defer func() {
+		h.Unregister(c)
+		c.Conn.Close()
+	}()
+
+	c.Conn.SetReadLimit(maxMessageSize)
+	c.Conn.SetReadDeadline(time.Now().Add(pongWait))
+	c.Conn.SetPongHandler(func(string) error {
+		c.Conn.SetReadDeadline(time.Now().Add(pongWait))
+		return nil
+	})
+
+	for {
+		_, raw, err := c.Conn.ReadMessage()
+		if err != nil {
+			if websocket.IsUnexpectedCloseError(err,
+				websocket.CloseGoingAway,
+				websocket.CloseAbnormalClosure,
+			) {
+				log.Printf("websocket error: %v", err)
+			}
+			break
+		}
+
+		// Every valid message must have at least a type byte
+		if len(raw) < 2 {
+			continue
+		}
+
+		msg := Message{
+			Type:    raw[0],
+			Payload: raw[1:],
+			Sender:  c,
+		}
+
+		h.Route(msg)
+	}
+}
+
+// WritePump reads from the client's send channel and writes to the WebSocket.
+// This runs in its own goroutine per client.
+// One goroutine per client ensures only one concurrent writer per connection.
+func (c *Client) WritePump() {
+	ticker := time.NewTicker(pingPeriod)
+	defer func() {
+		ticker.Stop()
+		c.Conn.Close()
+	}()
+
+	for {
+		select {
+		case message, ok := <-c.Send:
+			c.Conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if !ok {
+				// Hub closed the channel — client was unregistered
+				c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
+				return
+			}
+
+			if err := c.Conn.WriteMessage(websocket.BinaryMessage, message); err != nil {
+				return
+			}
+
+			
+		case <-ticker.C:
+			// Send a ping to keep the connection alive
+			c.Conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := c.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
+			}
+		}
+	}
+}
+
+------------------------------------------------------------
+FILE: internal/hub/hub.go
+------------------------------------------------------------
+package hub
+
+import (
+	"sync"
+
+	"github.com/gorilla/websocket"
+)
+
+type SnapshotStore interface {
+	Save(roomID, filePath string, state []byte) error
+	Get(roomID, filePath string) ([]byte, error)
+}
+
+type snapshotKey struct {
+	roomID   string
+	filePath string
+}
+
+const snapshotThreshold = 50
+
+// Client represents a single connected developer.
+// Each client belongs to one room and has a dedicated send channel.
+type Client struct {
+	Conn   *websocket.Conn
+	Send   chan []byte
+	RoomID string
+	UserID string
+}
+
+// Hub is the central registry of all connected clients, organised by room.
+// It is the only place where broadcast decisions are made.
+type Hub struct {
+	rooms     map[string]map[*Client]bool
+	mu        sync.RWMutex
+	snapshots SnapshotStore
+	counts    map[snapshotKey]int
+	countsMu  sync.Mutex
+}
+
+// New creates and returns an empty Hub.
+func New(store SnapshotStore) *Hub {
+	return &Hub{
+		rooms:     make(map[string]map[*Client]bool),
+		snapshots: store,
+		counts:    make(map[snapshotKey]int),
+	}
+}
+
+// Register adds a client to its room.
+func (h *Hub) Register(client *Client) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if h.rooms[client.RoomID] == nil {
+		h.rooms[client.RoomID] = make(map[*Client]bool)
+	}
+	h.rooms[client.RoomID][client] = true
+}
+
+// Unregister removes a client from its room and closes its send channel.
+func (h *Hub) Unregister(client *Client) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	room, ok := h.rooms[client.RoomID]
+	if !ok {
+		return
+	}
+
+	if _, exists := room[client]; exists {
+		delete(room, client)
+		close(client.Send)
+	}
+
+	if len(room) == 0 {
+		delete(h.rooms, client.RoomID)
+	}
+}
+
+// Broadcast sends a message to all clients in a room except the sending connection.
+func (h *Hub) Broadcast(sender *Client, roomID string, message []byte) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	for client := range h.rooms[roomID] {
+		if client == sender {
+			continue
+		}
+
+		select {
+		case client.Send <- message:
+		default:
+			// Client's send buffer is full — they are too slow or disconnected.
+			// Drop rather than block the room.
+		}
+	}
+}
+
+// Route inspects the message type and dispatches accordingly.
+func (h *Hub) Route(msg Message) {
+	switch msg.Type {
+	case MessageTypeSync:
+		h.Broadcast(msg.Sender, msg.Sender.RoomID, append([]byte{MessageTypeSync}, msg.Payload...))
+		h.trackAndSnapshot(msg)
+
+	case MessageTypeAwareness:
+		h.BroadcastAll(msg.Sender.RoomID, append([]byte{MessageTypeAwareness}, msg.Payload...))
+
+	case MessageTypeChat:
+		h.Broadcast(msg.Sender, msg.Sender.RoomID, append([]byte{MessageTypeChat}, msg.Payload...))
+
+	case MessageTypeHydrationRequest:
+		h.Broadcast(msg.Sender, msg.Sender.RoomID, append([]byte{MessageTypeHydrationRequest}, msg.Payload...))
+
+	case MessageTypeWorkspaceManifestReq:
+		h.Broadcast(msg.Sender, msg.Sender.RoomID, append([]byte{MessageTypeWorkspaceManifestReq}, msg.Payload...))
+
+	case MessageTypeWorkspaceManifestRes:
+		h.Broadcast(msg.Sender, msg.Sender.RoomID, append([]byte{MessageTypeWorkspaceManifestRes}, msg.Payload...))
+
+	case MessageTypeFileBootstrapReq:
+		h.Broadcast(msg.Sender, msg.Sender.RoomID, append([]byte{MessageTypeFileBootstrapReq}, msg.Payload...))
+
+	case MessageTypeFileBootstrapRes:
+		h.Broadcast(msg.Sender, msg.Sender.RoomID, append([]byte{MessageTypeFileBootstrapRes}, msg.Payload...))
+	}
+}
+
+func (h *Hub) trackAndSnapshot(msg Message) {
+	if h.snapshots == nil {
+		return
+	}
+
+	if len(msg.Payload) < 4 {
+		return
+	}
+
+	filePathLen := int(msg.Payload[0])<<8 | int(msg.Payload[1])
+
+	if filePathLen == 0 || 2+filePathLen >= len(msg.Payload) {
+		return
+	}
+
+	filePath := string(msg.Payload[2 : 2+filePathLen])
+	yjsUpdate := msg.Payload[2+filePathLen:]
+
+	key := snapshotKey{roomID: msg.Sender.RoomID, filePath: filePath}
+
+	h.countsMu.Lock()
+	h.counts[key]++
+	count := h.counts[key]
+	if count >= snapshotThreshold {
+		h.counts[key] = 0
+	}
+	h.countsMu.Unlock()
+
+	if count >= snapshotThreshold {
+		go func() {
+			_ = h.snapshots.Save(key.roomID, key.filePath, yjsUpdate)
+		}()
+	}
+}
+
+// BroadcastAll sends a message to every client in a room including the sender.
+func (h *Hub) BroadcastAll(roomID string, message []byte) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	for client := range h.rooms[roomID] {
+		select {
+		case client.Send <- message:
+		default:
+		}
+	}
+}
+------------------------------------------------------------
+FILE: internal/hub/hub_test.go
+------------------------------------------------------------
+package hub
+
+import (
+	"bytes"
+	"testing"
+	"time"
+)
+
+type mockSnapshotStore struct {
+	saveCalls chan saveCall
+	getCalls  chan getCall
+}
+
+type saveCall struct {
+	roomID   string
+	filePath string
+	state    []byte
+}
+
+type getCall struct {
+	roomID   string
+	filePath string
+}
+
+func newMockSnapshotStore() *mockSnapshotStore {
+	return &mockSnapshotStore{
+		saveCalls: make(chan saveCall, 10),
+		getCalls:  make(chan getCall, 10),
+	}
+}
+
+func (m *mockSnapshotStore) Save(roomID, filePath string, state []byte) error {
+	m.saveCalls <- saveCall{
+		roomID:   roomID,
+		filePath: filePath,
+		state:    append([]byte(nil), state...),
+	}
+	return nil
+}
+
+func (m *mockSnapshotStore) Get(roomID, filePath string) ([]byte, error) {
+	m.getCalls <- getCall{
+		roomID:   roomID,
+		filePath: filePath,
+	}
+	return nil, nil
+}
+
+func newTestClient(roomID, userID string, buffer int) *Client {
+	return &Client{
+		Conn:   nil,
+		Send:   make(chan []byte, buffer),
+		RoomID: roomID,
+		UserID: userID,
+	}
+}
+
+func mustReceiveMessage(t *testing.T, ch <-chan []byte, timeout time.Duration) []byte {
+	t.Helper()
+
+	select {
+	case msg := <-ch:
+		return msg
+	case <-time.After(timeout):
+		t.Fatal("timed out waiting for message")
+		return nil
+	}
+}
+
+func mustNotReceiveMessage(t *testing.T, ch <-chan []byte, timeout time.Duration) {
+	t.Helper()
+
+	select {
+	case msg := <-ch:
+		t.Fatalf("expected no message, but received %v", msg)
+	case <-time.After(timeout):
+	}
+}
+
+func TestNew_InitializesHub(t *testing.T) {
+	store := newMockSnapshotStore()
+	h := New(store)
+
+	if h == nil {
+		t.Fatal("expected hub, got nil")
+	}
+
+	if h.rooms == nil {
+		t.Fatal("expected rooms map to be initialized")
+	}
+
+	if h.counts == nil {
+		t.Fatal("expected counts map to be initialized")
+	}
+
+	if h.snapshots != store {
+		t.Fatal("expected snapshot store to be assigned")
+	}
+}
+
+func TestRegister_AddsClientToRoom(t *testing.T) {
+	h := New(nil)
+	client := newTestClient("room-1", "user-1", 1)
+
+	h.Register(client)
+
+	roomClients, ok := h.rooms["room-1"]
+	if !ok {
+		t.Fatal("expected room to exist after register")
+	}
+
+	if !roomClients[client] {
+		t.Fatal("expected client to be registered in room")
+	}
+}
+
+func TestRegister_CreatesSeparateRooms(t *testing.T) {
+	h := New(nil)
+
+	clientA := newTestClient("room-a", "user-a", 1)
+	clientB := newTestClient("room-b", "user-b", 1)
+
+	h.Register(clientA)
+	h.Register(clientB)
+
+	if len(h.rooms) != 2 {
+		t.Fatalf("expected 2 rooms, got %d", len(h.rooms))
+	}
+
+	if !h.rooms["room-a"][clientA] {
+		t.Fatal("expected clientA in room-a")
+	}
+
+	if !h.rooms["room-b"][clientB] {
+		t.Fatal("expected clientB in room-b")
+	}
+}
+
+func TestUnregister_RemovesClientAndClosesSendChannel(t *testing.T) {
+	h := New(nil)
+	client := newTestClient("room-1", "user-1", 1)
+
+	h.Register(client)
+	h.Unregister(client)
+
+	if _, ok := h.rooms["room-1"]; ok {
+		t.Fatal("expected room to be removed when last client unregisters")
+	}
+
+	_, open := <-client.Send
+	if open {
+		t.Fatal("expected send channel to be closed")
+	}
+}
+
+func TestUnregister_LeavesRoomWhenOtherClientsRemain(t *testing.T) {
+	h := New(nil)
+
+	clientA := newTestClient("room-1", "user-a", 1)
+	clientB := newTestClient("room-1", "user-b", 1)
+
+	h.Register(clientA)
+	h.Register(clientB)
+
+	h.Unregister(clientA)
+
+	roomClients, ok := h.rooms["room-1"]
+	if !ok {
+		t.Fatal("expected room to still exist")
+	}
+
+	if roomClients[clientA] {
+		t.Fatal("expected clientA to be removed")
+	}
+
+	if !roomClients[clientB] {
+		t.Fatal("expected clientB to remain in room")
+	}
+
+	_, open := <-clientA.Send
+	if open {
+		t.Fatal("expected clientA send channel to be closed")
+	}
+}
+
+func TestUnregister_NonExistentRoomDoesNothing(t *testing.T) {
+	h := New(nil)
+	client := newTestClient("missing-room", "user-1", 1)
+
+	h.Unregister(client)
+}
+
+func TestBroadcast_SendsToOtherClientsInSameRoomOnly(t *testing.T) {
+	h := New(nil)
+
+	sender := newTestClient("room-1", "sender", 1)
+	receiver := newTestClient("room-1", "receiver", 1)
+	otherRoom := newTestClient("room-2", "other", 1)
+
+	h.Register(sender)
+	h.Register(receiver)
+	h.Register(otherRoom)
+
+	payload := []byte("hello room")
+	h.Broadcast("sender", "room-1", payload)
+
+	got := mustReceiveMessage(t, receiver.Send, 100*time.Millisecond)
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("expected %v, got %v", payload, got)
+	}
+
+	mustNotReceiveMessage(t, sender.Send, 50*time.Millisecond)
+	mustNotReceiveMessage(t, otherRoom.Send, 50*time.Millisecond)
+}
+
+func TestBroadcast_DropsMessageWhenReceiverBufferIsFull(t *testing.T) {
+	h := New(nil)
+
+	sender := newTestClient("room-1", "sender", 1)
+	slowReceiver := newTestClient("room-1", "receiver", 1)
+
+	h.Register(sender)
+	h.Register(slowReceiver)
+
+	// Fill receiver buffer so broadcast default case is hit.
+	slowReceiver.Send <- []byte("already buffered")
+
+	h.Broadcast("sender", "room-1", []byte("new message"))
+
+	first := mustReceiveMessage(t, slowReceiver.Send, 100*time.Millisecond)
+	if string(first) != "already buffered" {
+		t.Fatalf("expected original buffered message, got %q", string(first))
+	}
+
+	mustNotReceiveMessage(t, slowReceiver.Send, 50*time.Millisecond)
+}
+
+func TestBroadcastAll_SendsToEveryoneInRoomIncludingSender(t *testing.T) {
+	h := New(nil)
+
+	clientA := newTestClient("room-1", "user-a", 1)
+	clientB := newTestClient("room-1", "user-b", 1)
+	clientC := newTestClient("room-2", "user-c", 1)
+
+	h.Register(clientA)
+	h.Register(clientB)
+	h.Register(clientC)
+
+	payload := []byte("presence update")
+	h.BroadcastAll("room-1", payload)
+
+	gotA := mustReceiveMessage(t, clientA.Send, 100*time.Millisecond)
+	gotB := mustReceiveMessage(t, clientB.Send, 100*time.Millisecond)
+
+	if !bytes.Equal(gotA, payload) {
+		t.Fatalf("expected %v for clientA, got %v", payload, gotA)
+	}
+
+	if !bytes.Equal(gotB, payload) {
+		t.Fatalf("expected %v for clientB, got %v", payload, gotB)
+	}
+
+	mustNotReceiveMessage(t, clientC.Send, 50*time.Millisecond)
+}
+
+func TestRoute_SyncBroadcastsToOthersWithTypePrefix(t *testing.T) {
+	h := New(nil)
+
+	sender := newTestClient("room-1", "sender", 1)
+	receiver := newTestClient("room-1", "receiver", 1)
+
+	h.Register(sender)
+	h.Register(receiver)
+
+	payload := []byte("sync-payload")
+	h.Route(Message{
+		Type:    MessageTypeSync,
+		Payload: payload,
+		Sender:  sender,
+	})
+
+	got := mustReceiveMessage(t, receiver.Send, 100*time.Millisecond)
+	expected := append([]byte{MessageTypeSync}, payload...)
+
+	if !bytes.Equal(got, expected) {
+		t.Fatalf("expected %v, got %v", expected, got)
+	}
+
+	mustNotReceiveMessage(t, sender.Send, 50*time.Millisecond)
+}
+
+func TestRoute_AwarenessBroadcastsToAllIncludingSender(t *testing.T) {
+	h := New(nil)
+
+	sender := newTestClient("room-1", "sender", 1)
+	receiver := newTestClient("room-1", "receiver", 1)
+
+	h.Register(sender)
+	h.Register(receiver)
+
+	payload := []byte("awareness")
+	h.Route(Message{
+		Type:    MessageTypeAwareness,
+		Payload: payload,
+		Sender:  sender,
+	})
+
+	expected := append([]byte{MessageTypeAwareness}, payload...)
+
+	gotSender := mustReceiveMessage(t, sender.Send, 100*time.Millisecond)
+	gotReceiver := mustReceiveMessage(t, receiver.Send, 100*time.Millisecond)
+
+	if !bytes.Equal(gotSender, expected) {
+		t.Fatalf("expected sender to receive %v, got %v", expected, gotSender)
+	}
+
+	if !bytes.Equal(gotReceiver, expected) {
+		t.Fatalf("expected receiver to receive %v, got %v", expected, gotReceiver)
+	}
+}
+
+func TestRoute_ChatBroadcastsToOthersOnly(t *testing.T) {
+	h := New(nil)
+
+	sender := newTestClient("room-1", "sender", 1)
+	receiver := newTestClient("room-1", "receiver", 1)
+
+	h.Register(sender)
+	h.Register(receiver)
+
+	payload := []byte("chat message")
+	h.Route(Message{
+		Type:    MessageTypeChat,
+		Payload: payload,
+		Sender:  sender,
+	})
+
+	expected := append([]byte{MessageTypeChat}, payload...)
+
+	got := mustReceiveMessage(t, receiver.Send, 100*time.Millisecond)
+	if !bytes.Equal(got, expected) {
+		t.Fatalf("expected %v, got %v", expected, got)
+	}
+
+	mustNotReceiveMessage(t, sender.Send, 50*time.Millisecond)
+}
+
+func TestRoute_UnknownTypeDoesNothing(t *testing.T) {
+	h := New(nil)
+
+	sender := newTestClient("room-1", "sender", 1)
+	receiver := newTestClient("room-1", "receiver", 1)
+
+	h.Register(sender)
+	h.Register(receiver)
+
+	h.Route(Message{
+		Type:    0xFF,
+		Payload: []byte("unknown"),
+		Sender:  sender,
+	})
+
+	mustNotReceiveMessage(t, sender.Send, 50*time.Millisecond)
+	mustNotReceiveMessage(t, receiver.Send, 50*time.Millisecond)
+}
+
+func TestTrackAndSnapshot_DoesNothingWithoutStore(t *testing.T) {
+	h := New(nil)
+	sender := newTestClient("room-1", "sender", 1)
+
+	for i := 0; i < snapshotThreshold+5; i++ {
+		h.trackAndSnapshot(Message{
+			Type:    MessageTypeSync,
+			Payload: []byte("state"),
+			Sender:  sender,
+		})
+	}
+}
+
+func TestTrackAndSnapshot_SavesAtThreshold(t *testing.T) {
+	store := newMockSnapshotStore()
+	h := New(store)
+	sender := newTestClient("room-1", "sender", 1)
+
+	filePath := "main.go"
+	yjsUpdate := []byte("snapshot-state")
+
+	// build the payload
+	payload := []byte{
+		0,                   // high byte of path length
+		byte(len(filePath)), // low byte of path length
+	}
+	payload = append(payload, []byte(filePath)...)
+	payload = append(payload, yjsUpdate...)
+
+	for i := 0; i < snapshotThreshold-1; i++ {
+		h.trackAndSnapshot(Message{
+			Type:    MessageTypeSync,
+			Payload: payload,
+			Sender:  sender,
+
+------------------------------------------------------------
+FILE: internal/hub/message.go
+------------------------------------------------------------
+package hub
+
+// Message type constants.
+// The first byte of every WebSocket message identifies its type.
+const (
+	MessageTypeSync                 byte = 0x01 // CRDT document update from Yjs
+	MessageTypeAwareness            byte = 0x02 // cursor position and presence
+	MessageTypeChat                 byte = 0x03 // chat message
+	MessageTypeHydrationRequest     byte = 0x04 // guest asks host for current file state
+	MessageTypeWorkspaceManifestReq byte = 0x05 // guest asks host for workspace tree
+	MessageTypeWorkspaceManifestRes byte = 0x06 // host returns workspace tree
+	MessageTypeFileBootstrapReq     byte = 0x07 // guest asks host for file contents
+	MessageTypeFileBootstrapRes     byte = 0x08 // host returns file contents
+)
+
+// Message carries a decoded incoming message ready for routing.
+type Message struct {
+	Type    byte
+	Payload []byte
+	Sender  *Client
+}
+------------------------------------------------------------
+FILE: internal/handlers/auth.go
+------------------------------------------------------------
+package handlers
+
+import (
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"net/http"
+
+	"github.com/jerryjuche/CodeDock/internal/auth"
+	"github.com/jerryjuche/CodeDock/internal/services"
+	"golang.org/x/crypto/bcrypt"
+)
+
+type AuthHandler struct {
+	DB *sql.DB
+}
+
+type registerRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+type authResponse struct {
+	Token string `json:"token"`
+	Email string `json:"email"`
+}
+
+func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
+	var req registerRequest
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Email == "" || req.Password == "" {
+		http.Error(w, "email and password are required", http.StatusBadRequest)
+		return
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), 12)
+	if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	// Delegate to service layer — business logic lives there, not here
+	userID, err := services.CreateUser(h.DB, req.Email, string(hashedPassword))
+	if err != nil {
+		if errors.Is(err, services.ErrDuplicateEmail) {
+			http.Error(w, "email already registered", http.StatusConflict)
+			return
+		}
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	token, err := auth.GenerateToken(userID, req.Email)
+	if err != nil {
+		http.Error(w, "could not generate token", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(authResponse{
+		Token: token,
+		Email: req.Email,
+	})
+}
+
+func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
+	var req registerRequest
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	//check for empty mail and password
+	if req.Email == "" || req.Password == "" {
+		http.Error(w, "email and password are required", http.StatusBadRequest)
+		return
+	}
+
+	// fetch users from db by email
+	var userID, passwordHash string
+
+	err := h.DB.QueryRow(`SELECT id, password_hash FROM users WHERE email = $1`, req.Email).Scan(&userID, &passwordHash)
+
+	if err == sql.ErrNoRows {
+		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		return
+	}
+
+	if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	// compare hashed password
+	if err = bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.Password)); err != nil {
+		http.Error(w, "invalid credentials", http.StatusUnauthorized)
+		return
+	}
+
+	// generate token
+	token, err := auth.GenerateToken(userID, req.Email)
+	if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(authResponse{
+		Token: token,
+		Email: req.Email,
+	})
+}
+
+func (h *AuthHandler) ExchangeCode(w http.ResponseWriter, r *http.Request) {
+
+	var Det struct {
+		Code string `json:"code"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&Det); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	details, err := services.ExchangeInviteCode(h.DB, Det.Code)
+	if err != nil {
+		if errors.Is(err, services.ErrInviteExpired) || errors.Is(err, services.ErrInviteNotFound) {
+			http.Error(w, "invalid or expired invite code", http.StatusGone)
+			return
+		}
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	token, err := auth.GenerateToken(details.UserID, details.Email)
+	if err != nil {
+		http.Error(w, "could not generate token", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(struct {
+		Token    string `json:"token"`
+		Email    string `json:"email"`
+		RoomID   string `json:"room_id"`
+		RoomName string `json:"room_name"`
+	}{
+		Token:    token,
+		Email:    details.Email,
+		RoomID:   details.RoomID,
+		RoomName: details.RoomName,
+	})
+
+}
+
+------------------------------------------------------------
+FILE: internal/handlers/integration_test.go
+------------------------------------------------------------
+package handlers
+
+import (
+	"bytes"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/jerryjuche/CodeDock/internal/auth"
+	"github.com/jerryjuche/CodeDock/internal/services"
+	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
+)
+
+var testDB *sql.DB
+
+func TestMain(m *testing.M) {
+	candidates := []string{
+		".env",
+		filepath.Join("..", "..", ".env"),
+		filepath.Join("..", "..", "..", ".env"),
+	}
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			godotenv.Overload(candidate)
+			break
+		}
+	}
+
+	connStr := fmt.Sprintf(
+		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		os.Getenv("DB_HOST"),
+		os.Getenv("DB_PORT"),
+		os.Getenv("DB_USER"),
+		os.Getenv("DB_PASSWORD"),
+		os.Getenv("TEST_DB_NAME"),
+	)
+
+	var err error
+	testDB, err = sql.Open("postgres", connStr)
+	if err != nil {
+		fmt.Printf("could not open test database: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := testDB.Ping(); err != nil {
+		fmt.Printf("could not connect to test database: %v\n", err)
+		os.Exit(1)
+	}
+
+	code := m.Run()
+	testDB.Close()
+	os.Exit(code)
+}
+
+type testApp struct {
+	db          *sql.DB
+	mux         *http.ServeMux
+	authHandler *AuthHandler
+	roomHandler *RoomHandler
+}
+
+func setupTestApp(t *testing.T) *testApp {
+	t.Helper()
+
+	app := &testApp{
+		db:          testDB,
+		mux:         http.NewServeMux(),
+		authHandler: &AuthHandler{DB: testDB},
+		roomHandler: &RoomHandler{
+			Services: &services.RoomService{DB: testDB},
+		},
+	}
+
+	app.mux.HandleFunc("POST /auth/register", app.authHandler.Register)
+	app.mux.HandleFunc("POST /auth/login", app.authHandler.Login)
+	app.mux.HandleFunc("POST /auth/exchange", app.authHandler.ExchangeCode)
+	app.mux.Handle("POST /rooms", auth.RequireAuth(http.HandlerFunc(app.roomHandler.CreateRoom)))
+	app.mux.Handle("GET /rooms", auth.RequireAuth(http.HandlerFunc(app.roomHandler.GetUserRooms)))
+	app.mux.Handle("GET /rooms/{id}", auth.RequireAuth(http.HandlerFunc(app.roomHandler.GetRoom)))
+
+	return app
+}
+
+func cleanTestDB(t *testing.T, db *sql.DB) {
+	t.Helper()
+	tables := []string{
+		"invite_tokens",
+		"room_members",
+		"snapshots",
+		"rooms",
+		"users",
+	}
+	for _, table := range tables {
+		if _, err := db.Exec("DELETE FROM " + table); err != nil {
+			t.Fatalf("failed to clean table %s: %v", table, err)
+		}
+	}
+}
+
+func (app *testApp) postJSON(t *testing.T, path string, body interface{}, token string) *httptest.ResponseRecorder {
+	t.Helper()
+	b, err := json.Marshal(body)
+	if err != nil {
+		t.Fatalf("could not marshal request body: %v", err)
+	}
+	req := httptest.NewRequest("POST", path, bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	rr := httptest.NewRecorder()
+	app.mux.ServeHTTP(rr, req)
+	return rr
+}
+
+func (app *testApp) getJSON(t *testing.T, path string, token string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest("GET", path, nil)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	rr := httptest.NewRecorder()
+	app.mux.ServeHTTP(rr, req)
+	return rr
+}
+
+func (app *testApp) registerAndLogin(t *testing.T, email, password string) string {
+	t.Helper()
+	rr := app.postJSON(t, "/auth/register", map[string]string{
+		"email":    email,
+		"password": password,
+	}, "")
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("registerAndLogin: expected 201, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+	var resp map[string]string
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("registerAndLogin: could not decode response: %v", err)
+	}
+	return resp["token"]
+}
+
+func TestRegister_Success(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	rr := app.postJSON(t, "/auth/register", map[string]string{
+		"email":    "alice@codedock.com",
+		"password": "strongpassword",
+	}, "")
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201 Created, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("could not decode register response: %v", err)
+	}
+	if resp["token"] == "" {
+		t.Error("expected token in response, got empty string")
+	}
+	if resp["email"] != "alice@codedock.com" {
+		t.Errorf("expected email alice@codedock.com, got %s", resp["email"])
+	}
+}
+
+func TestRegister_DuplicateEmail(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	body := map[string]string{
+		"email":    "dup@codedock.com",
+		"password": "password",
+	}
+
+	first := app.postJSON(t, "/auth/register", body, "")
+	if first.Code != http.StatusCreated {
+		t.Fatalf("expected first registration to succeed, got %d — body: %s", first.Code, first.Body.String())
+	}
+
+	rr := app.postJSON(t, "/auth/register", body, "")
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("expected 409 for duplicate email, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestRegister_MissingFields(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	rr := app.postJSON(t, "/auth/register", map[string]string{
+		"email": "nopw@codedock.com",
+	}, "")
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for missing password, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestLogin_Success(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	app.postJSON(t, "/auth/register", map[string]string{
+		"email":    "bob@codedock.com",
+		"password": "mypassword",
+	}, "")
+
+	rr := app.postJSON(t, "/auth/login", map[string]string{
+		"email":    "bob@codedock.com",
+		"password": "mypassword",
+	}, "")
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+
+	var resp map[string]string
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("could not decode login response: %v", err)
+	}
+	if resp["token"] == "" {
+		t.Error("expected token in login response")
+	}
+}
+
+func TestLogin_WrongPassword(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	app.postJSON(t, "/auth/register", map[string]string{
+		"email":    "carol@codedock.com",
+		"password": "correctpassword",
+	}, "")
+
+	rr := app.postJSON(t, "/auth/login", map[string]string{
+		"email":    "carol@codedock.com",
+		"password": "wrongpassword",
+	}, "")
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for wrong password, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestLogin_UnknownEmail(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	rr := app.postJSON(t, "/auth/login", map[string]string{
+		"email":    "ghost@codedock.com",
+		"password": "anything",
+	}, "")
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for unknown email, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestProtectedRoute_NoToken(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	rr := app.getJSON(t, "/rooms", "")
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for missing token, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestProtectedRoute_InvalidToken(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	rr := app.getJSON(t, "/rooms", "this.is.not.a.valid.jwt")
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for invalid token, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestCreateRoom_Success(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	token := app.registerAndLogin(t, "dave@codedock.com", "password123")
+
+	rr := app.postJSON(t, "/rooms", map[string]string{
+		"name": "Backend Sprint",
+	}, token)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201 Created, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+
+	var room map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&room); err != nil {
+		t.Fatalf("could not decode room response: %v", err)
+	}
+	if room["id"] == nil || room["id"] == "" {
+		t.Error("expected room ID in response")
+	}
+	if room["name"] != "Backend Sprint" {
+		t.Errorf("expected room name 'Backend Sprint', got %v", room["name"])
+	}
+}
+
+func TestCreateRoom_EmptyName(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	token := app.registerAndLogin(t, "eve@codedock.com", "password123")
+
+	rr := app.postJSON(t, "/rooms", map[string]string{
+		"name": "",
+	}, token)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for empty room name, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestCreateRoom_NoAuth(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	rr := app.postJSON(t, "/rooms", map[string]string{
+		"name": "Secret Room",
+	}, "")
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 for unauthenticated room creation, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestGetRoom_Success(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	token := app.registerAndLogin(t, "frank@codedock.com", "password123")
+
+	createRR := app.postJSON(t, "/rooms", map[string]string{
+		"name": "Design Review",
+	}, token)
+	if createRR.Code != http.StatusCreated {
+		t.Fatalf("expected room creation to succeed, got %d — body: %s", createRR.Code, createRR.Body.String())
+	}
+
+	var created map[string]interface{}
+	if err := json.NewDecoder(createRR.Body).Decode(&created); err != nil {
+		t.Fatalf("could not decode created room: %v", err)
+	}
+	roomID := created["id"].(string)
+
+	rr := app.getJSON(t, "/rooms/"+roomID, token)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+
+	var room map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&room); err != nil {
+		t.Fatalf("could not decode room response: %v", err)
+	}
+	if room["id"] != roomID {
+		t.Errorf("expected room ID %s, got %v", roomID, room["id"])
+	}
+}
+
+func TestGetRoom_NotFound(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	token := app.registerAndLogin(t, "grace@codedock.com", "password123")
+
+	rr := app.getJSON(t, "/rooms/00000000-0000-0000-0000-000000000000", token)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for non-existent room, got %d — body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestGetUserRooms_Success(t *testing.T) {
+	app := setupTestApp(t)
+	cleanTestDB(t, app.db)
+
+	token := app.registerAndLogin(t, "henry@codedock.com", "password123")
+
+	first := app.postJSON(t, "/rooms", map[string]string{"name": "Room One"}, token)
+	if first.Code != http.StatusCreated {
+		t.Fatalf("expected first room creation to succeed, got %d — body: %s", first.Code, first.Body.String())
+	}
+
+	second := app.postJSON(t, "/rooms", map[string]string{"name": "Room Two"}, token)
+	if second.Code != http.StatusCreated {
+		t.Fatalf("expected second room creation to succeed, got %d — body: %s", second.Code, second.Body.String())
+	}
+
+------------------------------------------------------------
+FILE: internal/handlers/rooms.go
+------------------------------------------------------------
+package handlers
+
+import (
+	"encoding/json"
+	"net/http"
+
+	"github.com/jerryjuche/CodeDock/internal/auth"
+	"github.com/jerryjuche/CodeDock/internal/services"
+)
+
+type RoomHandler struct {
+	Services *services.RoomService
+}
+
+type createRoomRequest struct {
+	Name string `json:"name"`
+}
+
+func (s *RoomHandler) CreateRoom(w http.ResponseWriter, r *http.Request) {
+	var room createRoomRequest
+
+	claims, ok := auth.GetUserFromContext(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&room); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if room.Name == "" {
+		http.Error(w, "Room name is required!!", http.StatusBadRequest)
+		return
+
+	}
+
+	createdRoom, err := s.Services.CreateRoom(claims.UserID, room.Name)
+	if err != nil {
+		http.Error(w, "could not create room", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(createdRoom)
+
+}
+
+func (s *RoomHandler) GetRoom(w http.ResponseWriter, r *http.Request) {
+
+	roomID := r.PathValue("id")
+
+	if roomID == "" {
+		http.Error(w, "room ID cannot be empty", http.StatusBadRequest)
+		return
+	}
+
+	getRoom, err := s.Services.GetRoom(roomID)
+
+	if err != nil {
+		if err.Error() == "no room found" {
+			http.Error(w, "room not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(getRoom)
+
+}
+
+func (s *RoomHandler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
+
+	claims, ok := auth.GetUserFromContext(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if claims.UserID == "" {
+		http.Error(w, "id cannot be empty", http.StatusBadRequest)
+		return
+	}
+
+	UserID := claims.UserID
+
+	getUserRooms, err := s.Services.GetUserRooms(UserID)
+
+	if err != nil {
+		if err.Error() == "no id found" {
+			http.Error(w, "id not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(getUserRooms)
+
+}
+
+
+------------------------------------------------------------
+FILE: internal/handlers/ws.go
+------------------------------------------------------------
+package handlers
+
+import (
+	"net/http"
+
+	"github.com/gorilla/websocket"
+	"github.com/jerryjuche/CodeDock/internal/auth"
+	"github.com/jerryjuche/CodeDock/internal/hub"
+)
+
+// upgrader converts an HTTP connection into a WebSocket connection.
+// CheckOrigin returns true to allow all origins during development.
+// Lock this down before production.
+var upgrader = websocket.Upgrader{
+	ReadBufferSize:  1024,
+	WriteBufferSize: 1024,
+	CheckOrigin: func(r *http.Request) bool {
+		return true
+	},
+}
+
+type WSHandler struct {
+	Hub *hub.Hub
+	DB  interface {
+		QueryRow(query string, args ...any) interface {
+			Scan(dest ...any) error
+		}
+	}
+}
+
+// ServeWS handles incoming WebSocket connection requests.
+// Flow:
+//  1. Validate JWT from query param
+//  2. Validate room_id from query param
+//  3. Upgrade HTTP → WebSocket
+//  4. Register client with Hub
+//  5. Launch readPump and writePump goroutines
+func ServeWS(h *hub.Hub) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Step 1 — validate JWT from query param
+		// WebSocket connections cannot send headers after the handshake,
+		// so the token travels as a query parameter instead
+		tokenStr := r.URL.Query().Get("token")
+		if tokenStr == "" {
+			http.Error(w, "missing token", http.StatusUnauthorized)
+			return
+		}
+
+		claims, err := auth.VerifyToken(tokenStr)
+		if err != nil {
+			http.Error(w, "invalid token", http.StatusUnauthorized)
+			return
+		}
+
+		// Step 2 — validate room_id
+		roomID := r.URL.Query().Get("room_id")
+		if roomID == "" {
+			http.Error(w, "missing room_id", http.StatusBadRequest)
+			return
+		}
+
+		// Step 3 — upgrade HTTP connection to WebSocket
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			// Upgrade writes its own error response on failure
+			return
+		}
+
+		// Step 4 — create client and register with Hub
+		client := &hub.Client{
+			Conn:   conn,
+			Send:   make(chan []byte, 256),
+			RoomID: roomID,
+			UserID: claims.UserID,
+		}
+		h.Register(client)
+
+		// Step 5 — launch goroutines
+		// writePump runs in a goroutine — it blocks on the send channel
+		// readPump runs in the current goroutine — it blocks on the connection
+		go client.WritePump()
+		client.ReadPump(h)
+	}
+}
+
+------------------------------------------------------------
+FILE: internal/services/invite.go
+------------------------------------------------------------
+package services
+
+import (
+	"database/sql"
+	"errors"
+	"time"
+)
+
+var ErrInviteNotFound = errors.New("invite token not found")
+var ErrInviteExpired = errors.New("invite token expired or already used")
+
+type InviteDetails struct {
+	RoomID   string
+	RoomName string
+	Email    string
+	UserID   string
+}
+
+func ExchangeInviteCode(db *sql.DB, code string) (*InviteDetails, error) {
+	tx, err := db.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	var details InviteDetails
+	var usedAt sql.NullTime
+	var expiresAt time.Time
+
+	// Step 1 — find token by code only, no expiry filter
+	// FOR UPDATE locks the row against concurrent exchanges
+	err = tx.QueryRow(`
+        SELECT 
+            u.id,
+            i.room_id,
+            r.name AS room_name,
+            u.email,
+            i.used_at,
+            i.expires_at
+        FROM invite_tokens i
+        JOIN rooms r ON i.room_id = r.id
+        JOIN users u ON i.created_by = u.id
+        WHERE i.token = $1
+        FOR UPDATE
+    `, code).Scan(
+		&details.UserID,
+		&details.RoomID,
+		&details.RoomName,
+		&details.Email,
+		&usedAt,
+		&expiresAt,
+	)
+
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrInviteNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Step 2 — check if token is expired or already used
+	if usedAt.Valid {
+		return nil, ErrInviteExpired
+	}
+	if expiresAt.Before(time.Now()) {
+		return nil, ErrInviteExpired
+	}
+
+	// Step 3 — mark as used
+	result, err := tx.Exec(`
+        UPDATE invite_tokens
+        SET used_at = NOW()
+        WHERE token = $1
+          AND used_at IS NULL
+          AND expires_at > NOW()
+    `, code)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if rows == 0 {
+		return nil, ErrInviteExpired
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	return &details, nil
+}
+
+------------------------------------------------------------
+FILE: internal/services/invite_test.go
+------------------------------------------------------------
+package services
+
+import (
+	"sync"
+	"testing"
+	"time"
+)
+
+func createTestInvite(t *testing.T, db interface{ Exec(string, ...any) (interface{}, error) }, roomID, createdBy, code string, expiresAt time.Time, usedAt *time.Time) {
+	t.Helper()
+	_, err := db.Exec(`
+		INSERT INTO invite_tokens (token, room_id, created_by, expires_at, used_at)
+		VALUES ($1, $2, $3, $4, $5)
+	`, code, roomID, createdBy, expiresAt, usedAt)
+	if err != nil {
+		t.Fatalf("failed to insert test invite: %v", err)
+	}
+}
+
+
+func TestExchangeInviteCode_Success(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	cleanTestDB(t, db)
+
+	userID := createTestUser(t, db, "invite-success@codedock.com")
+	service := &RoomService{DB: db}
+	room, err := service.CreateRoom(userID, "invite-test-room")
+	if err != nil {
+		t.Fatalf("failed to create room: %v", err)
+	}
+
+	code := "valid-code-001"
+	_, err = db.Exec(`
+		INSERT INTO invite_tokens (token, room_id, created_by, expires_at, used_at)
+		VALUES ($1, $2, $3, $4, NULL)
+	`, code, room.ID, userID, time.Now().Add(1*time.Hour))
+	if err != nil {
+		t.Fatalf("failed to insert invite: %v", err)
+	}
+
+	result, err := ExchangeInviteCode(db, code)
+	if err != nil {
+		t.Fatalf("expected success, got error: %v", err)
+	}
+	if result.RoomID != room.ID {
+		t.Errorf("expected roomID %s, got %s", room.ID, result.RoomID)
+	}
+}
+
+func TestExchangeInviteCode_InvalidCode(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	cleanTestDB(t, db)
+
+	_, err := ExchangeInviteCode(db, "code-that-does-not-exist")
+	if err != ErrInviteNotFound {
+		t.Errorf("expected ErrInviteNotFound, got %v", err)
+	}
+}
+
+func TestExchangeInviteCode_ExpiredCode(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	cleanTestDB(t, db)
+
+	userID := createTestUser(t, db, "invite-expired@codedock.com")
+	service := &RoomService{DB: db}
+	room, err := service.CreateRoom(userID, "invite-expired-room")
+	if err != nil {
+		t.Fatalf("failed to create room: %v", err)
+	}
+
+	code := "expired-code-001"
+	_, err = db.Exec(`
+		INSERT INTO invite_tokens (token, room_id, created_by, expires_at, used_at)
+		VALUES ($1, $2, $3, $4, NULL)
+	`, code, room.ID, userID, time.Now().Add(-1*time.Hour))
+	if err != nil {
+		t.Fatalf("failed to insert expired invite: %v", err)
+	}
+
+	_, err = ExchangeInviteCode(db, code)
+	if err != ErrInviteExpired {
+		t.Errorf("expected ErrInviteExpired, got %v", err)
+	}
+}
+
+func TestExchangeInviteCode_AlreadyUsedCode(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	cleanTestDB(t, db)
+
+	userID := createTestUser(t, db, "invite-used@codedock.com")
+	service := &RoomService{DB: db}
+	room, err := service.CreateRoom(userID, "invite-used-room")
+	if err != nil {
+		t.Fatalf("failed to create room: %v", err)
+	}
+
+	code := "used-code-001"
+	usedAt := time.Now().Add(-10 * time.Minute)
+	_, err = db.Exec(`
+		INSERT INTO invite_tokens (token, room_id, created_by, expires_at, used_at)
+		VALUES ($1, $2, $3, $4, $5)
+	`, code, room.ID, userID, time.Now().Add(1*time.Hour), usedAt)
+	if err != nil {
+		t.Fatalf("failed to insert used invite: %v", err)
+	}
+
+	_, err = ExchangeInviteCode(db, code)
+	if err != ErrInviteExpired {
+		t.Errorf("expected ErrInviteExpired for used code, got %v", err)
+	}
+}
+
+func TestExchangeInviteCode_ConcurrentExchange(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	cleanTestDB(t, db)
+
+	userID := createTestUser(t, db, "invite-concurrent@codedock.com")
+	service := &RoomService{DB: db}
+	room, err := service.CreateRoom(userID, "invite-concurrent-room")
+	if err != nil {
+		t.Fatalf("failed to create room: %v", err)
+	}
+
+	code := "concurrent-code-001"
+	_, err = db.Exec(`
+		INSERT INTO invite_tokens (token, room_id, created_by, expires_at, used_at)
+		VALUES ($1, $2, $3, $4, NULL)
+	`, code, room.ID, userID, time.Now().Add(1*time.Hour))
+	if err != nil {
+		t.Fatalf("failed to insert concurrent invite: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	results := make([]error, 2)
+
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			_, err := ExchangeInviteCode(db, code)
+			results[index] = err
+		}(i)
+	}
+
+	wg.Wait()
+
+	successCount := 0
+	failCount := 0
+	for _, err := range results {
+		if err == nil {
+			successCount++
+		} else {
+			failCount++
+		}
+	}
+
+	if successCount != 1 {
+		t.Errorf("expected exactly 1 success, got %d", successCount)
+	}
+	if failCount != 1 {
+		t.Errorf("expected exactly 1 failure, got %d", failCount)
+	}
+}
+------------------------------------------------------------
+FILE: internal/services/room_service_test.go
+------------------------------------------------------------
+package services
+
+import (
+	"database/sql"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+	"testing"
+
+	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
+)
+
+var loadEnvOnce sync.Once
+
+func loadTestEnv(t *testing.T) {
+	t.Helper()
+
+	loadEnvOnce.Do(func() {
+		candidates := []string{
+			".env",
+			filepath.Join("..", "..", ".env"),
+			filepath.Join("..", "..", "..", ".env"),
+		}
+
+		for _, candidate := range candidates {
+			if _, err := os.Stat(candidate); err == nil {
+				if err := godotenv.Overload(candidate); err != nil {
+					t.Fatalf("found .env at %s but failed to load it: %v", candidate, err)
+				}
+				t.Logf("loaded environment from %s", candidate)
+				return
+			}
+		}
+
+		t.Log("no .env file found in known locations, using system environment")
+	})
+}
+
+func requireEnv(t *testing.T, key string) string {
+	t.Helper()
+
+	value := os.Getenv(key)
+	if value == "" {
+		t.Fatalf("required environment variable %s is empty", key)
+	}
+
+	return value
+}
+
+func setupTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+
+	loadTestEnv(t)
+
+	connStr := fmt.Sprintf(
+		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		requireEnv(t, "DB_HOST"),
+		requireEnv(t, "DB_PORT"),
+		requireEnv(t, "DB_USER"),
+		requireEnv(t, "DB_PASSWORD"),
+		requireEnv(t, "TEST_DB_NAME"),
+	)
+
+	db, err := sql.Open("postgres", connStr)
+	if err != nil {
+		t.Fatalf("could not open test database: %v", err)
+	}
+
+	if err := db.Ping(); err != nil {
+		t.Fatalf("could not connect to test database: %v", err)
+	}
+
+	return db
+}
+
+func cleanTestDB(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	tables := []string{
+		"invite_tokens",
+		"room_members",
+		"snapshots",
+		"rooms",
+		"users",
+	}
+
+	for _, table := range tables {
+		if _, err := db.Exec("DELETE FROM " + table); err != nil {
+			t.Fatalf("failed to clean table %s: %v", table, err)
+		}
+	}
+}
+
+func createTestUser(t *testing.T, db *sql.DB, email string) string {
+	t.Helper()
+
+	var userID string
+	err := db.QueryRow(`
+		INSERT INTO users (email, password_hash)
+		VALUES ($1, $2)
+		RETURNING id
+	`, email, "hashed-password").Scan(&userID)
+	if err != nil {
+		t.Fatalf("failed to create test user: %v", err)
+	}
+
+	return userID
+}
+
+func TestRoomService_CreateRoom_Success(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	cleanTestDB(t, db)
+
+	service := &RoomService{DB: db}
+	userID := createTestUser(t, db, "service-create@codedock.com")
+
+	room, err := service.CreateRoom(userID, "Service Test Room")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if room == nil {
+		t.Fatal("expected room, got nil")
+	}
+
+	if room.ID == "" {
+		t.Fatal("expected created room to have an ID")
+	}
+
+	if room.Name != "Service Test Room" {
+		t.Fatalf("expected room name Service Test Room, got %q", room.Name)
+	}
+
+	if room.CreatedBy != userID {
+		t.Fatalf("expected created_by %s, got %s", userID, room.CreatedBy)
+	}
+
+	if !room.IsActive {
+		t.Fatal("expected created room to be active")
+	}
+
+	// Verify host membership was also created.
+	var count int
+	err = db.QueryRow(`
+		SELECT COUNT(*)
+		FROM room_members
+		WHERE user_id = $1 AND room_id = $2 AND role = 'host'
+	`, userID, room.ID).Scan(&count)
+	if err != nil {
+		t.Fatalf("failed verifying room membership: %v", err)
+	}
+
+	if count != 1 {
+		t.Fatalf("expected 1 host membership row, got %d", count)
+	}
+}
+
+func TestRoomService_CreateRoom_EmptyName(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	cleanTestDB(t, db)
+
+	service := &RoomService{DB: db}
+	userID := createTestUser(t, db, "service-empty@codedock.com")
+
+	room, err := service.CreateRoom(userID, "")
+	if err == nil {
+		t.Fatal("expected error for empty room name, got nil")
+	}
+
+	if room != nil {
+		t.Fatal("expected nil room when create fails")
+	}
+
+	if err.Error() != "Room name is required" {
+		t.Fatalf("expected 'Room name is required', got %q", err.Error())
+	}
+}
+
+func TestRoomService_GetRoom_Success(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	cleanTestDB(t, db)
+
+	service := &RoomService{DB: db}
+	userID := createTestUser(t, db, "service-get@codedock.com")
+
+	created, err := service.CreateRoom(userID, "Lookup Room")
+	if err != nil {
+		t.Fatalf("failed to create room: %v", err)
+	}
+
+	room, err := service.GetRoom(created.ID)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if room == nil {
+		t.Fatal("expected room, got nil")
+	}
+
+	if room.ID != created.ID {
+		t.Fatalf("expected room ID %s, got %s", created.ID, room.ID)
+	}
+
+	if room.Name != "Lookup Room" {
+		t.Fatalf("expected room name Lookup Room, got %q", room.Name)
+	}
+}
+
+func TestRoomService_GetRoom_NotFound(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	cleanTestDB(t, db)
+
+	service := &RoomService{DB: db}
+
+	room, err := service.GetRoom("00000000-0000-0000-0000-000000000000")
+	if err == nil {
+		t.Fatal("expected error for missing room, got nil")
+	}
+
+	if room != nil {
+		t.Fatal("expected nil room for missing room")
+	}
+
+	if err.Error() != "no room found" {
+		t.Fatalf("expected 'no room found', got %q", err.Error())
+	}
+}
+
+func TestRoomService_GetUserRooms_ReturnsCreatedRooms(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	cleanTestDB(t, db)
+
+	service := &RoomService{DB: db}
+	userID := createTestUser(t, db, "service-list@codedock.com")
+
+	first, err := service.CreateRoom(userID, "Room A")
+	if err != nil {
+		t.Fatalf("failed creating Room A: %v", err)
+	}
+
+	second, err := service.CreateRoom(userID, "Room B")
+	if err != nil {
+		t.Fatalf("failed creating Room B: %v", err)
+	}
+
+	rooms, err := service.GetUserRooms(userID)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if len(rooms) != 2 {
+		t.Fatalf("expected 2 rooms, got %d", len(rooms))
+	}
+
+	found := map[string]bool{
+		first.ID:  false,
+		second.ID: false,
+	}
+
+	for _, room := range rooms {
+		if _, ok := found[room.ID]; ok {
+			found[room.ID] = true
+		}
+	}
+
+	if !found[first.ID] {
+		t.Fatalf("expected room %s to be in user room list", first.ID)
+	}
+
+	if !found[second.ID] {
+		t.Fatalf("expected room %s to be in user room list", second.ID)
+	}
+}
+
+func TestRoomService_GetUserRooms_Empty(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	cleanTestDB(t, db)
+
+	service := &RoomService{DB: db}
+	userID := createTestUser(t, db, "service-empty-list@codedock.com")
+
+	rooms, err := service.GetUserRooms(userID)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if rooms == nil {
+		t.Fatal("expected empty slice, got nil")
+	}
+
+	if len(rooms) != 0 {
+		t.Fatalf("expected 0 rooms, got %d", len(rooms))
+	}
+}
+
+------------------------------------------------------------
+FILE: internal/services/rooms.go
+------------------------------------------------------------
+package services
+
+import (
+	"database/sql"
+	"errors"
+	"time"
+)
+
+type Room struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	CreatedBy string    `json:"created_by"`
+	IsActive  bool      `json:"is_active"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type RoomService struct {
+	DB *sql.DB
+}
+
+func (s *RoomService) CreateRoom(UserID string, name string) (*Room, error) {
+
+	if name == "" {
+		return nil, errors.New("Room name is required")
+	}
+
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return nil, err
+	}
+
+	defer tx.Rollback()
+
+	var room Room
+	err = tx.QueryRow(`INSERT INTO rooms (name, created_by) VALUES ($1, $2) RETURNING id, name, created_by, is_active, created_at`, name, UserID).Scan(&room.ID, &room.Name, &room.CreatedBy, &room.IsActive, &room.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = tx.Exec(`INSERT INTO room_members (user_id, room_id, role) VALUES ($1, $2, 'host')`, UserID, room.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	return &room, nil
+}
+
+func (s *RoomService) GetRoom(roomID string) (*Room, error) {
+	var room Room
+
+	err := s.DB.QueryRow(`SELECT id, name, created_by, is_active, created_at FROM rooms WHERE id = $1 AND is_active = true`, roomID).Scan(&room.ID, &room.Name, &room.CreatedBy, &room.IsActive, &room.CreatedAt)
+
+	if err == sql.ErrNoRows {
+		return nil, errors.New("no room found")
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return &room, nil
+}
+
+func (s *RoomService) GetUserRooms(userID string) ([]Room, error) {
+	rows, err := s.DB.Query (`SELECT r.id, r.name, r.created_by, r.is_active, r.created_at FROM rooms r JOIN room_members rm ON rm.room_id = r.id WHERE rm.user_id = $1 AND r.is_active = true ORDER BY r.created_at DESC`,userID )
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	rooms := []Room{}
+
+	for rows.Next() {
+		var room Room
+		if err := rows.Scan(
+			&room.ID, &room.Name, &room.CreatedBy,
+			&room.IsActive, &room.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		rooms = append(rooms, room)
+	}
+
+	return rooms, nil
+}
+
+------------------------------------------------------------
+FILE: internal/services/snapshots.go
+------------------------------------------------------------
+package services
+
+import (
+	"database/sql"
+)
+
+// DBSnapshotStore implements hub.SnapshotStore using PostgreSQL.
+type DBSnapshotStore struct {
+	DB *sql.DB
+}
+
+func (s *DBSnapshotStore) Save(roomID, filePath string, state []byte) error {
+	return SaveSnapshot(s.DB, roomID, filePath, state)
+}
+
+func (s *DBSnapshotStore) Get(roomID, filePath string) ([]byte, error) {
+	return GetSnapshot(s.DB, roomID, filePath)
+}
+
+func SaveSnapshot(db *sql.DB, roomID, filePath string, yjsState []byte) error {
+	_, err := db.Exec(`
+        INSERT INTO snapshots (room_id, file_path, yjs_state)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (room_id, file_path)
+        DO UPDATE SET yjs_state = $3
+    `, roomID, filePath, yjsState)
+	return err
+}
+
+func GetSnapshot(db *sql.DB, roomID, filePath string) ([]byte, error) {
+	var state []byte
+
+	err := db.QueryRow(`
+        SELECT yjs_state FROM snapshots
+        WHERE room_id = $1 AND file_path = $2
+    `, roomID, filePath).Scan(&state)
+
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	return state, nil
+}
+
+------------------------------------------------------------
+FILE: internal/services/snapshot_test.go
+------------------------------------------------------------
+package services
+
+import (
+	"database/sql"
+	"testing"
+)
+
+func createTestRoom(t *testing.T, db *sql.DB, userID, name string) string {
+	t.Helper()
+
+	var roomID string
+	err := db.QueryRow(`
+		INSERT INTO rooms (name, created_by)
+		VALUES ($1, $2)
+		RETURNING id
+	`, name, userID).Scan(&roomID)
+	if err != nil {
+		t.Fatalf("failed to create test room: %v", err)
+	}
+
+	_, err = db.Exec(`
+		INSERT INTO room_members (user_id, room_id, role)
+		VALUES ($1, $2, 'host')
+	`, userID, roomID)
+	if err != nil {
+		t.Fatalf("failed to create room membership: %v", err)
+	}
+
+	return roomID
+}
+
+func TestSaveSnapshot_ThenGetSnapshot(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	cleanTestDB(t, db)
+
+	userID := createTestUser(t, db, "snapshot-readwrite@codedock.com")
+	roomID := createTestRoom(t, db, userID, "Snapshot Room")
+
+	filePath := "frontend/src/App.jsx"
+	original := []byte("initial yjs state")
+
+	if err := SaveSnapshot(db, roomID, filePath, original); err != nil {
+		t.Fatalf("expected no error saving snapshot, got %v", err)
+	}
+
+	got, err := GetSnapshot(db, roomID, filePath)
+	if err != nil {
+		t.Fatalf("expected no error getting snapshot, got %v", err)
+	}
+
+	if got == nil {
+		t.Fatal("expected snapshot bytes, got nil")
+	}
+
+	if string(got) != string(original) {
+		t.Fatalf("expected %q, got %q", string(original), string(got))
+	}
+}
+
+func TestSaveSnapshot_UpsertUpdatesExistingState(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	cleanTestDB(t, db)
+
+	userID := createTestUser(t, db, "snapshot-upsert@codedock.com")
+	roomID := createTestRoom(t, db, userID, "Upsert Room")
+
+	filePath := "backend/main.go"
+	firstState := []byte("first state")
+	secondState := []byte("updated state")
+
+	if err := SaveSnapshot(db, roomID, filePath, firstState); err != nil {
+		t.Fatalf("failed saving first snapshot: %v", err)
+	}
+
+	if err := SaveSnapshot(db, roomID, filePath, secondState); err != nil {
+		t.Fatalf("failed saving updated snapshot: %v", err)
+	}
+
+	got, err := GetSnapshot(db, roomID, filePath)
+	if err != nil {
+		t.Fatalf("expected no error getting updated snapshot, got %v", err)
+	}
+
+	if got == nil {
+		t.Fatal("expected updated snapshot bytes, got nil")
+	}
+
+	if string(got) != string(secondState) {
+		t.Fatalf("expected updated state %q, got %q", string(secondState), string(got))
+	}
+}
+
+func TestGetSnapshot_NotFoundReturnsNilNil(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	cleanTestDB(t, db)
+
+	userID := createTestUser(t, db, "snapshot-missing@codedock.com")
+	roomID := createTestRoom(t, db, userID, "Missing Snapshot Room")
+
+	got, err := GetSnapshot(db, roomID, "missing/file.go")
+	if err != nil {
+		t.Fatalf("expected nil error for missing snapshot, got %v", err)
+	}
+
+	if got != nil {
+		t.Fatalf("expected nil snapshot for missing row, got %q", string(got))
+	}
+}
+
+func TestDBSnapshotStore_SaveAndGet(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	cleanTestDB(t, db)
+
+	store := &DBSnapshotStore{DB: db}
+	userID := createTestUser(t, db, "snapshot-store@codedock.com")
+	roomID := createTestRoom(t, db, userID, "Store Room")
+
+	filePath := "internal/services/snapshot.go"
+	state := []byte("store state")
+
+	if err := store.Save(roomID, filePath, state); err != nil {
+		t.Fatalf("expected no error from store.Save, got %v", err)
+	}
+
+	got, err := store.Get(roomID, filePath)
+	if err != nil {
+		t.Fatalf("expected no error from store.Get, got %v", err)
+	}
+
+	if got == nil {
+		t.Fatal("expected snapshot bytes, got nil")
+	}
+
+	if string(got) != string(state) {
+		t.Fatalf("expected %q, got %q", string(state), string(got))
+	}
+}
+
+------------------------------------------------------------
+FILE: internal/services/users.go
+------------------------------------------------------------
+package services
+
+import (
+	"database/sql"
+	"errors"
+
+	"github.com/lib/pq"
+)
+
+// ErrDuplicateEmail is returned when a registration attempt
+// uses an email address that already exists in the database.
+var ErrDuplicateEmail = errors.New("email already registered")
+
+func CreateUser(db *sql.DB, email, hashedPassword string) (string, error) {
+	var userID string
+
+	err := db.QueryRow(
+		`INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id`,
+		email,
+		hashedPassword,
+	).Scan(&userID)
+
+	if err != nil {
+		// Ask: is this error a PostgreSQL-specific error?
+		if pqErr, ok := err.(*pq.Error); ok {
+			// 23505 is PostgreSQL's code for unique constraint violation
+			if pqErr.Code == "23505" {
+				return "", ErrDuplicateEmail
+			}
+		}
+		// Any other error is a genuine infrastructure failure
+		return "", err
+	}
+
+	return userID, nil
+}
+
+------------------------------------------------------------
+FILE: internal/services/users_test.go
+------------------------------------------------------------
+package services
+
+import (
+	"errors"
+	"testing"
+)
+
+func TestCreateUser_Success(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	cleanTestDB(t, db)
+
+	userID, err := CreateUser(db, "users-success@codedock.com", "hashed-password")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	if userID == "" {
+		t.Fatal("expected created user ID, got empty string")
+	}
+}
+
+func TestCreateUser_DuplicateEmailReturnsErrDuplicateEmail(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+	cleanTestDB(t, db)
+
+	_, err := CreateUser(db, "users-duplicate@codedock.com", "hashed-password")
+	if err != nil {
+		t.Fatalf("expected first create to succeed, got %v", err)
+	}
+
+	_, err = CreateUser(db, "users-duplicate@codedock.com", "another-password")
+	if err == nil {
+		t.Fatal("expected duplicate email error, got nil")
+	}
+
+	if !errors.Is(err, ErrDuplicateEmail) {
+		t.Fatalf("expected ErrDuplicateEmail, got %v", err)
+	}
+}
+------------------------------------------------------------
+FILE: extension/src/api.ts
+------------------------------------------------------------
+import { ApiError, AuthResponse, Room } from './types';
+
+const REQUEST_TIMEOUT_MS = 10_000;
+
+export class ApiClient {
+    constructor(private readonly baseUrl: string) {}
+
+    async login(email: string, password: string): Promise<AuthResponse> {
+        return this.request<AuthResponse>(
+            '/auth/login',
+            {
+                method: 'POST',
+                body: JSON.stringify({ email, password })
+            },
+            false
+        );
+    }
+
+    async validateToken(token: string): Promise<void> {
+        return this.request<void>(
+            '/auth/me',
+            { method: 'GET' },
+            true,
+            token
+        );
+    }
+
+    async getRooms(token: string): Promise<Room[]> {
+        return this.request<Room[]>(
+            '/rooms',
+            { method: 'GET' },
+            true,
+            token
+        );
+    }
+
+    async createRoom(token: string, name: string): Promise<Room> {
+        return this.request<Room>(
+            '/rooms',
+            {
+                method: 'POST',
+                body: JSON.stringify({ name })
+            },
+            true,
+            token
+        );
+    }
+
+    private async request<T>(
+        path: string,
+        options: RequestInit,
+        authenticated: boolean,
+        token?: string
+    ): Promise<T> {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+        const headers: Record<string, string> = {
+            'Content-Type': 'application/json',
+            ...(options.headers as Record<string, string> ?? {})
+        };
+
+        if (authenticated && token) {
+            headers['Authorization'] = `Bearer ${token}`;
+        }
+
+        try {
+            const response = await fetch(`${this.baseUrl}${path}`, {
+                ...options,
+                headers,
+                signal: controller.signal
+            });
+
+            if (!response.ok) {
+                const body = await response.text();
+                throw new ApiError(response.status, body || `HTTP ${response.status}`);
+            }
+
+            const text = await response.text();
+            return text ? JSON.parse(text) as T : {} as T;
+
+        } catch (err) {
+            if (err instanceof ApiError) {
+                throw err;
+            }
+            if (err instanceof DOMException && err.name === 'AbortError') {
+                throw new ApiError(408, 'Request timed out — is the server reachable?');
+            }
+            throw new ApiError(0, `Network error: ${err instanceof Error ? err.message : 'unknown'}`);
+        } finally {
+            clearTimeout(timeout);
+        }
+    }
+}
+------------------------------------------------------------
+FILE: extension/src/auth.ts
+------------------------------------------------------------
+import * as vscode from "vscode";
+import { EventEmitter } from "events";
+import { ApiClient } from "./api";
+
+const TOKEN_KEY = "codedock.jwt";
+
+export class AuthManager {
+  constructor(
+    private readonly secrets: vscode.SecretStorage,
+    private readonly api: ApiClient,
+    private readonly events: EventEmitter,
+  ) {}
+
+  async getToken(): Promise<string | null> {
+    const token = await this.secrets.get(TOKEN_KEY);
+    return token ?? null;
+  }
+
+  private async saveToken(token: string): Promise<void> {
+    await this.secrets.store(TOKEN_KEY, token);
+  }
+
+  async deleteToken(): Promise<void> {
+    await this.secrets.delete(TOKEN_KEY);
+  }
+
+  async login(): Promise<void> {
+    const email = await vscode.window.showInputBox({
+      prompt: "CodeDock: Enter your email",
+      placeHolder: "developer@example.com",
+      ignoreFocusOut: true,
+    });
+
+    if (!email) {
+      return;
+    }
+
+    const password = await vscode.window.showInputBox({
+      prompt: "CodeDock: Enter your password",
+      password: true,
+      ignoreFocusOut: true,
+    });
+
+    if (!password) {
+      return;
+    }
+
+    try {
+      const response = await this.api.login(email, password);
+      await this.saveToken(response.token);
+      this.events.emit("login", response.token);
+      vscode.window.showInformationMessage("CodeDock: Logged in successfully.");
+      await this.promptRoomAction();
+    } catch (err) {
+      vscode.window.showErrorMessage(
+        `CodeDock: Login failed — ${err instanceof Error ? err.message : "unknown error"}`,
+      );
+    }
+  }
+
+  async logout(): Promise<void> {
+    await this.deleteToken();
+    this.events.emit("logout");
+    vscode.window.showInformationMessage("CodeDock: Logged out.");
+  }
+
+  async validateToken(): Promise<boolean> {
+    try {
+      const token = await this.getToken();
+      if (!token) {
+        return false;
+      }
+      const valid = await this.api.validateToken(token);
+      return true;
+    } catch {
+      await this.deleteToken();
+      return false;
+    }
+  }
+
+  private async promptRoomAction(): Promise<void> {
+    const choice = await vscode.window.showQuickPick(
+      ["Join a Room", "Create a Room"],
+      { placeHolder: "What would you like to do?" },
+    );
+
+    if (!choice) {
+      return;
+    }
+
+    if (choice === "Join a Room") {
+      vscode.commands.executeCommand("codedock.joinRoom");
+    } else {
+      vscode.commands.executeCommand("codedock.createRoom");
+    }
+  }
+}
+
+------------------------------------------------------------
+FILE: extension/src/chat.ts
+------------------------------------------------------------
+// extension/src/chat.ts
+
+import * as vscode from 'vscode'
+import { WebSocketManager } from './websocket'
+import { encodeChatPayload, decodeChatPayload, MessageType } from './protocol'
+import { ChatMessage } from './types'
+
+export class ChatManager {
+    // single panel instance — revealed if exists, created if not
+    private panel: vscode.WebviewPanel | null = null
+    private messages: ChatMessage[] = []
+    private localUserId: string = ''
+    private localEmail: string = ''
+
+    constructor(
+        private readonly context: vscode.ExtensionContext,
+        private readonly wsManager: WebSocketManager
+    ) {
+        this.wsManager.onMessage((data) => this.handleIncoming(data))
+    }
+
+    // --- Public API ---
+
+    activate(userId: string, email: string): void {
+        this.localUserId = userId
+        this.localEmail = email
+    }
+
+    open(): void {
+        // reveal existing panel instead of creating a new one
+        if (this.panel) {
+            this.panel.reveal(vscode.ViewColumn.Beside)
+            return
+        }
+
+        // create panel — sandboxed webview
+        this.panel = vscode.window.createWebviewPanel(
+            'codedockChat',
+            'CodeDock Chat',
+            vscode.ViewColumn.Beside,
+            {
+                enableScripts: true,
+                retainContextWhenHidden: true
+            }
+        )
+
+        // render initial HTML
+        this.panel.webview.html = this.buildHtml()
+
+        // handle messages from the webview — user sending chat
+        this.panel.webview.onDidReceiveMessage((message) => {
+            if (message.type === 'send' && typeof message.content === 'string') {
+                this.sendMessage(message.content.trim())
+            }
+        })
+
+        // clean up when panel is closed by user
+        this.panel.onDidDispose(() => {
+            this.panel = null
+        })
+    }
+
+    dispose(): void {
+        this.panel?.dispose()
+        this.panel = null
+    }
+
+    // --- Outbound ---
+
+    private sendMessage(content: string): void {
+        if (!content) {
+            return
+        }
+
+        const message: ChatMessage = {
+            id: crypto.randomUUID(),
+            userId: this.localUserId,
+            email: this.localEmail,
+            content,
+            timestamp: Date.now()
+        }
+
+        const payload = encodeChatPayload(message)
+        this.wsManager.send(payload)
+
+        // render own message immediately — optimistic update
+        this.appendMessage(message)
+    }
+
+    // --- Inbound ---
+
+    private handleIncoming(data: Uint8Array): void {
+        if (data[0] !== MessageType.CHAT) {
+            return
+        }
+
+        const message = decodeChatPayload<ChatMessage>(data)
+        if (!message || !message.userId || !message.content) {
+            return
+        }
+
+        // skip own messages — already rendered optimistically
+        if (message.userId === this.localUserId) {
+            return
+        }
+
+        this.appendMessage(message)
+    }
+
+    private appendMessage(message: ChatMessage): void {
+        this.messages.push(message)
+
+        if (!this.panel) {
+            return
+        }
+
+        // send to webview — sanitized before rendering
+        this.panel.webview.postMessage({
+            type: 'append',
+            message: {
+                email: this.sanitize(message.email),
+                content: this.sanitize(message.content),
+                timestamp: message.timestamp
+            }
+        })
+    }
+
+    // --- Security ---
+
+    private sanitize(text: string): string {
+        return text
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;')
+    }
+
+    // --- Webview HTML ---
+
+    private buildHtml(): string {
+        return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy"
+          content="default-src 'none'; script-src 'nonce-codedock'; style-src 'unsafe-inline';">
+    <title>CodeDock Chat</title>
+    <style>
+        body {
+            font-family: var(--vscode-font-family);
+            font-size: var(--vscode-font-size);
+            color: var(--vscode-foreground);
+            background: var(--vscode-editor-background);
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        #messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px;
+        }
+        .message {
+            margin-bottom: 10px;
+        }
+        .message .author {
+            font-weight: bold;
+            color: var(--vscode-textLink-foreground);
+            font-size: 0.85em;
+        }
+        .message .time {
+            color: var(--vscode-descriptionForeground);
+            font-size: 0.75em;
+            margin-left: 6px;
+        }
+        .message .content {
+            margin-top: 2px;
+            word-break: break-word;
+        }
+        #input-row {
+            display: flex;
+            padding: 8px;
+            gap: 8px;
+            border-top: 1px solid var(--vscode-panel-border);
+        }
+        #input {
+            flex: 1;
+            background: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
+            border: 1px solid var(--vscode-input-border);
+            padding: 6px 8px;
+            font-size: var(--vscode-font-size);
+            font-family: var(--vscode-font-family);
+        }
+        #send {
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border: none;
+            padding: 6px 14px;
+            cursor: pointer;
+        }
+        #send:hover {
+            background: var(--vscode-button-hoverBackground);
+        }
+    </style>
+</head>
+<body>
+    <div id="messages"></div>
+    <div id="input-row">
+        <input id="input" type="text" placeholder="Type a message..." />
+        <button id="send">Send</button>
+    </div>
+    <script nonce="codedock">
+        const vscode = acquireVsCodeApi();
+        const messagesEl = document.getElementById('messages');
+        const inputEl = document.getElementById('input');
+        const sendEl = document.getElementById('send');
+
+        function formatTime(ts) {
+            return new Date(ts).toLocaleTimeString([], {
+                hour: '2-digit', minute: '2-digit'
+            });
+        }
+
+        function appendMessage(msg) {
+            const div = document.createElement('div');
+            div.className = 'message';
+            // content is already sanitized by the extension host
+            div.innerHTML =
+                '<div class="author">' + msg.email +
+                '<span class="time">' + formatTime(msg.timestamp) + '</span></div>' +
+                '<div class="content">' + msg.content + '</div>';
+            messagesEl.appendChild(div);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+
+        function send() {
+            const content = inputEl.value.trim();
+            if (!content) return;
+            vscode.postMessage({ type: 'send', content });
+            inputEl.value = '';
+        }
+
+        sendEl.addEventListener('click', send);
+        inputEl.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') send();
+        });
+
+        window.addEventListener('message', (event) => {
+            const msg = event.data;
+            if (msg.type === 'append') {
+                appendMessage(msg.message);
+            }
+        });
+    </script>
+</body>
+</html>`
+    }
+}
+
+------------------------------------------------------------
+FILE: extension/src/cursor-manager.ts
+------------------------------------------------------------
+import * as vscode from "vscode";
+import { WebSocketManager } from "./websocket";
+import {
+  encodeAwarenessPayload,
+  decodeAwarenessPayload,
+  MessageType,
+} from "./protocol";
+import { throttle, colorFromUserId } from "./utils";
+import { AwarenessState } from "./types";
+
+const THROTTLE_MS = 50;
+const STALE_CURSOR_MS = 5000;
+const CLEANUP_INTERVAL_MS = 1000;
+
+export class CursorManager {
+  // one decoration type per remote user — never recreated
+  private decorations: Map<string, vscode.TextEditorDecorationType> = new Map();
+
+  // last known awareness state per remote user
+  private states: Map<string, AwarenessState> = new Map();
+
+  // last seen timestamp per remote user
+  private lastSeen: Map<string, number> = new Map();
+
+  // interval that checks for stale cursors
+  private cleanupTimer: NodeJS.Timeout | null = null;
+
+  private active: boolean = false;
+  private localUserId: string = "";
+  private localEmail: string = "";
+
+  constructor(private readonly wsManager: WebSocketManager) {
+    this.wsManager.onMessage((data) => this.handleIncoming(data));
+  }
+
+  // --- Public API ---
+
+  activate(userId: string, email: string): void {
+    this.active = true;
+    this.localUserId = userId;
+    this.localEmail = email;
+
+    // watch local cursor movements — throttled to 50ms
+    const throttledSend = throttle(() => {
+      this.sendLocalAwareness();
+    }, THROTTLE_MS);
+
+    vscode.window.onDidChangeTextEditorSelection(() => {
+      if (this.active) {
+        throttledSend();
+      }
+    });
+
+    // start stale cursor cleanup loop
+    this.cleanupTimer = setInterval(() => {
+      this.removeStalecursors();
+    }, CLEANUP_INTERVAL_MS);
+  }
+
+  dispose(): void {
+    this.active = false;
+
+    // stop cleanup loop
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
+
+    // dispose all decoration types
+    for (const decoration of this.decorations.values()) {
+      decoration.dispose();
+    }
+    this.decorations.clear();
+    this.states.clear();
+    this.lastSeen.clear();
+  }
+
+  // --- Local Awareness ---
+
+  private sendLocalAwareness(): void {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+      return;
+    }
+
+    const position = editor.selection.active;
+    const anchor = editor.selection.anchor;
+
+    const state: AwarenessState = {
+      userId: this.localUserId,
+      email: this.localEmail,
+      cursor: {
+        line: position.line,
+        character: position.character,
+      },
+      selection: {
+        anchor: { line: anchor.line, character: anchor.character },
+        active: { line: position.line, character: position.character },
+      },
+    };
+
+    const payload = encodeAwarenessPayload(state);
+    this.wsManager.send(payload);
+  }
+
+  // --- Incoming Awareness ---
+
+  private handleIncoming(data: Uint8Array): void {
+    // only handle awareness messages
+    if (data[0] !== MessageType.AWARENESS) {
+      return;
+    }
+
+    const state = decodeAwarenessPayload<AwarenessState>(data);
+    if (!state || !state.userId) {
+      return;
+    }
+
+    // ignore own awareness messages
+    if (state.userId === this.localUserId) {
+      return;
+    }
+
+    // update last seen timestamp
+    this.lastSeen.set(state.userId, Date.now());
+    this.states.set(state.userId, state);
+
+    // render the cursor
+    this.renderCursor(state);
+  }
+
+  // --- Cursor Rendering ---
+
+  private renderCursor(state: AwarenessState): void {
+    if (!state.cursor) {
+      return;
+    }
+
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+      return;
+    }
+
+    // get or create decoration type for this user
+    let decorationType = this.decorations.get(state.userId);
+    if (!decorationType) {
+      const color = colorFromUserId(state.userId);
+      decorationType = vscode.window.createTextEditorDecorationType({
+        borderWidth: "0 0 0 2px",
+        borderStyle: "solid",
+        borderColor: color,
+        after: {
+          contentText: ` ${state.email}`,
+          color: color,
+          fontStyle: "normal",
+          fontWeight: "normal",
+        },
+      });
+      this.decorations.set(state.userId, decorationType);
+    }
+
+    // build the decoration range — cursor is a single position
+    const position = new vscode.Position(
+      state.cursor.line,
+      state.cursor.character,
+    );
+    const range = new vscode.Range(position, position);
+
+    // apply decoration to the active editor
+    editor.setDecorations(decorationType, [range]);
+  }
+
+  // --- Stale Cursor Cleanup ---
+
+  private removeStalecursors(): void {
+    const now = Date.now();
+
+    for (const [userId, timestamp] of this.lastSeen.entries()) {
+      if (now - timestamp > STALE_CURSOR_MS) {
+        this.removeCursor(userId);
+      }
+    }
+  }
+
+  private removeCursor(userId: string): void {
+    // clear the decoration from all visible editors
+    const decoration = this.decorations.get(userId);
+    if (decoration) {
+      vscode.window.visibleTextEditors.forEach((editor) => {
+        editor.setDecorations(decoration, []);
+      });
+      decoration.dispose();
+      this.decorations.delete(userId);
+    }
+
+    this.states.delete(userId);
+    this.lastSeen.delete(userId);
+  }
+}
+
+------------------------------------------------------------
+FILE: extension/src/extension.ts
+------------------------------------------------------------
+import * as path from "path";
+import * as vscode from "vscode";
+import { EventEmitter } from "events";
+import { AuthManager } from "./auth";
+import { ApiClient } from "./api";
+import { WebSocketManager } from "./websocket";
+import { YjsSync } from "./yjs-sync";
+
+const PENDING_HYDRATED_ROOM_ID_KEY = "codedock.pendingHydrated.roomId";
+const PENDING_HYDRATED_ROOT_KEY = "codedock.pendingHydrated.rootPath";
+
+let authManager: AuthManager;
+let wsManager: WebSocketManager;
+let yjsSync: YjsSync;
+let apiClient: ApiClient;
+
+export async function activate(
+  context: vscode.ExtensionContext,
+): Promise<void> {
+  const config = vscode.workspace.getConfiguration("codedock");
+  const serverUrl = config.get<string>("serverUrl", "http://localhost:8080");
+
+  const outputChannel = vscode.window.createOutputChannel("CodeDock");
+  context.subscriptions.push(outputChannel);
+
+  outputChannel.show(true);
+  outputChannel.appendLine("CodeDock: DIAG BUILD LOADED (SYNC-ONLY)");
+  vscode.window.showInformationMessage("CodeDock: DIAG BUILD LOADED (SYNC-ONLY)");
+
+  const emitter = new EventEmitter();
+
+  apiClient = new ApiClient(serverUrl);
+  authManager = new AuthManager(context.secrets, apiClient, emitter);
+  wsManager = new WebSocketManager(serverUrl, outputChannel);
+  yjsSync = new YjsSync(wsManager, outputChannel, context.globalState);
+
+  emitter.on("login", () => {
+    outputChannel.appendLine("CodeDock: login event received (sync-only mode)");
+  });
+
+  emitter.on("logout", () => {
+    outputChannel.appendLine("CodeDock: logout event received");
+    void clearPendingHydratedJoin(context);
+    yjsSync.setActiveRoomId(null);
+    yjsSync.setGuestMaterializationRoot(null);
+    wsManager.disconnect("logout");
+    yjsSync.dispose();
+  });
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("codedock.login", () =>
+      authManager.login(),
+    ),
+    vscode.commands.registerCommand("codedock.logout", () =>
+      authManager.logout(),
+    ),
+    vscode.commands.registerCommand("codedock.joinRoom", () =>
+      handleJoinRoom(context, outputChannel),
+    ),
+    vscode.commands.registerCommand("codedock.createRoom", () =>
+      handleCreateRoom(outputChannel),
+    ),
+    vscode.commands.registerCommand("codedock.openChat", () =>
+      vscode.window.showWarningMessage(
+        "CodeDock Chat is temporarily disabled in sync-only diagnostic mode.",
+      ),
+    ),
+    vscode.commands.registerCommand("codedock.disconnectRoom", () => {
+      outputChannel.appendLine("CodeDock: user requested room disconnect");
+      void clearPendingHydratedJoin(context);
+      yjsSync.setActiveRoomId(null);
+      yjsSync.setGuestMaterializationRoot(null);
+      wsManager.disconnect("user");
+      yjsSync.dispose();
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.window.registerUriHandler({
+      handleUri(uri: vscode.Uri): void {
+        outputChannel.appendLine(`URI received: ${uri.toString()}`);
+
+        const params = new URLSearchParams(uri.query);
+        const code = params.get("code");
+        const roomId = params.get("room_id");
+
+        outputChannel.appendLine(`code: ${code}`);
+        outputChannel.appendLine(`room_id: ${roomId}`);
+
+        vscode.window.showInformationMessage(
+          `Deep link received — code: ${code}, room: ${roomId}`,
+        );
+      },
+    }),
+  );
+
+  const sessionReady = await restoreSession();
+
+  if (sessionReady) {
+    await resumePendingHydratedJoin(context, outputChannel);
+  }
+}
+
+async function restoreSession(): Promise<boolean> {
+  const token = await authManager.getToken();
+
+  if (!token) {
+    vscode.window.showInformationMessage(
+      'CodeDock: Not logged in. Run "CodeDock: Login" to start.',
+    );
+    return false;
+  }
+
+  const valid = await authManager.validateToken();
+
+  if (!valid) {
+    vscode.window
+      .showWarningMessage(
+        "CodeDock: Session expired. Please log in again.",
+        "Login",
+      )
+      .then((selection) => {
+        if (selection === "Login") {
+          authManager.login();
+        }
+      });
+    return false;
+  }
+
+  vscode.window.showInformationMessage("CodeDock: Session restored.");
+  return true;
+}
+
+async function handleJoinRoom(
+  context: vscode.ExtensionContext,
+  outputChannel: vscode.OutputChannel,
+): Promise<void> {
+  const token = await authManager.getToken();
+
+  if (!token) {
+    vscode.window.showErrorMessage(
+      "CodeDock: You must be logged in to join a room.",
+    );
+    return;
+  }
+
+  const roomId = await vscode.window.showInputBox({
+    prompt: "Enter Room ID",
+    placeHolder: "e.g. 550e8400-e29b-41d4-a716-446655440000",
+    ignoreFocusOut: true,
+    validateInput: (value) =>
+      value.trim().length === 0 ? "Room ID cannot be empty" : null,
+  });
+
+  if (!roomId) {
+    return;
+  }
+
+  const normalizedRoomId = roomId.trim();
+
+  if (!hasWorkspaceRoot()) {
+    const selected = await vscode.window.showOpenDialog({
+      canSelectMany: false,
+      canSelectFiles: false,
+      canSelectFolders: true,
+      openLabel: "Use Folder for CodeDock Room",
+      title: "Choose a folder where CodeDock should hydrate the host project",
+    });
+
+    if (!selected || selected.length === 0) {
+      outputChannel.appendLine(
+        "CodeDock: join cancelled (no guest workspace folder selected)",
+      );
+      return;
+    }
+
+    const destinationRoot = selected[0];
+    outputChannel.appendLine(
+      `CodeDock: guest materialization root set to ${destinationRoot.fsPath}`,
+    );
+
+    yjsSync.setGuestMaterializationRoot(destinationRoot);
+  } else {
+    yjsSync.setGuestMaterializationRoot(null);
+  }
+
+  await clearPendingHydratedJoin(context);
+  await joinRoomNow(token, normalizedRoomId, outputChannel);
+}
+
+async function handleCreateRoom(
+  outputChannel: vscode.OutputChannel,
+): Promise<void> {
+  const token = await authManager.getToken();
+
+  if (!token) {
+    vscode.window.showErrorMessage(
+      "CodeDock: You must be logged in to create a room.",
+    );
+    return;
+  }
+
+  if (!hasWorkspaceRoot()) {
+    const selection = await vscode.window.showErrorMessage(
+      "CodeDock: Open the project folder you want to share before creating a room.",
+      "Open Folder",
+    );
+
+    if (selection === "Open Folder") {
+      await vscode.commands.executeCommand("workbench.action.files.openFolder");
+    }
+
+    return;
+  }
+
+  const roomName = await vscode.window.showInputBox({
+    prompt: "Enter a name for your room",
+    placeHolder: "e.g. my-project",
+    ignoreFocusOut: true,
+    validateInput: (value) =>
+      value.trim().length === 0 ? "Room name cannot be empty" : null,
+  });
+
+  if (!roomName) {
+    return;
+  }
+
+  try {
+    const room = await apiClient.createRoom(token, roomName.trim());
+    vscode.window.showInformationMessage(
+      `CodeDock: Room "${room.name}" created. ID: ${room.id}`,
+    );
+
+    outputChannel.appendLine(`CodeDock: created room ${room.id}`);
+
+    yjsSync.setSessionRole("host");
+    yjsSync.setActiveRoomId(room.id);
+    yjsSync.setGuestMaterializationRoot(null);
+    wsManager.connect(token, room.id);
+    yjsSync.activate();
+  } catch (err) {
+    vscode.window.showErrorMessage(
+      `CodeDock: Failed to create room — ${
+        err instanceof Error ? err.message : "unknown error"
+      }`,
+    );
+  }
+}
+
+async function joinRoomNow(
+  token: string,
+  roomId: string,
+  outputChannel: vscode.OutputChannel,
+): Promise<void> {
+  outputChannel.appendLine(`CodeDock: joining room ${roomId}`);
+
+  yjsSync.setSessionRole("guest");
+  yjsSync.setActiveRoomId(roomId);
+  wsManager.connect(token, roomId);
+  yjsSync.activate();
+}
+
+async function resumePendingHydratedJoin(
+  context: vscode.ExtensionContext,
+  outputChannel: vscode.OutputChannel,
+): Promise<void> {
+  const pendingRoomId = context.globalState.get<string>(
+    PENDING_HYDRATED_ROOM_ID_KEY,
+  );
+  const pendingRootPath = context.globalState.get<string>(
+    PENDING_HYDRATED_ROOT_KEY,
+  );
+
+  if (!pendingRoomId || !pendingRootPath) {
+    return;
+  }
+
+  const currentRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!currentRoot) {
+    return;
+  }
+
+  if (normalizeFsPath(currentRoot) !== normalizeFsPath(pendingRootPath)) {
+    return;
+  }
+
+  const token = await authManager.getToken();
+  if (!token) {
+    outputChannel.appendLine(
+      "CodeDock: pending hydrated project reopen found, but no valid session is available",
+    );
+    return;
+  }
+
+  outputChannel.appendLine(
+    `CodeDock: resuming room ${pendingRoomId} in hydrated project window`,
+  );
+
+  yjsSync.setGuestMaterializationRoot(null);
+  await joinRoomNow(token, pendingRoomId, outputChannel);
+  await clearPendingHydratedJoin(context);
+}
+
+async function clearPendingHydratedJoin(
+  context: vscode.ExtensionContext,
+): Promise<void> {
+  await context.globalState.update(PENDING_HYDRATED_ROOM_ID_KEY, undefined);
+  await context.globalState.update(PENDING_HYDRATED_ROOT_KEY, undefined);
+}
+
+function hasWorkspaceRoot(): boolean {
+  const folders = vscode.workspace.workspaceFolders;
+  return Array.isArray(folders) && folders.length > 0;
+}
+
+function normalizeFsPath(fsPath: string): string {
+  return path.resolve(fsPath);
+}
+
+export function deactivate(): void {
+  wsManager?.disconnect("extension_deactivated");
+  yjsSync?.dispose();
+}
+------------------------------------------------------------
+FILE: extension/src/protocol.ts
+------------------------------------------------------------
+import {
+  FileBootstrapRequest,
+  FileBootstrapResponse,
+  SyncPayload,
+  WorkspaceManifest,
+  WorkspaceManifestRequest,
+} from "./types";
+
+export const MessageType = {
+  SYNC: 0x01,
+  AWARENESS: 0x02,
+  CHAT: 0x03,
+  HYDRATION_REQUEST: 0x04,
+  WORKSPACE_MANIFEST_REQUEST: 0x05,
+  WORKSPACE_MANIFEST_RESPONSE: 0x06,
+  FILE_BOOTSTRAP_REQUEST: 0x07,
+  FILE_BOOTSTRAP_RESPONSE: 0x08,
+} as const;
+
+export type MessageTypeValue = typeof MessageType[keyof typeof MessageType];
+
+export function encodeSyncPayload(
+  filePath: string,
+  update: Uint8Array,
+): Uint8Array {
+  const encoder = new TextEncoder();
+  const filePathBytes = encoder.encode(filePath);
+
+  if (filePathBytes.length > 65535) {
+    throw new Error(
+      `File path too long: ${filePathBytes.length} bytes. Maximum is 65535.`,
+    );
+  }
+
+  const buffer = new Uint8Array(1 + 2 + filePathBytes.length + update.length);
+  let offset = 0;
+
+  buffer[offset++] = MessageType.SYNC;
+  buffer[offset++] = (filePathBytes.length >> 8) & 0xff;
+  buffer[offset++] = filePathBytes.length & 0xff;
+
+  buffer.set(filePathBytes, offset);
+  offset += filePathBytes.length;
+
+  buffer.set(update, offset);
+
+  return buffer;
+}
+
+export function decodeSyncPayload(buffer: Uint8Array): SyncPayload | null {
+  try {
+    if (buffer.length < 5) {
+      return null;
+    }
+
+    if (buffer[0] !== MessageType.SYNC) {
+      return null;
+    }
+
+    let offset = 1;
+    const filePathLength = (buffer[offset++] << 8) | buffer[offset++];
+
+    if (filePathLength === 0) {
+      return null;
+    }
+
+    if (offset + filePathLength > buffer.length) {
+      return null;
+    }
+
+    const decoder = new TextDecoder();
+    const filePath = decoder.decode(buffer.slice(offset, offset + filePathLength));
+    offset += filePathLength;
+
+    const update = buffer.slice(offset);
+
+    if (update.length === 0) {
+      return null;
+    }
+
+    return { filePath, update };
+  } catch {
+    return null;
+  }
+}
+
+export function encodeAwarenessPayload(state: object): Uint8Array {
+  const encoder = new TextEncoder();
+  const json = JSON.stringify(state);
+  const jsonBytes = encoder.encode(json);
+
+  const buffer = new Uint8Array(1 + jsonBytes.length);
+  buffer[0] = MessageType.AWARENESS;
+  buffer.set(jsonBytes, 1);
+
+  return buffer;
+}
+
+export function decodeAwarenessPayload<T>(buffer: Uint8Array): T | null {
+  try {
+    if (buffer.length < 2 || buffer[0] !== MessageType.AWARENESS) {
+      return null;
+    }
+
+    const decoder = new TextDecoder();
+    const json = decoder.decode(buffer.slice(1));
+    return JSON.parse(json) as T;
+  } catch {
+    return null;
+  }
+}
+
+export function encodeChatPayload(message: object): Uint8Array {
+  const encoder = new TextEncoder();
+  const json = JSON.stringify(message);
+  const jsonBytes = encoder.encode(json);
+
+  const buffer = new Uint8Array(1 + jsonBytes.length);
+  buffer[0] = MessageType.CHAT;
+  buffer.set(jsonBytes, 1);
+
+  return buffer;
+}
+
+export function decodeChatPayload<T>(buffer: Uint8Array): T | null {
+  try {
+    if (buffer.length < 2 || buffer[0] !== MessageType.CHAT) {
+      return null;
+    }
+
+    const decoder = new TextDecoder();
+    const json = decoder.decode(buffer.slice(1));
+    return JSON.parse(json) as T;
+  } catch {
+    return null;
+  }
+}
+
+function encodeJsonPayload(type: number, payload: object): Uint8Array {
+  const encoder = new TextEncoder();
+  const json = JSON.stringify(payload);
+  const jsonBytes = encoder.encode(json);
+
+  const buffer = new Uint8Array(1 + jsonBytes.length);
+  buffer[0] = type;
+  buffer.set(jsonBytes, 1);
+
+  return buffer;
+}
+
+function decodeJsonPayload<T>(
+  buffer: Uint8Array,
+  expectedType: number,
+): T | null {
+  try {
+    if (buffer.length < 2 || buffer[0] !== expectedType) {
+      return null;
+    }
+
+    const decoder = new TextDecoder();
+    const json = decoder.decode(buffer.slice(1));
+    return JSON.parse(json) as T;
+  } catch {
+    return null;
+  }
+}
+
+export function encodeHydrationRequest(filePath: string): Uint8Array {
+  const filePathBytes = new TextEncoder().encode(filePath);
+  const result = new Uint8Array(1 + 2 + filePathBytes.length);
+
+  result[0] = MessageType.HYDRATION_REQUEST;
+  result[1] = (filePathBytes.length >> 8) & 0xff;
+  result[2] = filePathBytes.length & 0xff;
+  result.set(filePathBytes, 3);
+
+  return result;
+}
+
+export function decodeHydrationRequest(buffer: Uint8Array): string | null {
+  try {
+    if (buffer.length < 3 || buffer[0] !== MessageType.HYDRATION_REQUEST) {
+      return null;
+    }
+
+    const filePathLen = (buffer[1] << 8) | buffer[2];
+    if (filePathLen <= 0 || 3 + filePathLen > buffer.length) {
+      return null;
+    }
+
+    return new TextDecoder().decode(buffer.slice(3, 3 + filePathLen));
+  } catch {
+    return null;
+  }
+}
+
+export function encodeWorkspaceManifestRequest(): Uint8Array {
+  const request: WorkspaceManifestRequest = {
+    requestedAt: Date.now(),
+  };
+
+  return encodeJsonPayload(MessageType.WORKSPACE_MANIFEST_REQUEST, request);
+}
+
+export function decodeWorkspaceManifestRequest(
+  buffer: Uint8Array,
+): WorkspaceManifestRequest | null {
+  return decodeJsonPayload<WorkspaceManifestRequest>(
+    buffer,
+    MessageType.WORKSPACE_MANIFEST_REQUEST,
+  );
+}
+
+export function encodeWorkspaceManifestResponse(
+  manifest: WorkspaceManifest,
+): Uint8Array {
+  return encodeJsonPayload(MessageType.WORKSPACE_MANIFEST_RESPONSE, manifest);
+}
+
+export function decodeWorkspaceManifestResponse(
+  buffer: Uint8Array,
+): WorkspaceManifest | null {
+  return decodeJsonPayload<WorkspaceManifest>(
+    buffer,
+    MessageType.WORKSPACE_MANIFEST_RESPONSE,
+  );
+}
+
+export function encodeFileBootstrapRequest(
+  request: FileBootstrapRequest,
+): Uint8Array {
+  return encodeJsonPayload(MessageType.FILE_BOOTSTRAP_REQUEST, request);
+}
+
+export function decodeFileBootstrapRequest(
+  buffer: Uint8Array,
+): FileBootstrapRequest | null {
+  return decodeJsonPayload<FileBootstrapRequest>(
+    buffer,
+    MessageType.FILE_BOOTSTRAP_REQUEST,
+  );
+}
+
+export function encodeFileBootstrapResponse(
+  response: FileBootstrapResponse,
+): Uint8Array {
+  return encodeJsonPayload(MessageType.FILE_BOOTSTRAP_RESPONSE, response);
+}
+
+export function decodeFileBootstrapResponse(
+  buffer: Uint8Array,
+): FileBootstrapResponse | null {
+  return decodeJsonPayload<FileBootstrapResponse>(
+    buffer,
+    MessageType.FILE_BOOTSTRAP_RESPONSE,
+  );
+}
+
+export function isValidMessageType(byte: number): byte is MessageTypeValue {
+  return (
+    byte === MessageType.SYNC ||
+    byte === MessageType.AWARENESS ||
+    byte === MessageType.CHAT ||
+    byte === MessageType.HYDRATION_REQUEST ||
+    byte === MessageType.WORKSPACE_MANIFEST_REQUEST ||
+    byte === MessageType.WORKSPACE_MANIFEST_RESPONSE ||
+    byte === MessageType.FILE_BOOTSTRAP_REQUEST ||
+    byte === MessageType.FILE_BOOTSTRAP_RESPONSE
+  );
+}
+------------------------------------------------------------
+FILE: extension/src/types.ts
+------------------------------------------------------------
+export interface AuthResponse {
+  token: string;
+  email: string;
+}
+
+export interface Room {
+  id: string;
+  name: string;
+  is_active: boolean;
+}
+
+export interface AwarenessState {
+  userId: string;
+  email: string;
+  cursor: CursorPosition | null;
+  selection: SelectionRange | null;
+}
+
+export interface CursorPosition {
+  line: number;
+  character: number;
+}
+
+export interface SelectionRange {
+  anchor: CursorPosition;
+  active: CursorPosition;
+}
+
+export interface ChatMessage {
+  id: string;
+  userId: string;
+  email: string;
+  content: string;
+  timestamp: number;
+}
+
+export interface SyncPayload {
+  filePath: string;
+  update: Uint8Array;
+}
+
+export interface WebSocketMessage {
+  type: number;
+  payload: Uint8Array;
+}
+
+export interface DocumentBinding {
+  filePath: string;
+  dispose: () => void;
+}
+
+export interface WorkspaceManifestRequest {
+  requestedAt: number;
+}
+
+export interface WorkspaceManifestEntry {
+  path: string;
+  kind: "file" | "dir";
+  isText?: boolean;
+  size?: number;
+}
+
+export interface WorkspaceManifest {
+  rootName: string;
+  entries: WorkspaceManifestEntry[];
+  generatedAt: number;
+}
+
+export interface FileBootstrapRequest {
+  path: string;
+}
+
+export interface FileBootstrapResponse {
+  path: string;
+  content: string;
+}
+
+export class ApiError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+------------------------------------------------------------
+FILE: extension/src/utils.ts
+------------------------------------------------------------
+export function debounce<T extends (...args: Parameters<T>) => void>(
+  fn: T,
+  delay: number,
+): (...args: Parameters<T>) => void {
+  let timer: NodeJS.Timeout | null = null;
+
+  return (...args: Parameters<T>): void => {
+    if (timer) {
+      clearTimeout(timer);
+    }
+    timer = setTimeout(() => {
+      fn(...args);
+      timer = null;
+    }, delay);
+  };
+}
+
+// --- Throttle ---
+// Fires at most once per `interval` ms
+// Ignores calls that arrive too soon
+
+export function throttle<T extends (...args: Parameters<T>) => void>(
+  fn: T,
+  interval: number,
+): (...args: Parameters<T>) => void {
+  let lastFired = 0;
+
+  return (...args: Parameters<T>): void => {
+    const now = Date.now();
+    if (now - lastFired >= interval) {
+      lastFired = now;
+      fn(...args);
+    }
+  };
+}
+
+// --- URL Join ---
+// Safely joins a base URL and a path
+// Prevents double slashes
+
+export function joinUrl(base: string, path: string): string {
+  return base.replace(/\/+$/, "") + "/" + path.replace(/^\/+/, "");
+}
+
+// --- Stable Color From User ID ---
+// Deterministically derives a hex color from any string
+// Same user ID always produces the same color
+
+export function colorFromUserId(userId: string): string {
+  let hash = 0;
+  for (let i = 0; i < userId.length; i++) {
+    hash = userId.charCodeAt(i) + ((hash << 5) - hash);
+    hash = hash & hash; // convert to 32-bit integer
+  }
+
+  const r = (hash >> 16) & 0xff;
+  const g = (hash >> 8) & 0xff;
+  const b = hash & 0xff;
+
+  // ensure minimum brightness — avoid colors too dark to see
+  const brightness = (r * 299 + g * 587 + b * 114) / 1000;
+  if (brightness < 80) {
+    return colorFromUserId(userId + "_");
+  }
+
+  return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
+}
+
+// --- Safe Dispose ---
+// Calls dispose on an object if it exists
+// Prevents errors when disposing optional resources
+
+export function safeDispose(
+  disposable: { dispose(): void } | null | undefined,
+): void {
+  try {
+    disposable?.dispose();
+  } catch {
+    // ignore disposal errors
+  }
+}
+
+------------------------------------------------------------
+FILE: extension/src/websocket.ts
+------------------------------------------------------------
+import * as vscode from "vscode";
+
+export type ConnectionState =
+  | "disconnected"
+  | "connecting"
+  | "connected"
+  | "reconnecting";
+
+type MessageHandler = (data: Uint8Array) => void;
+
+const MAX_BACKOFF_MS = 30_000;
+const BASE_BACKOFF_MS = 1_000;
+
+export class WebSocketManager {
+  private socket: WebSocket | null = null;
+  private state: ConnectionState = "disconnected";
+  private queue: Uint8Array[] = [];
+  private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  private attemptCount = 0;
+  private manualDisconnect = false;
+  private token: string | null = null;
+  private roomId: string | null = null;
+
+  private messageHandlers: Set<MessageHandler> = new Set();
+
+  constructor(
+    private readonly serverUrl: string,
+    private readonly outputChannel: vscode.OutputChannel,
+  ) {}
+
+  onMessage(handler: MessageHandler): vscode.Disposable {
+    this.messageHandlers.add(handler);
+    this.outputChannel.appendLine(
+      `CodeDock[ws]: registered message handler (total=${this.messageHandlers.size})`,
+    );
+
+    return new vscode.Disposable(() => {
+      this.messageHandlers.delete(handler);
+      this.outputChannel.appendLine(
+        `CodeDock[ws]: removed message handler (total=${this.messageHandlers.size})`,
+      );
+    });
+  }
+
+  connect(token: string, roomId: string): void {
+    if (!token || !roomId) {
+      vscode.window.showErrorMessage(
+        "CodeDock: Cannot connect — missing credentials.",
+      );
+      return;
+    }
+
+    if (this.state === "connecting" || this.state === "connected") {
+      this.outputChannel.appendLine(
+        `CodeDock[ws]: connect skipped (state=${this.state}, room=${this.roomId ?? "none"})`,
+      );
+      return;
+    }
+
+    this.token = token;
+    this.roomId = roomId;
+    this.manualDisconnect = false;
+    this.state = "connecting";
+
+    const wsUrl =
+      this.serverUrl
+        .replace("https://", "wss://")
+        .replace("http://", "ws://") +
+      `/ws?token=${encodeURIComponent(token)}&room_id=${encodeURIComponent(roomId)}`;
+
+    this.outputChannel.appendLine(
+      `CodeDock[ws]: connecting (room=${roomId}, handlers=${this.messageHandlers.size})`,
+    );
+
+    this.socket = new WebSocket(wsUrl);
+    this.socket.binaryType = "arraybuffer";
+
+    this.socket.onopen = () => this.handleOpen();
+    this.socket.onclose = (event) =>
+      this.handleClose(event.code, event.reason ?? "");
+    this.socket.onerror = () => this.handleError();
+    this.socket.onmessage = (event) => this.handleMessage(event);
+  }
+
+  disconnect(reason: string = "user"): void {
+    this.manualDisconnect = true;
+
+    if (this.reconnectTimer !== undefined) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+
+    this.outputChannel.appendLine(
+      `CodeDock[ws]: disconnect requested (reason=${reason}, room=${this.roomId ?? "none"})`,
+    );
+
+    this.socket?.close();
+    this.socket = null;
+    this.state = "disconnected";
+  }
+
+  send(message: Uint8Array): void {
+    const messageType = message.length > 0 ? message[0] : -1;
+
+    if (this.state === "connected" && this.socket) {
+      this.outputChannel.appendLine(
+        `CodeDock[ws]: send -> type=${messageType}, bytes=${message.length}, room=${this.roomId ?? "none"}`,
+      );
+      this.socket.send(message);
+      return;
+    }
+
+    this.queue.push(message);
+    this.outputChannel.appendLine(
+      `CodeDock[ws]: queued -> type=${messageType}, bytes=${message.length}, pending=${this.queue.length}`,
+    );
+  }
+
+  dispose(): void {
+    this.manualDisconnect = true;
+
+    if (this.reconnectTimer !== undefined) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+
+    this.outputChannel.appendLine("CodeDock[ws]: dispose");
+
+    this.socket?.close();
+    this.socket = null;
+    this.state = "disconnected";
+    this.messageHandlers.clear();
+  }
+
+  getConnectionState(): ConnectionState {
+    return this.state;
+  }
+
+  getRoomId(): string | null {
+    return this.roomId;
+  }
+
+  private handleOpen(): void {
+    this.state = "connected";
+    this.attemptCount = 0;
+    this.manualDisconnect = false;
+
+    this.outputChannel.appendLine(
+      `CodeDock[ws]: connected (room=${this.roomId ?? "none"})`,
+    );
+
+    vscode.window.showInformationMessage("CodeDock: Connected to room.");
+    this.flushQueue();
+  }
+
+  private handleClose(code: number, reason: string): void {
+    this.socket = null;
+
+    this.outputChannel.appendLine(
+      `CodeDock[ws]: closed (code=${code}, reason=${reason || "none"}, manual=${this.manualDisconnect})`,
+    );
+
+    if (this.manualDisconnect) {
+      this.state = "disconnected";
+      return;
+    }
+
+    this.state = "reconnecting";
+    this.outputChannel.appendLine("CodeDock[ws]: scheduling reconnect");
+    this.scheduleReconnect();
+  }
+
+  private handleError(): void {
+    this.outputChannel.appendLine("CodeDock[ws]: socket error");
+  }
+
+  private handleMessage(event: MessageEvent): void {
+    if (!(event.data instanceof ArrayBuffer)) {
+      this.outputChannel.appendLine(
+        "CodeDock[ws]: inbound ignored (non-binary payload)",
+      );
+      return;
+    }
+
+    const data = new Uint8Array(event.data);
+
+    if (data.length === 0) {
+      this.outputChannel.appendLine("CodeDock[ws]: inbound ignored (empty)");
+      return;
+    }
+
+    this.outputChannel.appendLine(
+      `CodeDock[ws]: inbound <- type=${data[0]}, bytes=${data.length}, handlers=${this.messageHandlers.size}`,
+    );
+
+    for (const handler of this.messageHandlers) {
+      try {
+        handler(data);
+      } catch (error) {
+        this.outputChannel.appendLine(
+          `CodeDock[ws]: handler failure -> ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
+      }
+    }
+  }
+
+  private scheduleReconnect(): void {
+    if (!this.token || !this.roomId) {
+      this.outputChannel.appendLine(
+        "CodeDock[ws]: reconnect aborted (missing token or room)",
+      );
+      return;
+    }
+
+    if (this.reconnectTimer !== undefined) {
+      clearTimeout(this.reconnectTimer);
+    }
+
+    const base = Math.min(
+      BASE_BACKOFF_MS * Math.pow(2, this.attemptCount),
+      MAX_BACKOFF_MS,
+    );
+
+    const delay = base + Math.random() * base;
+
+    this.outputChannel.appendLine(
+      `CodeDock[ws]: reconnect in ${Math.round(delay)}ms (attempt=${this.attemptCount + 1})`,
+    );
+
+    this.reconnectTimer = setTimeout(() => {
+      this.attemptCount++;
+      this.connect(this.token!, this.roomId!);
+    }, delay);
+  }
+
+  private flushQueue(): void {
+    if (this.queue.length === 0) {
+      this.outputChannel.appendLine("CodeDock[ws]: flush skipped (queue empty)");
+      return;
+    }
+
+    this.outputChannel.appendLine(
+      `CodeDock[ws]: flushing queue (${this.queue.length} message(s))`,
+    );
+
+    const pending = [...this.queue];
+    this.queue = [];
+
+    for (const message of pending) {
+      this.send(message);
+    }
+  }
+}
+------------------------------------------------------------
+FILE: extension/src/yjs-sync.ts
+------------------------------------------------------------
+import * as fs from "fs/promises";
+import * as path from "path";
+import * as vscode from "vscode";
+import * as Y from "yjs";
+import { WebSocketManager } from "./websocket";
+import {
+  decodeFileBootstrapRequest,
+  decodeFileBootstrapResponse,
+  decodeHydrationRequest,
+  decodeSyncPayload,
+  decodeWorkspaceManifestRequest,
+  decodeWorkspaceManifestResponse,
+  encodeFileBootstrapRequest,
+  encodeFileBootstrapResponse,
+  encodeHydrationRequest,
+  encodeSyncPayload,
+  encodeWorkspaceManifestRequest,
+  encodeWorkspaceManifestResponse,
+  MessageType,
+} from "./protocol";
+import {
+  FileBootstrapRequest,
+  FileBootstrapResponse,
+  SyncPayload,
+  WorkspaceManifest,
+  WorkspaceManifestEntry,
+} from "./types";
+
+const PENDING_HYDRATED_ROOM_ID_KEY = "codedock.pendingHydrated.roomId";
+const PENDING_HYDRATED_ROOT_KEY = "codedock.pendingHydrated.rootPath";
+
+const OUTBOUND_BATCH_MS = 120;
+const INBOUND_RECONCILE_MS = 90;
+const GUEST_HYDRATION_WAIT_MS = 1200;
+const WORKSPACE_MANIFEST_RETRY_MS = 1000;
+const MAX_MANIFEST_RETRIES = 6;
+const MAX_BOOTSTRAP_FILE_BYTES = 400 * 1024;
+
+const LOCAL_CHANGE_ORIGIN = Symbol("codedock-local-change");
+const INITIAL_DOCUMENT_ORIGIN = Symbol("codedock-initial-document");
+
+const IGNORED_DIR_NAMES = new Set([
+  ".git",
+  "node_modules",
+  "dist",
+  "build",
+  ".next",
+  ".codedock",
+  ".vscode",
+]);
+
+const IGNORED_FILE_NAMES = new Set([
+  ".DS_Store",
+  ".env",
+  ".env.local",
+  ".env.development",
+  ".env.production",
+  ".env.test",
+]);
+
+const TEXT_EXTENSIONS = new Set([
+  ".go",
+  ".ts",
+  ".tsx",
+  ".js",
+  ".jsx",
+  ".json",
+  ".md",
+  ".txt",
+  ".yaml",
+  ".yml",
+  ".toml",
+  ".ini",
+  ".cfg",
+  ".conf",
+  ".sh",
+  ".bash",
+  ".zsh",
+  ".css",
+  ".scss",
+  ".html",
+  ".xml",
+  ".sql",
+  ".proto",
+  ".graphql",
+  ".gql",
+]);
+
+const BINARY_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".ico",
+  ".pdf",
+  ".zip",
+  ".gz",
+  ".tar",
+  ".tgz",
+  ".jar",
+  ".so",
+  ".dll",
+  ".exe",
+  ".bin",
+  ".woff",
+  ".woff2",
+  ".ttf",
+  ".otf",
+  ".mp4",
+  ".mp3",
+  ".avi",
+  ".mov",
+]);
+
+type SessionRole = "host" | "guest";
+
+type DocEntry = {
+  ydoc: Y.Doc;
+  initializedFromLocal: boolean;
+  hasRemoteState: boolean;
+};
+
+type Binding = {
+  documentChangeDisposable: vscode.Disposable;
+};
+
+type OutboundBatchState = {
+  updates: Uint8Array[];
+  forceFullState: boolean;
+  timer?: ReturnType<typeof setTimeout>;
+};
+
+type PatchState = {
+  inFlight: boolean;
+  dirty: boolean;
+  timer?: ReturnType<typeof setTimeout>;
+};
+
+export class YjsSync {
+  private docs: Map<string, DocEntry> = new Map();
+  private bindings: Map<string, Binding> = new Map();
+  private globalDisposables: vscode.Disposable[] = [];
+  private remoteApplyDepthByFile: Map<string, number> = new Map();
+  private outboundBatches: Map<string, OutboundBatchState> = new Map();
+  private patchStates: Map<string, PatchState> = new Map();
+  private hydrationTimers: Map<string, ReturnType<typeof setTimeout>> =
+    new Map();
+  private pendingFileBootstrapRequests: Set<string> = new Set();
+
+  private workspaceManifestReceived = false;
+  private workspaceManifestRetryCount = 0;
+  private workspaceManifestRetryTimer?: ReturnType<typeof setTimeout>;
+  private hydratedProjectOpenPromptShown = false;
+
+  private guestMaterializationRoot: vscode.Uri | null = null;
+  private currentRoomId: string | null = null;
+  private active = false;
+  private sessionRole: SessionRole = "guest";
+
+  constructor(
+    private readonly wsManager: WebSocketManager,
+    private readonly outputChannel: vscode.OutputChannel,
+    private readonly state: vscode.Memento,
+  ) {
+    this.wsManager.onMessage((data) => this.handleIncoming(data));
+  }
+
+  setSessionRole(role: SessionRole): void {
+    this.sessionRole = role;
+    this.log(`session role set (${role})`);
+  }
+
+  setActiveRoomId(roomId: string | null): void {
+    this.currentRoomId = roomId;
+    this.log(`active room ${roomId ? `set (${roomId})` : "cleared"}`);
+  }
+
+  setGuestMaterializationRoot(root: vscode.Uri | null): void {
+    this.guestMaterializationRoot = root;
+    this.hydratedProjectOpenPromptShown = false;
+    this.log(
+      `guest materialization root ${root ? `set (${root.fsPath})` : "cleared"}`,
+    );
+  }
+
+  activate(): void {
+    if (this.active) {
+      this.log("activate skipped: already active");
+      return;
+    }
+
+    this.active = true;
+    this.log(`activate (${this.sessionRole})`);
+
+    this.bindVisibleEditors();
+
+    if (this.sessionRole === "guest") {
+      this.requestWorkspaceManifest();
+      this.scheduleWorkspaceManifestRetry();
+    }
+
+    this.globalDisposables.push(
+      vscode.workspace.onDidOpenTextDocument((document) => {
+        if (!this.active) {
+          return;
+        }
+        this.bindDocument(document);
+      }),
+    );
+
+    this.globalDisposables.push(
+      vscode.workspace.onDidCloseTextDocument((document) => {
+        this.unbindDocument(document);
+      }),
+    );
+
+    this.globalDisposables.push(
+      vscode.window.onDidChangeVisibleTextEditors((editors) => {
+        if (!this.active) {
+          return;
+        }
+
+        this.log(`visible editors changed: count=${editors.length}`);
+
+        for (const editor of editors) {
+          this.bindDocument(editor.document);
+
+          const fileKey = this.getCanonicalFileKey(editor.document);
+          if (!fileKey || !this.docs.has(fileKey)) {
+            continue;
+          }
+
+          this.markFileDirty(fileKey);
+          this.scheduleReconcile(fileKey);
+        }
+      }),
+    );
+  }
+
+  dispose(): void {
+    this.log("dispose");
+    this.active = false;
+
+    for (const disposable of this.globalDisposables) {
+      disposable.dispose();
+    }
+    this.globalDisposables = [];
+
+    for (const binding of this.bindings.values()) {
+      binding.documentChangeDisposable.dispose();
+    }
+    this.bindings.clear();
+
+    for (const batch of this.outboundBatches.values()) {
+      if (batch.timer !== undefined) {
+        clearTimeout(batch.timer);
+      }
+    }
+    this.outboundBatches.clear();
+
+    for (const patchState of this.patchStates.values()) {
+      if (patchState.timer !== undefined) {
+        clearTimeout(patchState.timer);
+      }
+    }
+    this.patchStates.clear();
+
+    for (const timer of this.hydrationTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.hydrationTimers.clear();
+
+    if (this.workspaceManifestRetryTimer !== undefined) {
+      clearTimeout(this.workspaceManifestRetryTimer);
+      this.workspaceManifestRetryTimer = undefined;
+    }
+
+    this.pendingFileBootstrapRequests.clear();
+    this.workspaceManifestReceived = false;
+    this.workspaceManifestRetryCount = 0;
+    this.hydratedProjectOpenPromptShown = false;
+    this.guestMaterializationRoot = null;
+    this.currentRoomId = null;
+
+    for (const entry of this.docs.values()) {
+      entry.ydoc.destroy();
+    }
+    this.docs.clear();
+
+    this.remoteApplyDepthByFile.clear();
+  }
+
+  private bindVisibleEditors(): void {
+    const seen = new Set<string>();
+
+    this.log(
+      `bindVisibleEditors: visibleEditors=${vscode.window.visibleTextEditors.length}`,
+    );
+
+    for (const editor of vscode.window.visibleTextEditors) {
+      const fileKey = this.getCanonicalFileKey(editor.document);
+      if (!fileKey || seen.has(fileKey)) {
+        continue;
+      }
+
+      seen.add(fileKey);
+      this.bindDocument(editor.document);
+    }
+  }
+
+  private bindDocument(document: vscode.TextDocument): void {
+    const fileKey = this.getCanonicalFileKey(document);
+    if (!fileKey) {
+      this.log(
+        `bind skipped: no canonical key for uri=${document.uri.toString()}`,
+      );
+      return;
+    }
+
+    if (this.bindings.has(fileKey)) {
+      this.log(`bind skipped: already bound (${fileKey})`);
+      this.markFileDirty(fileKey);
+      this.scheduleReconcile(fileKey);
+      return;
+    }
+
+    this.log(`binding document (${fileKey})`);
+
+    const entry = this.getOrCreateDocEntry(fileKey);
+
+    if (this.sessionRole === "host") {
+      this.seedFromLocalDocument(document, entry, fileKey, "host initial seed");
+      this.queueForceFullState(fileKey);
+    } else {
+      this.log(`guest waiting for remote hydration (${fileKey})`);
+      this.sendHydrationRequest(fileKey);
+      this.startGuestHydrationFallback(document, entry, fileKey);
+    }
+
+    const documentChangeDisposable = vscode.workspace.onDidChangeTextDocument(
+      (event) => {
+        const eventFileKey = this.getCanonicalFileKey(event.document);
+        if (eventFileKey !== fileKey) {
+          return;
+        }
+
+        if (event.contentChanges.length === 0) {
+          return;
+        }
+
+        if (this.isRemoteApplyInProgress(fileKey)) {
+          this.log(`local change ignored during remote apply (${fileKey})`);
+          return;
+        }
+
+        if (!entry.initializedFromLocal && !entry.hasRemoteState) {
+          this.seedFromLocalDocument(
+            event.document,
+            entry,
+            fileKey,
+            "guest fallback seed on local edit",
+          );
+          this.queueForceFullState(fileKey);
+        }
+
+        this.log(
+          `local document change (${fileKey}, changes=${event.contentChanges.length})`,
+        );
+
+        const ytext = entry.ydoc.getText("content");
+
+        entry.ydoc.transact(() => {
+          for (const change of event.contentChanges) {
+            const start = change.rangeOffset;
+            const deleteCount = change.rangeLength;
+            const insertText = change.text;
+
+            if (deleteCount > 0) {
+              ytext.delete(start, deleteCount);
+            }
+
+            if (insertText.length > 0) {
+              ytext.insert(start, insertText);
+            }
+          }
+        }, LOCAL_CHANGE_ORIGIN);
+      },
+    );
+
+    this.bindings.set(fileKey, { documentChangeDisposable });
+
+    this.markFileDirty(fileKey);
+    this.scheduleReconcile(fileKey);
+  }
+
+  private unbindDocument(document: vscode.TextDocument): void {
+    const fileKey = this.getCanonicalFileKey(document);
+    if (!fileKey) {
+      return;
+
+------------------------------------------------------------
+FILE: main.go
+------------------------------------------------------------
+package main
+
+import (
+	"database/sql"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	
+
+	"github.com/jerryjuche/CodeDock/internal/auth"
+	"github.com/jerryjuche/CodeDock/internal/handlers"
+	"github.com/jerryjuche/CodeDock/internal/hub"
+	"github.com/jerryjuche/CodeDock/internal/services"
+	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
+)
+
+func main() {
+
+	if err := godotenv.Overload(); err != nil {
+		log.Println("no .env file found, reading from system environment")
+	}
+
+	db, err := connectDB()
+	if err != nil {
+		log.Fatalf("could not connect to database, %s", err)
+		return
+	}
+	defer db.Close()
+	log.Println("connected to database successfully")
+
+	snapshotStore := &services.DBSnapshotStore{DB: db}
+
+	// Initialise the Hub — central registry for all WebSocket connections
+	h := hub.New(snapshotStore)
+
+	authHandler := &handlers.AuthHandler{DB: db}
+	roomService := &services.RoomService{DB: db}
+	roomHandler := &handlers.RoomHandler{Services: roomService}
+
+	mux := http.NewServeMux()
+
+	// Auth routes
+	mux.HandleFunc("POST /auth/register", authHandler.Register)
+	mux.HandleFunc("POST /auth/login", authHandler.Login)
+	mux.HandleFunc("POST /auth/exchange", authHandler.ExchangeCode)
+
+	// Room routes — protected
+	mux.Handle("POST /rooms", auth.RequireAuth(http.HandlerFunc(roomHandler.CreateRoom)))
+	mux.Handle("GET /rooms", auth.RequireAuth(http.HandlerFunc(roomHandler.GetUserRooms)))
+	mux.Handle("GET /rooms/{id}", auth.RequireAuth(http.HandlerFunc(roomHandler.GetRoom)))
+	
+
+	// WebSocket route — auth handled inside the handler via query param
+	mux.HandleFunc("GET /ws", handlers.ServeWS(h))
+
+	port := os.Getenv("PORT")
+	
+	if port == "" {
+		port = "8080"
+	}
+
+	log.Printf("codedock server starting on port: %s", port)
+	if err := http.ListenAndServe(":"+port, mux); err != nil {
+		log.Fatalf("error, server failed to start up, %s", err)
+		return
+	}
+}
+
+func connectDB() (*sql.DB, error) {
+    host := os.Getenv("DB_HOST")
+    port := os.Getenv("DB_PORT")
+    user := os.Getenv("DB_USER")
+    password := os.Getenv("DB_PASSWORD")
+    dbname := os.Getenv("DB_NAME")
+    sslmode := os.Getenv("DB_SSLMODE")
+    if sslmode == "" {
+        sslmode = "disable" // safe local default
+    }
+
+	
+
+    connStr := fmt.Sprintf(
+        "host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+        host, port, user, password, dbname, sslmode,
+    )
+
+    db, err := sql.Open("postgres", connStr)
+    if err != nil {
+        return nil, err
+    }
+    if err := db.Ping(); err != nil {
+        return nil, err
+    }
+    return db, nil
+}
+
+------------------------------------------------------------
+FILE: go.mod
+------------------------------------------------------------
+module github.com/jerryjuche/CodeDock
+
+go 1.25.0
+
+require (
+	github.com/golang-jwt/jwt/v5 v5.3.1
+	github.com/joho/godotenv v1.5.1
+	github.com/lib/pq v1.12.0
+	golang.org/x/crypto v0.49.0
+)
+
+require github.com/gorilla/websocket v1.5.3
+

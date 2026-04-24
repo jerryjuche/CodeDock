@@ -34,6 +34,7 @@ __export(extension_exports, {
   deactivate: () => deactivate
 });
 module.exports = __toCommonJS(extension_exports);
+var path2 = __toESM(require("path"));
 var vscode4 = __toESM(require("vscode"));
 var import_events = require("events");
 
@@ -171,7 +172,7 @@ var ApiClient = class {
       token
     );
   }
-  async request(path2, options, authenticated, token) {
+  async request(path3, options, authenticated, token) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     const headers = {
@@ -182,7 +183,7 @@ var ApiClient = class {
       headers["Authorization"] = `Bearer ${token}`;
     }
     try {
-      const response = await fetch(`${this.baseUrl}${path2}`, {
+      const response = await fetch(`${this.baseUrl}${path3}`, {
         ...options,
         headers,
         signal: controller.signal
@@ -1684,17 +1685,17 @@ var Doc = class _Doc extends ObservableV2 {
     this.isLoaded = false;
     this.isSynced = false;
     this.isDestroyed = false;
-    this.whenLoaded = create4((resolve) => {
+    this.whenLoaded = create4((resolve2) => {
       this.on("load", () => {
         this.isLoaded = true;
-        resolve(this);
+        resolve2(this);
       });
     });
-    const provideSyncedPromise = () => create4((resolve) => {
+    const provideSyncedPromise = () => create4((resolve2) => {
       const eventHandler = (isSynced) => {
         if (isSynced === void 0 || isSynced === true) {
           this.off("sync", eventHandler);
-          resolve();
+          resolve2();
         }
       };
       this.on("sync", eventHandler);
@@ -3615,10 +3616,10 @@ var YEvent = class {
   }
 };
 var getPathTo = (parent, child) => {
-  const path2 = [];
+  const path3 = [];
   while (child._item !== null && child !== parent) {
     if (child._item.parentSub !== null) {
-      path2.unshift(child._item.parentSub);
+      path3.unshift(child._item.parentSub);
     } else {
       let i = 0;
       let c = (
@@ -3631,12 +3632,12 @@ var getPathTo = (parent, child) => {
         }
         c = c.right;
       }
-      path2.unshift(i);
+      path3.unshift(i);
     }
     child = /** @type {AbstractType<any>} */
     child._item.parent;
   }
-  return path2;
+  return path3;
 };
 var warnPrematureAccess = () => {
   warn("Invalid access: Add Yjs type to a document before reading data.");
@@ -8022,6 +8023,8 @@ function decodeFileBootstrapResponse(buffer) {
 }
 
 // src/yjs-sync.ts
+var PENDING_HYDRATED_ROOM_ID_KEY = "codedock.pendingHydrated.roomId";
+var PENDING_HYDRATED_ROOT_KEY = "codedock.pendingHydrated.rootPath";
 var OUTBOUND_BATCH_MS = 120;
 var INBOUND_RECONCILE_MS = 90;
 var GUEST_HYDRATION_WAIT_MS = 1200;
@@ -8101,9 +8104,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   ".mov"
 ]);
 var YjsSync = class {
-  constructor(wsManager2, outputChannel) {
+  constructor(wsManager2, outputChannel, state) {
     this.wsManager = wsManager2;
     this.outputChannel = outputChannel;
+    this.state = state;
     this.docs = /* @__PURE__ */ new Map();
     this.bindings = /* @__PURE__ */ new Map();
     this.globalDisposables = [];
@@ -8114,7 +8118,9 @@ var YjsSync = class {
     this.pendingFileBootstrapRequests = /* @__PURE__ */ new Set();
     this.workspaceManifestReceived = false;
     this.workspaceManifestRetryCount = 0;
+    this.hydratedProjectOpenPromptShown = false;
     this.guestMaterializationRoot = null;
+    this.currentRoomId = null;
     this.active = false;
     this.sessionRole = "guest";
     this.wsManager.onMessage((data) => this.handleIncoming(data));
@@ -8123,8 +8129,13 @@ var YjsSync = class {
     this.sessionRole = role;
     this.log(`session role set (${role})`);
   }
+  setActiveRoomId(roomId) {
+    this.currentRoomId = roomId;
+    this.log(`active room ${roomId ? `set (${roomId})` : "cleared"}`);
+  }
   setGuestMaterializationRoot(root) {
     this.guestMaterializationRoot = root;
+    this.hydratedProjectOpenPromptShown = false;
     this.log(
       `guest materialization root ${root ? `set (${root.fsPath})` : "cleared"}`
     );
@@ -8206,7 +8217,9 @@ var YjsSync = class {
     this.pendingFileBootstrapRequests.clear();
     this.workspaceManifestReceived = false;
     this.workspaceManifestRetryCount = 0;
+    this.hydratedProjectOpenPromptShown = false;
     this.guestMaterializationRoot = null;
+    this.currentRoomId = null;
     for (const entry of this.docs.values()) {
       entry.ydoc.destroy();
     }
@@ -8619,6 +8632,7 @@ var YjsSync = class {
       `received workspace manifest (root=${manifest.rootName}, entries=${manifest.entries.length})`
     );
     await this.materializeWorkspaceManifest(manifest);
+    await this.maybeOfferOpenHydratedProject();
   }
   async handleFileBootstrapRequest(data) {
     const request = decodeFileBootstrapRequest(data);
@@ -8675,23 +8689,25 @@ var YjsSync = class {
     }
     this.pendingFileBootstrapRequests.delete(response.path);
     if (this.sessionRole !== "guest") {
-      this.log(`file bootstrap response ignored: not guest (${response.path})`);
       return;
     }
     const rootUri = this.getMaterializationRoot();
     if (!rootUri) {
       this.log("file bootstrap response ignored: no materialization root");
+      await this.maybeOfferOpenHydratedProject();
       return;
     }
     if (this.bindings.has(response.path)) {
       this.log(
         `file bootstrap response skipped: file currently bound (${response.path})`
       );
+      await this.maybeOfferOpenHydratedProject();
       return;
     }
     const targetUri = this.resolveWorkspacePath(rootUri, response.path);
     if (!targetUri) {
       this.log(`file bootstrap response ignored: invalid path (${response.path})`);
+      await this.maybeOfferOpenHydratedProject();
       return;
     }
     try {
@@ -8700,21 +8716,64 @@ var YjsSync = class {
         this.log(
           `file bootstrap response skipped: local file has conflicting content (${response.path})`
         );
-        return;
+      } else {
+        await this.ensureParentDirectory(targetUri);
+        await vscode3.workspace.fs.writeFile(
+          targetUri,
+          new TextEncoder().encode(response.content)
+        );
+        this.log(
+          `file bootstrap response applied (${response.path}, chars=${response.content.length})`
+        );
       }
-      await this.ensureParentDirectory(targetUri);
-      await vscode3.workspace.fs.writeFile(
-        targetUri,
-        new TextEncoder().encode(response.content)
-      );
-      this.log(
-        `file bootstrap response applied (${response.path}, chars=${response.content.length})`
-      );
     } catch (error) {
       this.log(
         `file bootstrap response failed (${response.path}): ${this.describeError(error)}`
       );
     }
+    await this.maybeOfferOpenHydratedProject();
+  }
+  async maybeOfferOpenHydratedProject() {
+    if (this.sessionRole !== "guest") {
+      return;
+    }
+    if (!this.workspaceManifestReceived) {
+      return;
+    }
+    if (!this.guestMaterializationRoot) {
+      return;
+    }
+    if (!this.currentRoomId) {
+      return;
+    }
+    if (this.hydratedProjectOpenPromptShown) {
+      return;
+    }
+    if (this.pendingFileBootstrapRequests.size > 0) {
+      return;
+    }
+    this.hydratedProjectOpenPromptShown = true;
+    const selection = await vscode3.window.showInformationMessage(
+      `CodeDock: Host project hydrated into ${this.guestMaterializationRoot.fsPath}. Open it in a new window?`,
+      "Open in New Window",
+      "Later"
+    );
+    if (selection !== "Open in New Window") {
+      return;
+    }
+    await this.state.update(PENDING_HYDRATED_ROOM_ID_KEY, this.currentRoomId);
+    await this.state.update(
+      PENDING_HYDRATED_ROOT_KEY,
+      this.guestMaterializationRoot.fsPath
+    );
+    this.log(
+      `opening hydrated project in new window (${this.guestMaterializationRoot.fsPath})`
+    );
+    await vscode3.commands.executeCommand(
+      "vscode.openFolder",
+      this.guestMaterializationRoot,
+      true
+    );
   }
   async buildWorkspaceManifest() {
     const rootUri = this.getWorkspaceRoot();
@@ -8997,6 +9056,8 @@ var YjsSync = class {
 };
 
 // src/extension.ts
+var PENDING_HYDRATED_ROOM_ID_KEY2 = "codedock.pendingHydrated.roomId";
+var PENDING_HYDRATED_ROOT_KEY2 = "codedock.pendingHydrated.rootPath";
 var authManager;
 var wsManager;
 var yjsSync;
@@ -9013,12 +9074,15 @@ async function activate(context) {
   apiClient = new ApiClient(serverUrl);
   authManager = new AuthManager(context.secrets, apiClient, emitter);
   wsManager = new WebSocketManager(serverUrl, outputChannel);
-  yjsSync = new YjsSync(wsManager, outputChannel);
+  yjsSync = new YjsSync(wsManager, outputChannel, context.globalState);
   emitter.on("login", () => {
     outputChannel.appendLine("CodeDock: login event received (sync-only mode)");
   });
   emitter.on("logout", () => {
     outputChannel.appendLine("CodeDock: logout event received");
+    void clearPendingHydratedJoin(context);
+    yjsSync.setActiveRoomId(null);
+    yjsSync.setGuestMaterializationRoot(null);
     wsManager.disconnect("logout");
     yjsSync.dispose();
   });
@@ -9033,7 +9097,7 @@ async function activate(context) {
     ),
     vscode4.commands.registerCommand(
       "codedock.joinRoom",
-      () => handleJoinRoom(outputChannel)
+      () => handleJoinRoom(context, outputChannel)
     ),
     vscode4.commands.registerCommand(
       "codedock.createRoom",
@@ -9047,6 +9111,9 @@ async function activate(context) {
     ),
     vscode4.commands.registerCommand("codedock.disconnectRoom", () => {
       outputChannel.appendLine("CodeDock: user requested room disconnect");
+      void clearPendingHydratedJoin(context);
+      yjsSync.setActiveRoomId(null);
+      yjsSync.setGuestMaterializationRoot(null);
       wsManager.disconnect("user");
       yjsSync.dispose();
     })
@@ -9066,7 +9133,10 @@ async function activate(context) {
       }
     })
   );
-  await restoreSession();
+  const sessionReady = await restoreSession();
+  if (sessionReady) {
+    await resumePendingHydratedJoin(context, outputChannel);
+  }
 }
 async function restoreSession() {
   const token = await authManager.getToken();
@@ -9074,7 +9144,7 @@ async function restoreSession() {
     vscode4.window.showInformationMessage(
       'CodeDock: Not logged in. Run "CodeDock: Login" to start.'
     );
-    return;
+    return false;
   }
   const valid = await authManager.validateToken();
   if (!valid) {
@@ -9086,11 +9156,12 @@ async function restoreSession() {
         authManager.login();
       }
     });
-    return;
+    return false;
   }
   vscode4.window.showInformationMessage("CodeDock: Session restored.");
+  return true;
 }
-async function handleJoinRoom(outputChannel) {
+async function handleJoinRoom(context, outputChannel) {
   const token = await authManager.getToken();
   if (!token) {
     vscode4.window.showErrorMessage(
@@ -9130,6 +9201,7 @@ async function handleJoinRoom(outputChannel) {
   } else {
     yjsSync.setGuestMaterializationRoot(null);
   }
+  await clearPendingHydratedJoin(context);
   await joinRoomNow(token, normalizedRoomId, outputChannel);
 }
 async function handleCreateRoom(outputChannel) {
@@ -9166,6 +9238,7 @@ async function handleCreateRoom(outputChannel) {
     );
     outputChannel.appendLine(`CodeDock: created room ${room.id}`);
     yjsSync.setSessionRole("host");
+    yjsSync.setActiveRoomId(room.id);
     yjsSync.setGuestMaterializationRoot(null);
     wsManager.connect(token, room.id);
     yjsSync.activate();
@@ -9178,12 +9251,51 @@ async function handleCreateRoom(outputChannel) {
 async function joinRoomNow(token, roomId, outputChannel) {
   outputChannel.appendLine(`CodeDock: joining room ${roomId}`);
   yjsSync.setSessionRole("guest");
+  yjsSync.setActiveRoomId(roomId);
   wsManager.connect(token, roomId);
   yjsSync.activate();
+}
+async function resumePendingHydratedJoin(context, outputChannel) {
+  const pendingRoomId = context.globalState.get(
+    PENDING_HYDRATED_ROOM_ID_KEY2
+  );
+  const pendingRootPath = context.globalState.get(
+    PENDING_HYDRATED_ROOT_KEY2
+  );
+  if (!pendingRoomId || !pendingRootPath) {
+    return;
+  }
+  const currentRoot = vscode4.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!currentRoot) {
+    return;
+  }
+  if (normalizeFsPath(currentRoot) !== normalizeFsPath(pendingRootPath)) {
+    return;
+  }
+  const token = await authManager.getToken();
+  if (!token) {
+    outputChannel.appendLine(
+      "CodeDock: pending hydrated project reopen found, but no valid session is available"
+    );
+    return;
+  }
+  outputChannel.appendLine(
+    `CodeDock: resuming room ${pendingRoomId} in hydrated project window`
+  );
+  yjsSync.setGuestMaterializationRoot(null);
+  await joinRoomNow(token, pendingRoomId, outputChannel);
+  await clearPendingHydratedJoin(context);
+}
+async function clearPendingHydratedJoin(context) {
+  await context.globalState.update(PENDING_HYDRATED_ROOM_ID_KEY2, void 0);
+  await context.globalState.update(PENDING_HYDRATED_ROOT_KEY2, void 0);
 }
 function hasWorkspaceRoot() {
   const folders = vscode4.workspace.workspaceFolders;
   return Array.isArray(folders) && folders.length > 0;
+}
+function normalizeFsPath(fsPath) {
+  return path2.resolve(fsPath);
 }
 function deactivate() {
   wsManager?.disconnect("extension_deactivated");

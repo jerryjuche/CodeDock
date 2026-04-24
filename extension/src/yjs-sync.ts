@@ -26,6 +26,9 @@ import {
   WorkspaceManifestEntry,
 } from "./types";
 
+const PENDING_HYDRATED_ROOM_ID_KEY = "codedock.pendingHydrated.roomId";
+const PENDING_HYDRATED_ROOT_KEY = "codedock.pendingHydrated.rootPath";
+
 const OUTBOUND_BATCH_MS = 120;
 const INBOUND_RECONCILE_MS = 90;
 const GUEST_HYDRATION_WAIT_MS = 1200;
@@ -148,14 +151,17 @@ export class YjsSync {
   private workspaceManifestReceived = false;
   private workspaceManifestRetryCount = 0;
   private workspaceManifestRetryTimer?: ReturnType<typeof setTimeout>;
+  private hydratedProjectOpenPromptShown = false;
 
   private guestMaterializationRoot: vscode.Uri | null = null;
+  private currentRoomId: string | null = null;
   private active = false;
   private sessionRole: SessionRole = "guest";
 
   constructor(
     private readonly wsManager: WebSocketManager,
     private readonly outputChannel: vscode.OutputChannel,
+    private readonly state: vscode.Memento,
   ) {
     this.wsManager.onMessage((data) => this.handleIncoming(data));
   }
@@ -165,8 +171,14 @@ export class YjsSync {
     this.log(`session role set (${role})`);
   }
 
+  setActiveRoomId(roomId: string | null): void {
+    this.currentRoomId = roomId;
+    this.log(`active room ${roomId ? `set (${roomId})` : "cleared"}`);
+  }
+
   setGuestMaterializationRoot(root: vscode.Uri | null): void {
     this.guestMaterializationRoot = root;
+    this.hydratedProjectOpenPromptShown = false;
     this.log(
       `guest materialization root ${root ? `set (${root.fsPath})` : "cleared"}`,
     );
@@ -267,7 +279,9 @@ export class YjsSync {
     this.pendingFileBootstrapRequests.clear();
     this.workspaceManifestReceived = false;
     this.workspaceManifestRetryCount = 0;
+    this.hydratedProjectOpenPromptShown = false;
     this.guestMaterializationRoot = null;
+    this.currentRoomId = null;
 
     for (const entry of this.docs.values()) {
       entry.ydoc.destroy();
@@ -809,6 +823,7 @@ export class YjsSync {
     );
 
     await this.materializeWorkspaceManifest(manifest);
+    await this.maybeOfferOpenHydratedProject();
   }
 
   private async handleFileBootstrapRequest(data: Uint8Array): Promise<void> {
@@ -879,13 +894,13 @@ export class YjsSync {
     this.pendingFileBootstrapRequests.delete(response.path);
 
     if (this.sessionRole !== "guest") {
-      this.log(`file bootstrap response ignored: not guest (${response.path})`);
       return;
     }
 
     const rootUri = this.getMaterializationRoot();
     if (!rootUri) {
       this.log("file bootstrap response ignored: no materialization root");
+      await this.maybeOfferOpenHydratedProject();
       return;
     }
 
@@ -893,12 +908,14 @@ export class YjsSync {
       this.log(
         `file bootstrap response skipped: file currently bound (${response.path})`,
       );
+      await this.maybeOfferOpenHydratedProject();
       return;
     }
 
     const targetUri = this.resolveWorkspacePath(rootUri, response.path);
     if (!targetUri) {
       this.log(`file bootstrap response ignored: invalid path (${response.path})`);
+      await this.maybeOfferOpenHydratedProject();
       return;
     }
 
@@ -913,23 +930,78 @@ export class YjsSync {
         this.log(
           `file bootstrap response skipped: local file has conflicting content (${response.path})`,
         );
-        return;
+      } else {
+        await this.ensureParentDirectory(targetUri);
+        await vscode.workspace.fs.writeFile(
+          targetUri,
+          new TextEncoder().encode(response.content),
+        );
+
+        this.log(
+          `file bootstrap response applied (${response.path}, chars=${response.content.length})`,
+        );
       }
-
-      await this.ensureParentDirectory(targetUri);
-      await vscode.workspace.fs.writeFile(
-        targetUri,
-        new TextEncoder().encode(response.content),
-      );
-
-      this.log(
-        `file bootstrap response applied (${response.path}, chars=${response.content.length})`,
-      );
     } catch (error) {
       this.log(
         `file bootstrap response failed (${response.path}): ${this.describeError(error)}`,
       );
     }
+
+    await this.maybeOfferOpenHydratedProject();
+  }
+
+  private async maybeOfferOpenHydratedProject(): Promise<void> {
+    if (this.sessionRole !== "guest") {
+      return;
+    }
+
+    if (!this.workspaceManifestReceived) {
+      return;
+    }
+
+    if (!this.guestMaterializationRoot) {
+      return;
+    }
+
+    if (!this.currentRoomId) {
+      return;
+    }
+
+    if (this.hydratedProjectOpenPromptShown) {
+      return;
+    }
+
+    if (this.pendingFileBootstrapRequests.size > 0) {
+      return;
+    }
+
+    this.hydratedProjectOpenPromptShown = true;
+
+    const selection = await vscode.window.showInformationMessage(
+      `CodeDock: Host project hydrated into ${this.guestMaterializationRoot.fsPath}. Open it in a new window?`,
+      "Open in New Window",
+      "Later",
+    );
+
+    if (selection !== "Open in New Window") {
+      return;
+    }
+
+    await this.state.update(PENDING_HYDRATED_ROOM_ID_KEY, this.currentRoomId);
+    await this.state.update(
+      PENDING_HYDRATED_ROOT_KEY,
+      this.guestMaterializationRoot.fsPath,
+    );
+
+    this.log(
+      `opening hydrated project in new window (${this.guestMaterializationRoot.fsPath})`,
+    );
+
+    await vscode.commands.executeCommand(
+      "vscode.openFolder",
+      this.guestMaterializationRoot,
+      true,
+    );
   }
 
   private async buildWorkspaceManifest(): Promise<WorkspaceManifest | null> {
