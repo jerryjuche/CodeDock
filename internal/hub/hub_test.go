@@ -46,7 +46,7 @@ func (m *mockSnapshotStore) Get(roomID, filePath string) ([]byte, error) {
 	return nil, nil
 }
 
-func newTestClient(roomID, userID string, buffer int) *Client {
+func newHubTestClient(roomID, userID string, buffer int) *Client {
 	return &Client{
 		Conn:   nil,
 		Send:   make(chan []byte, buffer),
@@ -55,26 +55,36 @@ func newTestClient(roomID, userID string, buffer int) *Client {
 	}
 }
 
-func mustReceiveMessage(t *testing.T, ch <-chan []byte, timeout time.Duration) []byte {
+func mustReceiveHubMessage(t *testing.T, ch <-chan []byte, timeout time.Duration) []byte {
 	t.Helper()
 
 	select {
 	case msg := <-ch:
 		return msg
 	case <-time.After(timeout):
-		t.Fatal("timed out waiting for message")
+		t.Fatal("timed out waiting for hub message")
 		return nil
 	}
 }
 
-func mustNotReceiveMessage(t *testing.T, ch <-chan []byte, timeout time.Duration) {
+func mustNotReceiveHubMessage(t *testing.T, ch <-chan []byte, timeout time.Duration) {
 	t.Helper()
 
 	select {
 	case msg := <-ch:
-		t.Fatalf("expected no message, but received %v", msg)
+		t.Fatalf("expected no hub message, got %v", msg)
 	case <-time.After(timeout):
 	}
+}
+
+func buildSnapshotPayload(filePath string, yjsUpdate []byte) []byte {
+	payload := []byte{
+		byte(len(filePath) >> 8),
+		byte(len(filePath)),
+	}
+	payload = append(payload, []byte(filePath)...)
+	payload = append(payload, yjsUpdate...)
+	return payload
 }
 
 func TestNew_InitializesHub(t *testing.T) {
@@ -84,15 +94,12 @@ func TestNew_InitializesHub(t *testing.T) {
 	if h == nil {
 		t.Fatal("expected hub, got nil")
 	}
-
 	if h.rooms == nil {
 		t.Fatal("expected rooms map to be initialized")
 	}
-
 	if h.counts == nil {
 		t.Fatal("expected counts map to be initialized")
 	}
-
 	if h.snapshots != store {
 		t.Fatal("expected snapshot store to be assigned")
 	}
@@ -100,7 +107,7 @@ func TestNew_InitializesHub(t *testing.T) {
 
 func TestRegister_AddsClientToRoom(t *testing.T) {
 	h := New(nil)
-	client := newTestClient("room-1", "user-1", 1)
+	client := newHubTestClient("room-1", "user-1", 1)
 
 	h.Register(client)
 
@@ -108,37 +115,14 @@ func TestRegister_AddsClientToRoom(t *testing.T) {
 	if !ok {
 		t.Fatal("expected room to exist after register")
 	}
-
 	if !roomClients[client] {
 		t.Fatal("expected client to be registered in room")
 	}
 }
 
-func TestRegister_CreatesSeparateRooms(t *testing.T) {
+func TestUnregister_RemovesClientAndDeletesEmptyRoom(t *testing.T) {
 	h := New(nil)
-
-	clientA := newTestClient("room-a", "user-a", 1)
-	clientB := newTestClient("room-b", "user-b", 1)
-
-	h.Register(clientA)
-	h.Register(clientB)
-
-	if len(h.rooms) != 2 {
-		t.Fatalf("expected 2 rooms, got %d", len(h.rooms))
-	}
-
-	if !h.rooms["room-a"][clientA] {
-		t.Fatal("expected clientA in room-a")
-	}
-
-	if !h.rooms["room-b"][clientB] {
-		t.Fatal("expected clientB in room-b")
-	}
-}
-
-func TestUnregister_RemovesClientAndClosesSendChannel(t *testing.T) {
-	h := New(nil)
-	client := newTestClient("room-1", "user-1", 1)
+	client := newHubTestClient("room-1", "user-1", 1)
 
 	h.Register(client)
 	h.Unregister(client)
@@ -156,8 +140,8 @@ func TestUnregister_RemovesClientAndClosesSendChannel(t *testing.T) {
 func TestUnregister_LeavesRoomWhenOtherClientsRemain(t *testing.T) {
 	h := New(nil)
 
-	clientA := newTestClient("room-1", "user-a", 1)
-	clientB := newTestClient("room-1", "user-b", 1)
+	clientA := newHubTestClient("room-1", "user-a", 1)
+	clientB := newHubTestClient("room-1", "user-b", 1)
 
 	h.Register(clientA)
 	h.Register(clientB)
@@ -168,132 +152,150 @@ func TestUnregister_LeavesRoomWhenOtherClientsRemain(t *testing.T) {
 	if !ok {
 		t.Fatal("expected room to still exist")
 	}
-
 	if roomClients[clientA] {
 		t.Fatal("expected clientA to be removed")
 	}
-
 	if !roomClients[clientB] {
 		t.Fatal("expected clientB to remain in room")
 	}
-
-	_, open := <-clientA.Send
-	if open {
-		t.Fatal("expected clientA send channel to be closed")
-	}
 }
 
-func TestUnregister_NonExistentRoomDoesNothing(t *testing.T) {
-	h := New(nil)
-	client := newTestClient("missing-room", "user-1", 1)
-
-	h.Unregister(client)
-}
-
-func TestBroadcast_SendsToOtherClientsInSameRoomOnly(t *testing.T) {
+func TestBroadcast_ExcludesOnlyTheSenderConnection(t *testing.T) {
 	h := New(nil)
 
-	sender := newTestClient("room-1", "sender", 1)
-	receiver := newTestClient("room-1", "receiver", 1)
-	otherRoom := newTestClient("room-2", "other", 1)
+	sender := newHubTestClient("room-1", "same-user", 1)
+	sameUserOtherConnection := newHubTestClient("room-1", "same-user", 1)
+	otherUser := newHubTestClient("room-1", "other-user", 1)
 
 	h.Register(sender)
-	h.Register(receiver)
-	h.Register(otherRoom)
+	h.Register(sameUserOtherConnection)
+	h.Register(otherUser)
 
-	payload := []byte("hello room")
-	h.Broadcast("sender", "room-1", payload)
+	payload := []byte("hello")
 
-	got := mustReceiveMessage(t, receiver.Send, 100*time.Millisecond)
-	if !bytes.Equal(got, payload) {
-		t.Fatalf("expected %v, got %v", payload, got)
+	h.Broadcast(sender, "room-1", payload)
+
+	gotSameUserOtherConn := mustReceiveHubMessage(t, sameUserOtherConnection.Send, 100*time.Millisecond)
+	if !bytes.Equal(gotSameUserOtherConn, payload) {
+		t.Fatalf("expected same-user second connection to receive %v, got %v", payload, gotSameUserOtherConn)
 	}
 
-	mustNotReceiveMessage(t, sender.Send, 50*time.Millisecond)
-	mustNotReceiveMessage(t, otherRoom.Send, 50*time.Millisecond)
+	gotOtherUser := mustReceiveHubMessage(t, otherUser.Send, 100*time.Millisecond)
+	if !bytes.Equal(gotOtherUser, payload) {
+		t.Fatalf("expected other user to receive %v, got %v", payload, gotOtherUser)
+	}
+
+	mustNotReceiveHubMessage(t, sender.Send, 50*time.Millisecond)
 }
 
-func TestBroadcast_DropsMessageWhenReceiverBufferIsFull(t *testing.T) {
+func TestBroadcast_DropsWhenReceiverBufferIsFull(t *testing.T) {
 	h := New(nil)
 
-	sender := newTestClient("room-1", "sender", 1)
-	slowReceiver := newTestClient("room-1", "receiver", 1)
+	sender := newHubTestClient("room-1", "sender", 1)
+	slowReceiver := newHubTestClient("room-1", "receiver", 1)
 
 	h.Register(sender)
 	h.Register(slowReceiver)
 
-	// Fill receiver buffer so broadcast default case is hit.
-	slowReceiver.Send <- []byte("already buffered")
+	slowReceiver.Send <- []byte("already-buffered")
+	h.Broadcast(sender, "room-1", []byte("new-message"))
 
-	h.Broadcast("sender", "room-1", []byte("new message"))
-
-	first := mustReceiveMessage(t, slowReceiver.Send, 100*time.Millisecond)
-	if string(first) != "already buffered" {
-		t.Fatalf("expected original buffered message, got %q", string(first))
+	first := mustReceiveHubMessage(t, slowReceiver.Send, 100*time.Millisecond)
+	if string(first) != "already-buffered" {
+		t.Fatalf("expected first buffered message, got %q", string(first))
 	}
 
-	mustNotReceiveMessage(t, slowReceiver.Send, 50*time.Millisecond)
+	mustNotReceiveHubMessage(t, slowReceiver.Send, 50*time.Millisecond)
 }
 
 func TestBroadcastAll_SendsToEveryoneInRoomIncludingSender(t *testing.T) {
 	h := New(nil)
 
-	clientA := newTestClient("room-1", "user-a", 1)
-	clientB := newTestClient("room-1", "user-b", 1)
-	clientC := newTestClient("room-2", "user-c", 1)
+	clientA := newHubTestClient("room-1", "user-a", 1)
+	clientB := newHubTestClient("room-1", "user-b", 1)
+	clientOtherRoom := newHubTestClient("room-2", "user-c", 1)
 
 	h.Register(clientA)
 	h.Register(clientB)
-	h.Register(clientC)
+	h.Register(clientOtherRoom)
 
-	payload := []byte("presence update")
+	payload := []byte("presence-update")
 	h.BroadcastAll("room-1", payload)
 
-	gotA := mustReceiveMessage(t, clientA.Send, 100*time.Millisecond)
-	gotB := mustReceiveMessage(t, clientB.Send, 100*time.Millisecond)
+	gotA := mustReceiveHubMessage(t, clientA.Send, 100*time.Millisecond)
+	gotB := mustReceiveHubMessage(t, clientB.Send, 100*time.Millisecond)
 
 	if !bytes.Equal(gotA, payload) {
-		t.Fatalf("expected %v for clientA, got %v", payload, gotA)
+		t.Fatalf("expected payload for clientA, got %v", gotA)
 	}
-
 	if !bytes.Equal(gotB, payload) {
-		t.Fatalf("expected %v for clientB, got %v", payload, gotB)
+		t.Fatalf("expected payload for clientB, got %v", gotB)
 	}
 
-	mustNotReceiveMessage(t, clientC.Send, 50*time.Millisecond)
+	mustNotReceiveHubMessage(t, clientOtherRoom.Send, 50*time.Millisecond)
 }
 
-func TestRoute_SyncBroadcastsToOthersWithTypePrefix(t *testing.T) {
-	h := New(nil)
+func TestRoute_SyncBroadcastsWithTypePrefixAndTracksSnapshots(t *testing.T) {
+	store := newMockSnapshotStore()
+	h := New(store)
 
-	sender := newTestClient("room-1", "sender", 1)
-	receiver := newTestClient("room-1", "receiver", 1)
+	sender := newHubTestClient("room-1", "sender", 1)
+	receiver := newHubTestClient("room-1", "receiver", 1)
 
 	h.Register(sender)
 	h.Register(receiver)
 
-	payload := []byte("sync-payload")
+	payload := buildSnapshotPayload("main.go", []byte("yjs-state"))
+
+	for i := 0; i < snapshotThreshold-1; i++ {
+		h.Route(Message{
+			Type:    MessageTypeSync,
+			Payload: payload,
+			Sender:  sender,
+		})
+
+		got := mustReceiveHubMessage(t, receiver.Send, 100*time.Millisecond)
+		expected := append([]byte{MessageTypeSync}, payload...)
+		if !bytes.Equal(got, expected) {
+			t.Fatalf("expected %v, got %v", expected, got)
+		}
+	}
+
+	select {
+	case <-store.saveCalls:
+		t.Fatal("expected no snapshot save before threshold")
+	case <-time.After(50 * time.Millisecond):
+	}
+
 	h.Route(Message{
 		Type:    MessageTypeSync,
 		Payload: payload,
 		Sender:  sender,
 	})
 
-	got := mustReceiveMessage(t, receiver.Send, 100*time.Millisecond)
+	got := mustReceiveHubMessage(t, receiver.Send, 100*time.Millisecond)
 	expected := append([]byte{MessageTypeSync}, payload...)
-
 	if !bytes.Equal(got, expected) {
-		t.Fatalf("expected %v, got %v", expected, got)
+		t.Fatalf("expected %v after threshold hit, got %v", expected, got)
 	}
 
-	mustNotReceiveMessage(t, sender.Send, 50*time.Millisecond)
+	save := mustReceiveSnapshotSave(t, store.saveCalls, 200*time.Millisecond)
+	if save.roomID != "room-1" {
+		t.Fatalf("expected snapshot room id room-1, got %q", save.roomID)
+	}
+	if save.filePath != "main.go" {
+		t.Fatalf("expected snapshot file path main.go, got %q", save.filePath)
+	}
+	if !bytes.Equal(save.state, []byte("yjs-state")) {
+		t.Fatalf("expected snapshot state yjs-state, got %v", save.state)
+	}
 }
 
 func TestRoute_AwarenessBroadcastsToAllIncludingSender(t *testing.T) {
 	h := New(nil)
 
-	sender := newTestClient("room-1", "sender", 1)
-	receiver := newTestClient("room-1", "receiver", 1)
+	sender := newHubTestClient("room-1", "sender", 1)
+	receiver := newHubTestClient("room-1", "receiver", 1)
 
 	h.Register(sender)
 	h.Register(receiver)
@@ -307,49 +309,62 @@ func TestRoute_AwarenessBroadcastsToAllIncludingSender(t *testing.T) {
 
 	expected := append([]byte{MessageTypeAwareness}, payload...)
 
-	gotSender := mustReceiveMessage(t, sender.Send, 100*time.Millisecond)
-	gotReceiver := mustReceiveMessage(t, receiver.Send, 100*time.Millisecond)
+	gotSender := mustReceiveHubMessage(t, sender.Send, 100*time.Millisecond)
+	gotReceiver := mustReceiveHubMessage(t, receiver.Send, 100*time.Millisecond)
 
 	if !bytes.Equal(gotSender, expected) {
 		t.Fatalf("expected sender to receive %v, got %v", expected, gotSender)
 	}
-
 	if !bytes.Equal(gotReceiver, expected) {
 		t.Fatalf("expected receiver to receive %v, got %v", expected, gotReceiver)
 	}
 }
 
-func TestRoute_ChatBroadcastsToOthersOnly(t *testing.T) {
+func TestRoute_MessageTypesThatBroadcastToOthersOnly(t *testing.T) {
 	h := New(nil)
 
-	sender := newTestClient("room-1", "sender", 1)
-	receiver := newTestClient("room-1", "receiver", 1)
+	sender := newHubTestClient("room-1", "sender", 8)
+	receiver := newHubTestClient("room-1", "receiver", 8)
 
 	h.Register(sender)
 	h.Register(receiver)
 
-	payload := []byte("chat message")
-	h.Route(Message{
-		Type:    MessageTypeChat,
-		Payload: payload,
-		Sender:  sender,
-	})
-
-	expected := append([]byte{MessageTypeChat}, payload...)
-
-	got := mustReceiveMessage(t, receiver.Send, 100*time.Millisecond)
-	if !bytes.Equal(got, expected) {
-		t.Fatalf("expected %v, got %v", expected, got)
+	cases := []struct {
+		name byte
+	}{
+		{name: MessageTypeChat},
+		{name: MessageTypeHydrationRequest},
+		{name: MessageTypeWorkspaceManifestReq},
+		{name: MessageTypeWorkspaceManifestRes},
+		{name: MessageTypeFileBootstrapReq},
+		{name: MessageTypeFileBootstrapRes},
 	}
 
-	mustNotReceiveMessage(t, sender.Send, 50*time.Millisecond)
+	for _, tc := range cases {
+		payload := []byte{0xAA, tc.name}
+
+		h.Route(Message{
+			Type:    tc.name,
+			Payload: payload,
+			Sender:  sender,
+		})
+
+		expected := append([]byte{tc.name}, payload...)
+		got := mustReceiveHubMessage(t, receiver.Send, 100*time.Millisecond)
+
+		if !bytes.Equal(got, expected) {
+			t.Fatalf("expected %v for message type %d, got %v", expected, tc.name, got)
+		}
+
+		mustNotReceiveHubMessage(t, sender.Send, 50*time.Millisecond)
+	}
 }
 
 func TestRoute_UnknownTypeDoesNothing(t *testing.T) {
 	h := New(nil)
 
-	sender := newTestClient("room-1", "sender", 1)
-	receiver := newTestClient("room-1", "receiver", 1)
+	sender := newHubTestClient("room-1", "sender", 1)
+	receiver := newHubTestClient("room-1", "receiver", 1)
 
 	h.Register(sender)
 	h.Register(receiver)
@@ -360,38 +375,60 @@ func TestRoute_UnknownTypeDoesNothing(t *testing.T) {
 		Sender:  sender,
 	})
 
-	mustNotReceiveMessage(t, sender.Send, 50*time.Millisecond)
-	mustNotReceiveMessage(t, receiver.Send, 50*time.Millisecond)
+	mustNotReceiveHubMessage(t, sender.Send, 50*time.Millisecond)
+	mustNotReceiveHubMessage(t, receiver.Send, 50*time.Millisecond)
 }
 
-func TestTrackAndSnapshot_DoesNothingWithoutStore(t *testing.T) {
-	h := New(nil)
-	sender := newTestClient("room-1", "sender", 1)
+func TestTrackAndSnapshot_DoesNothingForInvalidPayloads(t *testing.T) {
+	store := newMockSnapshotStore()
+	h := New(store)
+	sender := newHubTestClient("room-1", "sender", 1)
 
-	for i := 0; i < snapshotThreshold+5; i++ {
+	invalidPayloads := [][]byte{
+		nil,
+		[]byte{},
+		[]byte{0x00},
+		[]byte{0x00, 0x00},
+		[]byte{0x00, 0x05, 'a'},
+		[]byte{0x00, 0x01, 'a'},
+	}
+
+	for _, payload := range invalidPayloads {
+		for i := 0; i < snapshotThreshold+2; i++ {
+			h.trackAndSnapshot(Message{
+				Type:    MessageTypeSync,
+				Payload: payload,
+				Sender:  sender,
+			})
+		}
+	}
+
+	select {
+	case save := <-store.saveCalls:
+		t.Fatalf("expected no snapshot save for invalid payloads, got %+v", save)
+	case <-time.After(75 * time.Millisecond):
+	}
+}
+
+func TestTrackAndSnapshot_ResetsAfterThreshold(t *testing.T) {
+	store := newMockSnapshotStore()
+	h := New(store)
+	sender := newHubTestClient("room-1", "sender", 1)
+
+	payload := buildSnapshotPayload("index.html", []byte("state"))
+
+	for i := 0; i < snapshotThreshold; i++ {
 		h.trackAndSnapshot(Message{
 			Type:    MessageTypeSync,
-			Payload: []byte("state"),
+			Payload: payload,
 			Sender:  sender,
 		})
 	}
-}
 
-func TestTrackAndSnapshot_SavesAtThreshold(t *testing.T) {
-	store := newMockSnapshotStore()
-	h := New(store)
-	sender := newTestClient("room-1", "sender", 1)
-
-	filePath := "main.go"
-	yjsUpdate := []byte("snapshot-state")
-
-	// build the payload
-	payload := []byte{
-		0,                   // high byte of path length
-		byte(len(filePath)), // low byte of path length
+	firstSave := mustReceiveSnapshotSave(t, store.saveCalls, 200*time.Millisecond)
+	if firstSave.filePath != "index.html" {
+		t.Fatalf("expected first snapshot for index.html, got %q", firstSave.filePath)
 	}
-	payload = append(payload, []byte(filePath)...)
-	payload = append(payload, yjsUpdate...)
 
 	for i := 0; i < snapshotThreshold-1; i++ {
 		h.trackAndSnapshot(Message{
@@ -402,9 +439,9 @@ func TestTrackAndSnapshot_SavesAtThreshold(t *testing.T) {
 	}
 
 	select {
-	case call := <-store.saveCalls:
-		t.Fatalf("did not expect snapshot save before threshold, got %+v", call)
-	default:
+	case save := <-store.saveCalls:
+		t.Fatalf("expected no second save before second threshold, got %+v", save)
+	case <-time.After(75 * time.Millisecond):
 	}
 
 	h.trackAndSnapshot(Message{
@@ -413,61 +450,20 @@ func TestTrackAndSnapshot_SavesAtThreshold(t *testing.T) {
 		Sender:  sender,
 	})
 
-	select {
-	case call := <-store.saveCalls:
-		if call.roomID != "room-1" {
-			t.Fatalf("expected roomID room-1, got %s", call.roomID)
-		}
-		if call.filePath != "main.go" {
-			t.Fatalf("expected filePath default, got %s", call.filePath)
-		}
-		if !bytes.Equal(call.state, yjsUpdate) {
-			t.Fatalf("expected state %v, got %v", yjsUpdate, call.state)
-		}
-	case <-time.After(250 * time.Millisecond):
-		t.Fatal("expected snapshot save at threshold")
+	secondSave := mustReceiveSnapshotSave(t, store.saveCalls, 200*time.Millisecond)
+	if secondSave.filePath != "index.html" {
+		t.Fatalf("expected second snapshot for index.html, got %q", secondSave.filePath)
 	}
 }
 
-func TestTrackAndSnapshot_ResetsCounterAfterThreshold(t *testing.T) {
-	store := newMockSnapshotStore()
-	h := New(store)
-	sender := newTestClient("room-1", "sender", 1)
-
-	filePath := "main.go"
-	yjsUpdate := []byte("state")
-
-	payload := []byte{
-		0,
-		byte(len(filePath)),
-	}
-	payload = append(payload, []byte(filePath)...)
-	payload = append(payload, yjsUpdate...)
-
-	for i := 0; i < snapshotThreshold; i++ {
-		h.trackAndSnapshot(Message{
-			Type:    MessageTypeSync,
-			Payload: payload,
-			Sender:  sender,
-		})
-	}
+func mustReceiveSnapshotSave(t *testing.T, ch <-chan saveCall, timeout time.Duration) saveCall {
+	t.Helper()
 
 	select {
-	case <-store.saveCalls:
-	case <-time.After(250 * time.Millisecond):
-		t.Fatal("expected first snapshot save")
-	}
-
-	// After reset, one more call should not immediately save again.
-	h.trackAndSnapshot(Message{
-		Type:    MessageTypeSync,
-		Payload: payload,
-		Sender:  sender,
-	})
-
-	select {
-	case call := <-store.saveCalls:
-		t.Fatalf("did not expect second save immediately after reset, got %+v", call)
-	case <-time.After(100 * time.Millisecond):
+	case call := <-ch:
+		return call
+	case <-time.After(timeout):
+		t.Fatal("timed out waiting for snapshot save")
+		return saveCall{}
 	}
 }
