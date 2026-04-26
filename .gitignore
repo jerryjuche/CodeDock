@@ -33,3 +33,9 @@ go.work.sum
 # .vscode/
 
 node_modules/
+
+# CodeDock web local/generated files
+codedock-web/.next/
+codedock-web/node_modules/
+codedock-web/.env.local
+codedock-web/.env.*.local
