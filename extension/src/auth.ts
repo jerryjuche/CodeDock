@@ -20,6 +20,10 @@ export class AuthManager {
     await this.secrets.store(TOKEN_KEY, token);
   }
 
+  async storeTokenSilently(token: string): Promise<void> {
+    await this.saveToken(token);
+  }
+
   async deleteToken(): Promise<void> {
     await this.secrets.delete(TOKEN_KEY);
   }
@@ -70,7 +74,7 @@ export class AuthManager {
       if (!token) {
         return false;
       }
-      const valid = await this.api.validateToken(token);
+      await this.api.validateToken(token);
       return true;
     } catch {
       await this.deleteToken();

@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"net/url"
 	"time"
+
+	"github.com/jerryjuche/CodeDock/internal/auth"
 )
 
 var (
@@ -36,6 +38,7 @@ type LaunchContext struct {
 	SourceType        string          `json:"source_type"`
 	SourceMetadata    json.RawMessage `json:"source_metadata"`
 	WorkspacePathHint string          `json:"workspace_path_hint"`
+	AuthToken         string          `json:"auth_token"`
 }
 
 type LaunchService struct {
@@ -107,6 +110,8 @@ func (s *LaunchService) ExchangeLaunchToken(rawToken string) (*LaunchContext, er
 
 	var ctx LaunchContext
 	var metadataBytes []byte
+	var userID string
+	var email string
 	var usedAt sql.NullTime
 	var expiresAt time.Time
 
@@ -114,6 +119,8 @@ func (s *LaunchService) ExchangeLaunchToken(rawToken string) (*LaunchContext, er
 		SELECT
 			rlt.used_at,
 			rlt.expires_at,
+			u.id,
+			u.email,
 			r.id,
 			r.name,
 			r.slug,
@@ -122,12 +129,15 @@ func (s *LaunchService) ExchangeLaunchToken(rawToken string) (*LaunchContext, er
 			r.source_metadata
 		FROM room_launch_tokens rlt
 		INNER JOIN rooms r ON r.id = rlt.room_id
+		INNER JOIN users u ON u.id = rlt.user_id
 		WHERE rlt.token_hash = $1
 		  AND r.is_active = TRUE
 		FOR UPDATE
 	`, tokenHash).Scan(
 		&usedAt,
 		&expiresAt,
+		&userID,
+		&email,
 		&ctx.RoomID,
 		&ctx.RoomName,
 		&ctx.RoomSlug,
@@ -158,8 +168,14 @@ func (s *LaunchService) ExchangeLaunchToken(rawToken string) (*LaunchContext, er
 		return nil, err
 	}
 
+	authToken, err := auth.GenerateToken(userID, email)
+	if err != nil {
+		return nil, err
+	}
+
 	ctx.SourceMetadata = ensureJSON(metadataBytes)
 	ctx.WorkspacePathHint = fmt.Sprintf("~/.codedock/rooms/%s", ctx.RoomSlug)
+	ctx.AuthToken = authToken
 
 	if err := tx.Commit(); err != nil {
 		return nil, err

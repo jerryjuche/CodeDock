@@ -34,6 +34,8 @@ __export(extension_exports, {
   deactivate: () => deactivate
 });
 module.exports = __toCommonJS(extension_exports);
+var fs2 = __toESM(require("fs/promises"));
+var os = __toESM(require("os"));
 var path2 = __toESM(require("path"));
 var vscode4 = __toESM(require("vscode"));
 var import_events = require("events");
@@ -53,6 +55,9 @@ var AuthManager = class {
   }
   async saveToken(token) {
     await this.secrets.store(TOKEN_KEY, token);
+  }
+  async storeTokenSilently(token) {
+    await this.saveToken(token);
   }
   async deleteToken() {
     await this.secrets.delete(TOKEN_KEY);
@@ -97,7 +102,7 @@ var AuthManager = class {
       if (!token) {
         return false;
       }
-      const valid = await this.api.validateToken(token);
+      await this.api.validateToken(token);
       return true;
     } catch {
       await this.deleteToken();
@@ -172,6 +177,16 @@ var ApiClient = class {
       token
     );
   }
+  async exchangeLaunchToken(rawToken) {
+    return this.request(
+      "/vscode/launch/exchange",
+      {
+        method: "POST",
+        body: JSON.stringify({ launch_token: rawToken })
+      },
+      false
+    );
+  }
   async request(path3, options, authenticated, token) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -180,7 +195,7 @@ var ApiClient = class {
       ...options.headers ?? {}
     };
     if (authenticated && token) {
-      headers["Authorization"] = `Bearer ${token}`;
+      headers.Authorization = `Bearer ${token}`;
     }
     try {
       const response = await fetch(`${this.baseUrl}${path3}`, {
@@ -201,7 +216,10 @@ var ApiClient = class {
       if (err instanceof DOMException && err.name === "AbortError") {
         throw new ApiError(408, "Request timed out \u2014 is the server reachable?");
       }
-      throw new ApiError(0, `Network error: ${err instanceof Error ? err.message : "unknown"}`);
+      throw new ApiError(
+        0,
+        `Network error: ${err instanceof Error ? err.message : "unknown"}`
+      );
     } finally {
       clearTimeout(timeout);
     }
@@ -1265,14 +1283,14 @@ var deepFreeze = (o) => {
 };
 
 // node_modules/lib0/function.js
-var callAll = (fs2, args2, i = 0) => {
+var callAll = (fs3, args2, i = 0) => {
   try {
-    for (; i < fs2.length; i++) {
-      fs2[i](...args2);
+    for (; i < fs3.length; i++) {
+      fs3[i](...args2);
     }
   } finally {
-    if (i < fs2.length) {
-      callAll(fs2, args2, i + 1);
+    if (i < fs3.length) {
+      callAll(fs3, args2, i + 1);
     }
   }
 };
@@ -3002,15 +3020,15 @@ var cleanupTransactions = (transactionCleanups, i) => {
       sortAndMergeDeleteSet(ds);
       transaction.afterState = getStateVector(transaction.doc.store);
       doc.emit("beforeObserverCalls", [transaction, doc]);
-      const fs2 = [];
+      const fs3 = [];
       transaction.changed.forEach(
-        (subs, itemtype) => fs2.push(() => {
+        (subs, itemtype) => fs3.push(() => {
           if (itemtype._item === null || !itemtype._item.deleted) {
             itemtype._callObserver(transaction, subs);
           }
         })
       );
-      fs2.push(() => {
+      fs3.push(() => {
         transaction.changedParentTypes.forEach((events, type) => {
           if (type._dEH.l.length > 0 && (type._item === null || !type._item.deleted)) {
             events = events.filter(
@@ -3021,19 +3039,19 @@ var cleanupTransactions = (transactionCleanups, i) => {
               event._path = null;
             });
             events.sort((event1, event2) => event1.path.length - event2.path.length);
-            fs2.push(() => {
+            fs3.push(() => {
               callEventHandlerListeners(type._dEH, events, transaction);
             });
           }
         });
-        fs2.push(() => doc.emit("afterTransaction", [transaction, doc]));
-        fs2.push(() => {
+        fs3.push(() => doc.emit("afterTransaction", [transaction, doc]));
+        fs3.push(() => {
           if (transaction._needFormattingCleanup) {
             cleanupYTextAfterTransaction(transaction);
           }
         });
       });
-      callAll(fs2, []);
+      callAll(fs3, []);
     } finally {
       if (doc.gc) {
         tryGcDeleteSet(ds, store, doc.gcFilter);
@@ -9058,6 +9076,7 @@ var YjsSync = class {
 // src/extension.ts
 var PENDING_HYDRATED_ROOM_ID_KEY2 = "codedock.pendingHydrated.roomId";
 var PENDING_HYDRATED_ROOT_KEY2 = "codedock.pendingHydrated.rootPath";
+var PENDING_LAUNCH_CONTEXT_KEY = "codedock.pendingLaunch.context";
 var authManager;
 var wsManager;
 var yjsSync;
@@ -9081,6 +9100,7 @@ async function activate(context) {
   emitter.on("logout", () => {
     outputChannel.appendLine("CodeDock: logout event received");
     void clearPendingHydratedJoin(context);
+    void clearPendingLaunch(context);
     yjsSync.setActiveRoomId(null);
     yjsSync.setGuestMaterializationRoot(null);
     wsManager.disconnect("logout");
@@ -9112,6 +9132,7 @@ async function activate(context) {
     vscode4.commands.registerCommand("codedock.disconnectRoom", () => {
       outputChannel.appendLine("CodeDock: user requested room disconnect");
       void clearPendingHydratedJoin(context);
+      void clearPendingLaunch(context);
       yjsSync.setActiveRoomId(null);
       yjsSync.setGuestMaterializationRoot(null);
       wsManager.disconnect("user");
@@ -9120,23 +9141,13 @@ async function activate(context) {
   );
   context.subscriptions.push(
     vscode4.window.registerUriHandler({
-      handleUri(uri) {
-        outputChannel.appendLine(`URI received: ${uri.toString()}`);
-        const params2 = new URLSearchParams(uri.query);
-        const code = params2.get("code");
-        const roomId = params2.get("room_id");
-        outputChannel.appendLine(`code: ${code}`);
-        outputChannel.appendLine(`room_id: ${roomId}`);
-        vscode4.window.showInformationMessage(
-          `Deep link received \u2014 code: ${code}, room: ${roomId}`
-        );
+      async handleUri(uri) {
+        await handleLaunchUri(context, uri, outputChannel);
       }
     })
   );
-  const sessionReady = await restoreSession();
-  if (sessionReady) {
-    await resumePendingHydratedJoin(context, outputChannel);
-  }
+  await restoreSession();
+  await resumePendingLaunch(context, outputChannel);
 }
 async function restoreSession() {
   const token = await authManager.getToken();
@@ -9144,7 +9155,7 @@ async function restoreSession() {
     vscode4.window.showInformationMessage(
       'CodeDock: Not logged in. Run "CodeDock: Login" to start.'
     );
-    return false;
+    return;
   }
   const valid = await authManager.validateToken();
   if (!valid) {
@@ -9156,10 +9167,107 @@ async function restoreSession() {
         authManager.login();
       }
     });
-    return false;
+    return;
   }
   vscode4.window.showInformationMessage("CodeDock: Session restored.");
-  return true;
+}
+async function handleLaunchUri(context, uri, outputChannel) {
+  outputChannel.appendLine(`URI received: ${uri.toString()}`);
+  const params2 = new URLSearchParams(uri.query);
+  const launchToken = params2.get("token");
+  const legacyCode = params2.get("code");
+  const legacyRoomId = params2.get("room_id");
+  outputChannel.appendLine(`token: ${launchToken ?? "null"}`);
+  outputChannel.appendLine(`code: ${legacyCode ?? "null"}`);
+  outputChannel.appendLine(`room_id: ${legacyRoomId ?? "null"}`);
+  if (!launchToken) {
+    vscode4.window.showErrorMessage(
+      "CodeDock: This launch link is missing its token."
+    );
+    return;
+  }
+  try {
+    const launchContext = await apiClient.exchangeLaunchToken(launchToken);
+    if (launchContext.auth_token) {
+      await authManager.storeTokenSilently(launchContext.auth_token);
+      outputChannel.appendLine("CodeDock: stored auth token from launch exchange");
+    }
+    const workspaceUri = await ensureManagedWorkspace(launchContext, outputChannel);
+    const pending = {
+      ...launchContext,
+      workspace_fs_path: workspaceUri.fsPath
+    };
+    await context.globalState.update(PENDING_LAUNCH_CONTEXT_KEY, pending);
+    const currentRoot = vscode4.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (currentRoot && normalizeFsPath(currentRoot) === normalizeFsPath(workspaceUri.fsPath)) {
+      outputChannel.appendLine("CodeDock: launch workspace already open, resuming directly");
+      await resumePendingLaunch(context, outputChannel);
+      return;
+    }
+    outputChannel.appendLine(
+      `CodeDock: opening managed workspace (${workspaceUri.fsPath})`
+    );
+    await vscode4.commands.executeCommand("vscode.openFolder", workspaceUri, true);
+  } catch (error) {
+    outputChannel.appendLine(
+      `CodeDock: launch exchange failed -> ${error instanceof Error ? error.message : "unknown error"}`
+    );
+    vscode4.window.showErrorMessage(
+      `CodeDock: Launch failed \u2014 ${error instanceof Error ? error.message : "unknown error"}`
+    );
+  }
+}
+async function resumePendingLaunch(context, outputChannel) {
+  const pending = context.globalState.get(
+    PENDING_LAUNCH_CONTEXT_KEY
+  );
+  if (!pending) {
+    return;
+  }
+  const currentRoot = vscode4.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!currentRoot) {
+    outputChannel.appendLine("CodeDock: pending launch found but no workspace root is open");
+    return;
+  }
+  if (normalizeFsPath(currentRoot) !== normalizeFsPath(pending.workspace_fs_path)) {
+    outputChannel.appendLine("CodeDock: current workspace does not match pending launch root");
+    return;
+  }
+  const token = await authManager.getToken();
+  if (!token) {
+    vscode4.window.showErrorMessage(
+      "CodeDock: No auth session found for this launch. Please log in again."
+    );
+    return;
+  }
+  outputChannel.appendLine(
+    `CodeDock: resuming launched room ${pending.room_id} (${pending.role})`
+  );
+  yjsSync.setGuestMaterializationRoot(null);
+  yjsSync.setActiveRoomId(pending.room_id);
+  yjsSync.setSessionRole(pending.role === "host" ? "host" : "guest");
+  wsManager.connect(token, pending.room_id);
+  yjsSync.activate();
+  await clearPendingLaunch(context);
+  vscode4.window.showInformationMessage(
+    `CodeDock: Connected to "${pending.room_name}".`
+  );
+}
+async function ensureManagedWorkspace(launchContext, outputChannel) {
+  const baseDir = path2.join(os.homedir(), ".codedock", "rooms");
+  const roomDir = path2.join(baseDir, launchContext.room_slug);
+  await fs2.mkdir(roomDir, { recursive: true });
+  const metadataPath = path2.join(roomDir, ".codedock-room.json");
+  const metadata = {
+    roomId: launchContext.room_id,
+    roomName: launchContext.room_name,
+    roomSlug: launchContext.room_slug,
+    sourceType: launchContext.source_type,
+    createdAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  await fs2.writeFile(metadataPath, JSON.stringify(metadata, null, 2), "utf8");
+  outputChannel.appendLine(`CodeDock: ensured managed workspace ${roomDir}`);
+  return vscode4.Uri.file(roomDir);
 }
 async function handleJoinRoom(context, outputChannel) {
   const token = await authManager.getToken();
@@ -9255,40 +9363,12 @@ async function joinRoomNow(token, roomId, outputChannel) {
   wsManager.connect(token, roomId);
   yjsSync.activate();
 }
-async function resumePendingHydratedJoin(context, outputChannel) {
-  const pendingRoomId = context.globalState.get(
-    PENDING_HYDRATED_ROOM_ID_KEY2
-  );
-  const pendingRootPath = context.globalState.get(
-    PENDING_HYDRATED_ROOT_KEY2
-  );
-  if (!pendingRoomId || !pendingRootPath) {
-    return;
-  }
-  const currentRoot = vscode4.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (!currentRoot) {
-    return;
-  }
-  if (normalizeFsPath(currentRoot) !== normalizeFsPath(pendingRootPath)) {
-    return;
-  }
-  const token = await authManager.getToken();
-  if (!token) {
-    outputChannel.appendLine(
-      "CodeDock: pending hydrated project reopen found, but no valid session is available"
-    );
-    return;
-  }
-  outputChannel.appendLine(
-    `CodeDock: resuming room ${pendingRoomId} in hydrated project window`
-  );
-  yjsSync.setGuestMaterializationRoot(null);
-  await joinRoomNow(token, pendingRoomId, outputChannel);
-  await clearPendingHydratedJoin(context);
-}
 async function clearPendingHydratedJoin(context) {
   await context.globalState.update(PENDING_HYDRATED_ROOM_ID_KEY2, void 0);
   await context.globalState.update(PENDING_HYDRATED_ROOT_KEY2, void 0);
+}
+async function clearPendingLaunch(context) {
+  await context.globalState.update(PENDING_LAUNCH_CONTEXT_KEY, void 0);
 }
 function hasWorkspaceRoot() {
   const folders = vscode4.workspace.workspaceFolders;
