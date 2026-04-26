@@ -512,6 +512,7 @@ func setupTestApp(t *testing.T) *testApp {
 	mux.Handle("POST /rooms", auth.RequireAuth(http.HandlerFunc(app.roomHandler.CreateRoom)))
 	mux.Handle("GET /rooms", auth.RequireAuth(http.HandlerFunc(app.roomHandler.GetUserRooms)))
 	mux.Handle("GET /rooms/{id}", auth.RequireAuth(http.HandlerFunc(app.roomHandler.GetRoom)))
+	mux.Handle("GET /auth/me", auth.RequireAuth(http.HandlerFunc(app.authHandler.Me)))
 
 	mux.Handle("POST /join-code/resolve", auth.RequireAuth(http.HandlerFunc(app.inviteHandler.ResolveJoinCode)))
 	mux.Handle("GET /rooms/{roomId}/invites", auth.RequireAuth(http.HandlerFunc(app.inviteHandler.ListRoomInvites)))
@@ -706,5 +707,29 @@ func resetTestDB(t *testing.T, db *sql.DB) {
 	query := "TRUNCATE TABLE " + strings.Join(existingTables, ", ") + " RESTART IDENTITY CASCADE"
 	if _, err := db.Exec(query); err != nil {
 		t.Fatalf("could not reset test database: %v", err)
+	}
+}
+
+func TestAuthMe_ReturnsCurrentUser(t *testing.T) {
+	app := setupTestApp(t)
+	resetTestDB(t, app.db)
+
+	user := mustRegisterUser(t, app, "auth-me")
+	token := user.Token
+
+	rr := performJSONRequest(t, app.mux, http.MethodGet, "/auth/me", nil, token)
+	assertStatus(t, rr, http.StatusOK)
+
+	var me struct {
+		ID    string `json:"id"`
+		Email string `json:"email"`
+	}
+	decodeJSON(t, rr, &me)
+
+	if me.ID == "" {
+		t.Fatal("expected auth/me id to be non-empty")
+	}
+	if me.Email == "" {
+		t.Fatal("expected auth/me email to be non-empty")
 	}
 }

@@ -25,6 +25,11 @@ type authResponse struct {
 	Email string `json:"email"`
 }
 
+type meResponse struct {
+	ID    string `json:"id"`
+	Email string `json:"email"`
+}
+
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	var req registerRequest
 
@@ -119,11 +124,23 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.GetUserFromContext(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	_ = json.NewEncoder(w).Encode(meResponse{
+		ID:    claims.UserID,
+		Email: claims.Email,
+	})
+}
+
 // ExchangeCode is deprecated.
-// The old invite-token exchange flow is being replaced by:
-//   1. website account login
-//   2. join by room code via /join-code/resolve
-//   3. VS Code launch via one-time launch token
 func (h *AuthHandler) ExchangeCode(w http.ResponseWriter, r *http.Request) {
 	http.Error(
 		w,

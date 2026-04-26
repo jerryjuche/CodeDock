@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/jerryjuche/CodeDock/internal/auth"
 	"github.com/jerryjuche/CodeDock/internal/handlers"
@@ -47,6 +48,7 @@ func main() {
 	// Auth routes
 	mux.HandleFunc("POST /auth/register", authHandler.Register)
 	mux.HandleFunc("POST /auth/login", authHandler.Login)
+	mux.Handle("GET /auth/me", auth.RequireAuth(http.HandlerFunc(authHandler.Me)))
 
 	// Legacy route kept temporarily as explicit deprecation response
 	mux.HandleFunc("POST /auth/exchange", authHandler.ExchangeCode)
@@ -73,8 +75,13 @@ func main() {
 		port = "8080"
 	}
 
+	allowedOrigins := getAllowedOrigins()
 	log.Printf("codedock server starting on port: %s", port)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
+	log.Printf("allowed web origins: %s", strings.Join(allowedOrigins, ", "))
+
+	handler := withCORS(mux, allowedOrigins)
+
+	if err := http.ListenAndServe(":"+port, handler); err != nil {
 		log.Fatalf("error, server failed to start up, %s", err)
 		return
 	}
@@ -104,4 +111,58 @@ func connectDB() (*sql.DB, error) {
 		return nil, err
 	}
 	return db, nil
+}
+
+func getAllowedOrigins() []string {
+	raw := strings.TrimSpace(os.Getenv("WEB_ALLOWED_ORIGINS"))
+	if raw == "" {
+		return []string{
+			"http://localhost:3000",
+			"http://127.0.0.1:3000",
+		}
+	}
+
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		value := strings.TrimSpace(part)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+
+	if len(out) == 0 {
+		return []string{
+			"http://localhost:3000",
+			"http://127.0.0.1:3000",
+		}
+	}
+
+	return out
+}
+
+func withCORS(next http.Handler, allowedOrigins []string) http.Handler {
+	allowed := make(map[string]struct{}, len(allowedOrigins))
+	for _, origin := range allowedOrigins {
+		allowed[origin] = struct{}{}
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin != "" {
+			if _, ok := allowed[origin]; ok {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Vary", "Origin")
+				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			}
+		}
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
