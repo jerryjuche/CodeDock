@@ -1,1 +1,0 @@
-CREATE TYPE room_role AS ENUM ('host', 'editor', 'viewer');
