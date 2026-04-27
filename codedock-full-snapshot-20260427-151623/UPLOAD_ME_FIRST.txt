@@ -1,0 +1,17 @@
+Upload one of these back to ChatGPT:
+
+Preferred:
+1. the whole .tar.gz archive generated beside this folder
+
+Good alternative:
+1. reports/COMBINED_SOURCE_DUMP.txt
+2. reports/SNAPSHOT_OVERVIEW.md
+3. reports/MODULE_SUMMARY.md
+4. meta/repo-tree.txt
+5. meta/git-status.txt
+6. meta/git-diff.patch
+7. logs/host.log.txt
+8. logs/guest.log.txt
+9. reports/go-test-all.txt (if go checks were enabled)
+
+This bundle captures the actual integrated code and structure so debugging can be done against the real repository state.

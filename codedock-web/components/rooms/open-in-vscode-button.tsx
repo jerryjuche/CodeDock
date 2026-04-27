@@ -4,8 +4,18 @@ import { useLaunch } from "@/hooks/use-launch";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 
-export default function OpenInVSCodeButton({ roomId }: { roomId: string }) {
+export default function OpenInVSCodeButton({
+  roomId,
+  launchAllowed,
+  launchReason,
+}: {
+  roomId: string;
+  launchAllowed: boolean;
+  launchReason?: string;
+}) {
   const { openRoom, loading } = useLaunch(roomId);
+
+  const disabled = loading || !launchAllowed;
 
   return (
     <Card>
@@ -14,8 +24,12 @@ export default function OpenInVSCodeButton({ roomId }: { roomId: string }) {
         Generate a one-time launch token and open this room in VS Code.
       </p>
 
+      {!launchAllowed && launchReason ? (
+        <p className="mt-3 text-sm text-amber-300">{launchReason}</p>
+      ) : null}
+
       <div className="mt-4">
-        <Button disabled={loading} onClick={openRoom}>
+        <Button disabled={disabled} onClick={openRoom}>
           {loading ? "Opening..." : "Open in VS Code"}
         </Button>
       </div>

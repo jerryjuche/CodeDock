@@ -1,12 +1,20 @@
 "use client";
 
-import { useInvites } from "@/hooks/use-invites";
+import type { RoomInviteToken } from "@/types/invite";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 
-export default function InviteList({ roomId }: { roomId: string }) {
-  const { invites, loading, error, revokeInvite } = useInvites(roomId);
-
+export default function InviteList({
+  invites,
+  loading,
+  error,
+  onRevoke,
+}: {
+  invites: RoomInviteToken[];
+  loading: boolean;
+  error: string | null;
+  onRevoke: (inviteId: string) => Promise<void>;
+}) {
   return (
     <Card>
       <h2 className="text-xl font-semibold">Invite Tokens</h2>
@@ -34,8 +42,12 @@ export default function InviteList({ roomId }: { roomId: string }) {
                     {invite.is_revoked ? " · revoked" : ""}
                   </div>
                 </div>
-                <Button variant="secondary" onClick={() => revokeInvite(invite.id)}>
-                  Revoke
+                <Button
+                  variant="secondary"
+                  disabled={invite.is_revoked}
+                  onClick={() => void onRevoke(invite.id)}
+                >
+                  {invite.is_revoked ? "Revoked" : "Revoke"}
                 </Button>
               </div>
             </div>

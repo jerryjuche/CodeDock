@@ -1,0 +1,490 @@
+README.md:2: CodeDock is a self-hosted, low-latency collaborative coding platform that enables multiple developers to edit code simultaneously inside their editor, with real-time synchronization, presence awareness, and integrated team communication.
+README.md:5: Below is a clean compiled handoff brief you can paste into a new chat to continue the work without losing context.
+README.md:31: * Yjs/CRDT sync
+README.md:58: * Yjs sync
+README.md:60: * chat panel
+README.md:394: * awareness file path correctness
+README.md:466: 26. test sync, cursors, chat, reconnect
+README.md:483: ## 17. Paste-ready continuation prompt for the next chat
+codedock-core-debug-bundle.txt:111: 	"sync"
+codedock-core-debug-bundle.txt:141: 	mu        sync.RWMutex
+codedock-core-debug-bundle.txt:144: 	countsMu  sync.Mutex
+codedock-core-debug-bundle.txt:209: 	case MessageTypeSync:
+codedock-core-debug-bundle.txt:210: 		h.Broadcast(msg.Sender, msg.Sender.RoomID, append([]byte{MessageTypeSync}, msg.Payload...))
+codedock-core-debug-bundle.txt:213: 	case MessageTypeAwareness:
+codedock-core-debug-bundle.txt:214: 		h.BroadcastAll(msg.Sender.RoomID, append([]byte{MessageTypeAwareness}, msg.Payload...))
+codedock-core-debug-bundle.txt:216: 	case MessageTypeChat:
+codedock-core-debug-bundle.txt:217: 		h.Broadcast(msg.Sender, msg.Sender.RoomID, append([]byte{MessageTypeChat}, msg.Payload...))
+codedock-core-debug-bundle.txt:219: 	case MessageTypeHydrationRequest:
+codedock-core-debug-bundle.txt:220: 		h.Broadcast(msg.Sender, msg.Sender.RoomID, append([]byte{MessageTypeHydrationRequest}, msg.Payload...))
+codedock-core-debug-bundle.txt:551: func TestRoute_SyncBroadcastsToOthersWithTypePrefix(t *testing.T) {
+codedock-core-debug-bundle.txt:560: 	payload := []byte("sync-payload")
+codedock-core-debug-bundle.txt:562: 		Type:    MessageTypeSync,
+codedock-core-debug-bundle.txt:568: 	expected := append([]byte{MessageTypeSync}, payload...)
+codedock-core-debug-bundle.txt:577: func TestRoute_AwarenessBroadcastsToAllIncludingSender(t *testing.T) {
+codedock-core-debug-bundle.txt:586: 	payload := []byte("awareness")
+codedock-core-debug-bundle.txt:588: 		Type:    MessageTypeAwareness,
+codedock-core-debug-bundle.txt:593: 	expected := append([]byte{MessageTypeAwareness}, payload...)
+codedock-core-debug-bundle.txt:607: func TestRoute_ChatBroadcastsToOthersOnly(t *testing.T) {
+codedock-core-debug-bundle.txt:616: 	payload := []byte("chat message")
+codedock-core-debug-bundle.txt:618: 		Type:    MessageTypeChat,
+codedock-core-debug-bundle.txt:623: 	expected := append([]byte{MessageTypeChat}, payload...)
+codedock-core-debug-bundle.txt:658: 			Type:    MessageTypeSync,
+codedock-core-debug-bundle.txt:683: 			Type:    MessageTypeSync,
+codedock-core-debug-bundle.txt:695: 	MessageTypeSync                 byte = 0x01 // CRDT document update from Yjs
+codedock-core-debug-bundle.txt:696: 	MessageTypeAwareness            byte = 0x02 // cursor position and presence
+codedock-core-debug-bundle.txt:697: 	MessageTypeChat                 byte = 0x03 // chat message
+codedock-core-debug-bundle.txt:698: 	MessageTypeHydrationRequest     byte = 0x04 // guest asks host for current file state
+codedock-core-debug-bundle.txt:699: 	MessageTypeWorkspaceManifestReq byte = 0x05 // guest asks host for workspace tree
+codedock-core-debug-bundle.txt:700: 	MessageTypeWorkspaceManifestRes byte = 0x06 // host returns workspace tree
+codedock-core-debug-bundle.txt:701: 	MessageTypeFileBootstrapReq     byte = 0x07 // guest asks host for file contents
+codedock-core-debug-bundle.txt:702: 	MessageTypeFileBootstrapRes     byte = 0x08 // host returns file contents
+codedock-core-debug-bundle.txt:1585: 	"sync"
+codedock-core-debug-bundle.txt:1719: 	var wg sync.WaitGroup
+codedock-core-debug-bundle.txt:1760: 	"sync"
+codedock-core-debug-bundle.txt:1767: var loadEnvOnce sync.Once
+codedock-core-debug-bundle.txt:2439:     async login(email: string, password: string): Promise<AuthResponse> {
+codedock-core-debug-bundle.txt:2450:     async validateToken(token: string): Promise<void> {
+codedock-core-debug-bundle.txt:2459:     async getRooms(token: string): Promise<Room[]> {
+codedock-core-debug-bundle.txt:2468:     async createRoom(token: string, name: string): Promise<Room> {
+codedock-core-debug-bundle.txt:2480:     private async request<T>(
+codedock-core-debug-bundle.txt:2542:   async getToken(): Promise<string | null> {
+codedock-core-debug-bundle.txt:2547:   private async saveToken(token: string): Promise<void> {
+codedock-core-debug-bundle.txt:2551:   async deleteToken(): Promise<void> {
+codedock-core-debug-bundle.txt:2555:   async login(): Promise<void> {
+codedock-core-debug-bundle.txt:2589:   async logout(): Promise<void> {
+codedock-core-debug-bundle.txt:2595:   async validateToken(): Promise<boolean> {
+codedock-core-debug-bundle.txt:2609:   private async promptRoomAction(): Promise<void> {
+codedock-core-debug-bundle.txt:2628: FILE: extension/src/chat.ts
+codedock-core-debug-bundle.txt:2630: // extension/src/chat.ts
+codedock-core-debug-bundle.txt:2634: import { encodeChatPayload, decodeChatPayload, MessageType } from './protocol'
+codedock-core-debug-bundle.txt:2635: import { ChatMessage } from './types'
+codedock-core-debug-bundle.txt:2637: export class ChatManager {
+codedock-core-debug-bundle.txt:2640:     private messages: ChatMessage[] = []
+codedock-core-debug-bundle.txt:2667:             'codedockChat',
+codedock-core-debug-bundle.txt:2668:             'CodeDock Chat',
+codedock-core-debug-bundle.txt:2679:         // handle messages from the webview — user sending chat
+codedock-core-debug-bundle.txt:2704:         const message: ChatMessage = {
+codedock-core-debug-bundle.txt:2712:         const payload = encodeChatPayload(message)
+codedock-core-debug-bundle.txt:2722:         if (data[0] !== MessageType.CHAT) {
+codedock-core-debug-bundle.txt:2726:         const message = decodeChatPayload<ChatMessage>(data)
+codedock-core-debug-bundle.txt:2739:     private appendMessage(message: ChatMessage): void {
+codedock-core-debug-bundle.txt:2778:     <title>CodeDock Chat</title>
+codedock-core-debug-bundle.txt:2900:   encodeAwarenessPayload,
+codedock-core-debug-bundle.txt:2901:   decodeAwarenessPayload,
+codedock-core-debug-bundle.txt:2905: import { AwarenessState } from "./types";
+codedock-core-debug-bundle.txt:2915:   // last known awareness state per remote user
+codedock-core-debug-bundle.txt:2916:   private states: Map<string, AwarenessState> = new Map();
+codedock-core-debug-bundle.txt:2941:       this.sendLocalAwareness();
+codedock-core-debug-bundle.txt:2974:   // --- Local Awareness ---
+codedock-core-debug-bundle.txt:2976:   private sendLocalAwareness(): void {
+codedock-core-debug-bundle.txt:2985:     const state: AwarenessState = {
+codedock-core-debug-bundle.txt:2998:     const payload = encodeAwarenessPayload(state);
+codedock-core-debug-bundle.txt:3002:   // --- Incoming Awareness ---
+codedock-core-debug-bundle.txt:3005:     // only handle awareness messages
+codedock-core-debug-bundle.txt:3006:     if (data[0] !== MessageType.AWARENESS) {
+codedock-core-debug-bundle.txt:3010:     const state = decodeAwarenessPayload<AwarenessState>(data);
+codedock-core-debug-bundle.txt:3015:     // ignore own awareness messages
+codedock-core-debug-bundle.txt:3030:   private renderCursor(state: AwarenessState): void {
+codedock-core-debug-bundle.txt:3106: import { YjsSync } from "./yjs-sync";
+codedock-core-debug-bundle.txt:3113: let yjsSync: YjsSync;
+codedock-core-debug-bundle.txt:3116: export async function activate(
+codedock-core-debug-bundle.txt:3126:   outputChannel.appendLine("CodeDock: DIAG BUILD LOADED (SYNC-ONLY)");
+codedock-core-debug-bundle.txt:3127:   vscode.window.showInformationMessage("CodeDock: DIAG BUILD LOADED (SYNC-ONLY)");
+codedock-core-debug-bundle.txt:3134:   yjsSync = new YjsSync(wsManager, outputChannel, context.globalState);
+codedock-core-debug-bundle.txt:3137:     outputChannel.appendLine("CodeDock: login event received (sync-only mode)");
+codedock-core-debug-bundle.txt:3143:     yjsSync.setActiveRoomId(null);
+codedock-core-debug-bundle.txt:3144:     yjsSync.setGuestMaterializationRoot(null);
+codedock-core-debug-bundle.txt:3146:     yjsSync.dispose();
+codedock-core-debug-bundle.txt:3162:     vscode.commands.registerCommand("codedock.openChat", () =>
+codedock-core-debug-bundle.txt:3164:         "CodeDock Chat is temporarily disabled in sync-only diagnostic mode.",
+codedock-core-debug-bundle.txt:3170:       yjsSync.setActiveRoomId(null);
+codedock-core-debug-bundle.txt:3171:       yjsSync.setGuestMaterializationRoot(null);
+codedock-core-debug-bundle.txt:3173:       yjsSync.dispose();
+codedock-core-debug-bundle.txt:3203: async function restoreSession(): Promise<boolean> {
+codedock-core-debug-bundle.txt:3233: async function handleJoinRoom(
+codedock-core-debug-bundle.txt:3281:     yjsSync.setGuestMaterializationRoot(destinationRoot);
+codedock-core-debug-bundle.txt:3283:     yjsSync.setGuestMaterializationRoot(null);
+codedock-core-debug-bundle.txt:3290: async function handleCreateRoom(
+codedock-core-debug-bundle.txt:3335:     yjsSync.setSessionRole("host");
+codedock-core-debug-bundle.txt:3336:     yjsSync.setActiveRoomId(room.id);
+codedock-core-debug-bundle.txt:3337:     yjsSync.setGuestMaterializationRoot(null);
+codedock-core-debug-bundle.txt:3339:     yjsSync.activate();
+codedock-core-debug-bundle.txt:3349: async function joinRoomNow(
+codedock-core-debug-bundle.txt:3356:   yjsSync.setSessionRole("guest");
+codedock-core-debug-bundle.txt:3357:   yjsSync.setActiveRoomId(roomId);
+codedock-core-debug-bundle.txt:3359:   yjsSync.activate();
+codedock-core-debug-bundle.txt:3362: async function resumePendingHydratedJoin(
+codedock-core-debug-bundle.txt:3398:   yjsSync.setGuestMaterializationRoot(null);
+codedock-core-debug-bundle.txt:3403: async function clearPendingHydratedJoin(
+codedock-core-debug-bundle.txt:3421:   yjsSync?.dispose();
+codedock-core-debug-bundle.txt:3429:   SyncPayload,
+codedock-core-debug-bundle.txt:3435:   SYNC: 0x01,
+codedock-core-debug-bundle.txt:3436:   AWARENESS: 0x02,
+codedock-core-debug-bundle.txt:3437:   CHAT: 0x03,
+codedock-core-debug-bundle.txt:3438:   HYDRATION_REQUEST: 0x04,
+codedock-core-debug-bundle.txt:3439:   WORKSPACE_MANIFEST_REQUEST: 0x05,
+codedock-core-debug-bundle.txt:3440:   WORKSPACE_MANIFEST_RESPONSE: 0x06,
+codedock-core-debug-bundle.txt:3441:   FILE_BOOTSTRAP_REQUEST: 0x07,
+codedock-core-debug-bundle.txt:3442:   FILE_BOOTSTRAP_RESPONSE: 0x08,
+codedock-core-debug-bundle.txt:3447: export function encodeSyncPayload(
+codedock-core-debug-bundle.txt:3463:   buffer[offset++] = MessageType.SYNC;
+codedock-core-debug-bundle.txt:3475: export function decodeSyncPayload(buffer: Uint8Array): SyncPayload | null {
+codedock-core-debug-bundle.txt:3481:     if (buffer[0] !== MessageType.SYNC) {
+codedock-core-debug-bundle.txt:3512: export function encodeAwarenessPayload(state: object): Uint8Array {
+codedock-core-debug-bundle.txt:3518:   buffer[0] = MessageType.AWARENESS;
+codedock-core-debug-bundle.txt:3524: export function decodeAwarenessPayload<T>(buffer: Uint8Array): T | null {
+codedock-core-debug-bundle.txt:3526:     if (buffer.length < 2 || buffer[0] !== MessageType.AWARENESS) {
+codedock-core-debug-bundle.txt:3538: export function encodeChatPayload(message: object): Uint8Array {
+codedock-core-debug-bundle.txt:3544:   buffer[0] = MessageType.CHAT;
+codedock-core-debug-bundle.txt:3550: export function decodeChatPayload<T>(buffer: Uint8Array): T | null {
+codedock-core-debug-bundle.txt:3552:     if (buffer.length < 2 || buffer[0] !== MessageType.CHAT) {
+codedock-core-debug-bundle.txt:3593: export function encodeHydrationRequest(filePath: string): Uint8Array {
+codedock-core-debug-bundle.txt:3597:   result[0] = MessageType.HYDRATION_REQUEST;
+codedock-core-debug-bundle.txt:3605: export function decodeHydrationRequest(buffer: Uint8Array): string | null {
+codedock-core-debug-bundle.txt:3607:     if (buffer.length < 3 || buffer[0] !== MessageType.HYDRATION_REQUEST) {
+codedock-core-debug-bundle.txt:3686:     byte === MessageType.SYNC ||
+codedock-core-debug-bundle.txt:3687:     byte === MessageType.AWARENESS ||
+codedock-core-debug-bundle.txt:3688:     byte === MessageType.CHAT ||
+codedock-core-debug-bundle.txt:3689:     byte === MessageType.HYDRATION_REQUEST ||
+codedock-core-debug-bundle.txt:3710: export interface AwarenessState {
+codedock-core-debug-bundle.txt:3727: export interface ChatMessage {
+codedock-core-debug-bundle.txt:3735: export interface SyncPayload {
+codedock-core-debug-bundle.txt:4129: FILE: extension/src/yjs-sync.ts
+codedock-core-debug-bundle.txt:4139:   decodeHydrationRequest,
+codedock-core-debug-bundle.txt:4140:   decodeSyncPayload,
+codedock-core-debug-bundle.txt:4145:   encodeHydrationRequest,
+codedock-core-debug-bundle.txt:4146:   encodeSyncPayload,
+codedock-core-debug-bundle.txt:4154:   SyncPayload,
+codedock-core-debug-bundle.txt:4164: const GUEST_HYDRATION_WAIT_MS = 1200;
+codedock-core-debug-bundle.txt:4270: export class YjsSync {
+codedock-core-debug-bundle.txt:4277:   private hydrationTimers: Map<string, ReturnType<typeof setTimeout>> =
+codedock-core-debug-bundle.txt:4399:     for (const timer of this.hydrationTimers.values()) {
+codedock-core-debug-bundle.txt:4402:     this.hydrationTimers.clear();
+codedock-core-debug-bundle.txt:4466:       this.log(`guest waiting for remote hydration (${fileKey})`);
+codedock-core-debug-bundle.txt:4467:       this.sendHydrationRequest(fileKey);
+codedock-core-debug-bundle.txt:4468:       this.startGuestHydrationFallback(document, entry, fileKey);
+codedock-web/app/(app)/rooms/[roomId]/page.tsx:9: export default async function RoomDetailsPage({ params }: Props) {
+codedock-web/components/auth/login-form.tsx:24:   async function onSubmit(e: React.FormEvent) {
+codedock-web/components/auth/register-form.tsx:22:   async function onSubmit(e: React.FormEvent) {
+codedock-web/components/dashboard/join-code-form.tsx:16:   async function onSubmit(e: React.FormEvent) {
+codedock-web/components/rooms/create-room-form.tsx:25:   async function onSubmit(e: React.FormEvent) {
+codedock-web/components/rooms/delete-room-button.tsx:21:   async function handleDelete() {
+codedock-web/components/rooms/invite-create-form.tsx:15:   async function onSubmit(e: React.FormEvent) {
+codedock-web/hooks/use-auth.ts:31:     void (async () => {
+codedock-web/hooks/use-invites.ts:18:   const load = useCallback(async () => {
+codedock-web/hooks/use-invites.ts:42:   async function createInvite(payload: {
+codedock-web/hooks/use-invites.ts:54:   async function revokeInvite(inviteId: string) {
+codedock-web/hooks/use-join-code.ts:11:   async function resolveCode(code: string) {
+codedock-web/hooks/use-launch.ts:11:   async function openRoom() {
+codedock-web/hooks/use-room-details.ts:14:   async function load() {
+codedock-web/hooks/use-room.ts:15:     async function run() {
+codedock-web/hooks/use-rooms.ts:15:     async function run() {
+codedock-web/lib/api/client.ts:11: export async function apiRequest<T>(
+extension/CHANGELOG.md:7: - Chat support
+extension/README.md:80: - Open integrated chat
+extension/README.md:90: - synchronized collaboration state
+extension/package.json:59:         "command": "codedock.openChat",
+extension/package.json:60:         "title": "Open Chat",
+extension/src/api.ts:19:   async login(email: string, password: string): Promise<AuthResponse> {
+extension/src/api.ts:30:   async validateToken(token: string): Promise<void> {
+extension/src/api.ts:39:   async getRooms(token: string): Promise<Room[]> {
+extension/src/api.ts:48:   async createRoom(token: string, name: string): Promise<Room> {
+extension/src/api.ts:60:   async exchangeLaunchToken(rawToken: string): Promise<LaunchContext> {
+extension/src/api.ts:71:   private async request<T>(
+extension/src/auth.ts:14:   async getToken(): Promise<string | null> {
+extension/src/auth.ts:19:   private async saveToken(token: string): Promise<void> {
+extension/src/auth.ts:23:   async storeTokenSilently(token: string): Promise<void> {
+extension/src/auth.ts:27:   async deleteToken(): Promise<void> {
+extension/src/auth.ts:31:   async login(): Promise<void> {
+extension/src/auth.ts:65:   async logout(): Promise<void> {
+extension/src/auth.ts:71:   async validateToken(): Promise<boolean> {
+extension/src/auth.ts:85:   private async promptRoomAction(): Promise<void> {
+extension/src/chat.ts:1: // extension/src/chat.ts
+extension/src/chat.ts:5: import { encodeChatPayload, decodeChatPayload, MessageType } from './protocol'
+extension/src/chat.ts:6: import { ChatMessage } from './types'
+extension/src/chat.ts:8: export class ChatManager {
+extension/src/chat.ts:11:     private messages: ChatMessage[] = []
+extension/src/chat.ts:38:             'codedockChat',
+extension/src/chat.ts:39:             'CodeDock Chat',
+extension/src/chat.ts:50:         // handle messages from the webview — user sending chat
+extension/src/chat.ts:75:         const message: ChatMessage = {
+extension/src/chat.ts:83:         const payload = encodeChatPayload(message)
+extension/src/chat.ts:93:         if (data[0] !== MessageType.CHAT) {
+extension/src/chat.ts:97:         const message = decodeChatPayload<ChatMessage>(data)
+extension/src/chat.ts:110:     private appendMessage(message: ChatMessage): void {
+extension/src/chat.ts:149:     <title>CodeDock Chat</title>
+extension/src/cursor-manager.ts:4:   encodeAwarenessPayload,
+extension/src/cursor-manager.ts:5:   decodeAwarenessPayload,
+extension/src/cursor-manager.ts:9: import { AwarenessState } from "./types";
+extension/src/cursor-manager.ts:19:   // last known awareness state per remote user
+extension/src/cursor-manager.ts:20:   private states: Map<string, AwarenessState> = new Map();
+extension/src/cursor-manager.ts:45:       this.sendLocalAwareness();
+extension/src/cursor-manager.ts:78:   // --- Local Awareness ---
+extension/src/cursor-manager.ts:80:   private sendLocalAwareness(): void {
+extension/src/cursor-manager.ts:89:     const state: AwarenessState = {
+extension/src/cursor-manager.ts:102:     const payload = encodeAwarenessPayload(state);
+extension/src/cursor-manager.ts:106:   // --- Incoming Awareness ---
+extension/src/cursor-manager.ts:109:     // only handle awareness messages
+extension/src/cursor-manager.ts:110:     if (data[0] !== MessageType.AWARENESS) {
+extension/src/cursor-manager.ts:114:     const state = decodeAwarenessPayload<AwarenessState>(data);
+extension/src/cursor-manager.ts:119:     // ignore own awareness messages
+extension/src/cursor-manager.ts:134:   private renderCursor(state: AwarenessState): void {
+extension/src/extension.ts:9: import { YjsSync } from "./yjs-sync";
+extension/src/extension.ts:22: let yjsSync: YjsSync;
+extension/src/extension.ts:25: export async function activate(
+extension/src/extension.ts:35:   outputChannel.appendLine("CodeDock: DIAG BUILD LOADED (SYNC-ONLY)");
+extension/src/extension.ts:36:   vscode.window.showInformationMessage("CodeDock: DIAG BUILD LOADED (SYNC-ONLY)");
+extension/src/extension.ts:43:   yjsSync = new YjsSync(wsManager, outputChannel, context.globalState);
+extension/src/extension.ts:46:     outputChannel.appendLine("CodeDock: login event received (sync-only mode)");
+extension/src/extension.ts:53:     yjsSync.setActiveRoomId(null);
+extension/src/extension.ts:54:     yjsSync.setGuestMaterializationRoot(null);
+extension/src/extension.ts:56:     yjsSync.dispose();
+extension/src/extension.ts:72:     vscode.commands.registerCommand("codedock.openChat", () =>
+extension/src/extension.ts:74:         "CodeDock Chat is temporarily disabled in sync-only diagnostic mode.",
+extension/src/extension.ts:81:       yjsSync.setActiveRoomId(null);
+extension/src/extension.ts:82:       yjsSync.setGuestMaterializationRoot(null);
+extension/src/extension.ts:84:       yjsSync.dispose();
+extension/src/extension.ts:90:       async handleUri(uri: vscode.Uri): Promise<void> {
+extension/src/extension.ts:100: async function restoreSession(): Promise<void> {
+extension/src/extension.ts:129: async function handleLaunchUri(
+extension/src/extension.ts:190: async function resumePendingLaunch(
+extension/src/extension.ts:225:   yjsSync.setGuestMaterializationRoot(null);
+extension/src/extension.ts:226:   yjsSync.setActiveRoomId(pending.room_id);
+extension/src/extension.ts:227:   yjsSync.setSessionRole(pending.role === "host" ? "host" : "guest");
+extension/src/extension.ts:230:   yjsSync.activate();
+extension/src/extension.ts:239: async function ensureManagedWorkspace(
+extension/src/extension.ts:264: async function handleJoinRoom(
+extension/src/extension.ts:312:     yjsSync.setGuestMaterializationRoot(destinationRoot);
+extension/src/extension.ts:314:     yjsSync.setGuestMaterializationRoot(null);
+extension/src/extension.ts:321: async function handleCreateRoom(
+extension/src/extension.ts:366:     yjsSync.setSessionRole("host");
+extension/src/extension.ts:367:     yjsSync.setActiveRoomId(room.id);
+extension/src/extension.ts:368:     yjsSync.setGuestMaterializationRoot(null);
+extension/src/extension.ts:370:     yjsSync.activate();
+extension/src/extension.ts:380: async function joinRoomNow(
+extension/src/extension.ts:387:   yjsSync.setSessionRole("guest");
+extension/src/extension.ts:388:   yjsSync.setActiveRoomId(roomId);
+extension/src/extension.ts:390:   yjsSync.activate();
+extension/src/extension.ts:393: async function clearPendingHydratedJoin(
+extension/src/extension.ts:400: async function clearPendingLaunch(
+extension/src/extension.ts:417:   yjsSync?.dispose();
+extension/src/protocol.ts:4:   SyncPayload,
+extension/src/protocol.ts:10:   SYNC: 0x01,
+extension/src/protocol.ts:11:   AWARENESS: 0x02,
+extension/src/protocol.ts:12:   CHAT: 0x03,
+extension/src/protocol.ts:13:   HYDRATION_REQUEST: 0x04,
+extension/src/protocol.ts:14:   WORKSPACE_MANIFEST_REQUEST: 0x05,
+extension/src/protocol.ts:15:   WORKSPACE_MANIFEST_RESPONSE: 0x06,
+extension/src/protocol.ts:16:   FILE_BOOTSTRAP_REQUEST: 0x07,
+extension/src/protocol.ts:17:   FILE_BOOTSTRAP_RESPONSE: 0x08,
+extension/src/protocol.ts:22: export function encodeSyncPayload(
+extension/src/protocol.ts:38:   buffer[offset++] = MessageType.SYNC;
+extension/src/protocol.ts:50: export function decodeSyncPayload(buffer: Uint8Array): SyncPayload | null {
+extension/src/protocol.ts:56:     if (buffer[0] !== MessageType.SYNC) {
+extension/src/protocol.ts:87: export function encodeAwarenessPayload(state: object): Uint8Array {
+extension/src/protocol.ts:93:   buffer[0] = MessageType.AWARENESS;
+extension/src/protocol.ts:99: export function decodeAwarenessPayload<T>(buffer: Uint8Array): T | null {
+extension/src/protocol.ts:101:     if (buffer.length < 2 || buffer[0] !== MessageType.AWARENESS) {
+extension/src/protocol.ts:113: export function encodeChatPayload(message: object): Uint8Array {
+extension/src/protocol.ts:119:   buffer[0] = MessageType.CHAT;
+extension/src/protocol.ts:125: export function decodeChatPayload<T>(buffer: Uint8Array): T | null {
+extension/src/protocol.ts:127:     if (buffer.length < 2 || buffer[0] !== MessageType.CHAT) {
+extension/src/protocol.ts:168: export function encodeHydrationRequest(filePath: string): Uint8Array {
+extension/src/protocol.ts:172:   result[0] = MessageType.HYDRATION_REQUEST;
+extension/src/protocol.ts:180: export function decodeHydrationRequest(buffer: Uint8Array): string | null {
+extension/src/protocol.ts:182:     if (buffer.length < 3 || buffer[0] !== MessageType.HYDRATION_REQUEST) {
+extension/src/protocol.ts:261:     byte === MessageType.SYNC ||
+extension/src/protocol.ts:262:     byte === MessageType.AWARENESS ||
+extension/src/protocol.ts:263:     byte === MessageType.CHAT ||
+extension/src/protocol.ts:264:     byte === MessageType.HYDRATION_REQUEST ||
+extension/src/types.ts:12: export interface AwarenessState {
+extension/src/types.ts:29: export interface ChatMessage {
+extension/src/types.ts:37: export interface SyncPayload {
+extension/src/yjs-sync.ts:9:   decodeHydrationRequest,
+extension/src/yjs-sync.ts:10:   decodeSyncPayload,
+extension/src/yjs-sync.ts:15:   encodeHydrationRequest,
+extension/src/yjs-sync.ts:16:   encodeSyncPayload,
+extension/src/yjs-sync.ts:24:   SyncPayload,
+extension/src/yjs-sync.ts:34: const GUEST_HYDRATION_WAIT_MS = 1200;
+extension/src/yjs-sync.ts:140: export class YjsSync {
+extension/src/yjs-sync.ts:147:   private hydrationTimers: Map<string, ReturnType<typeof setTimeout>> =
+extension/src/yjs-sync.ts:269:     for (const timer of this.hydrationTimers.values()) {
+extension/src/yjs-sync.ts:272:     this.hydrationTimers.clear();
+extension/src/yjs-sync.ts:336:       this.log(`guest waiting for remote hydration (${fileKey})`);
+extension/src/yjs-sync.ts:337:       this.sendHydrationRequest(fileKey);
+extension/src/yjs-sync.ts:338:       this.startGuestHydrationFallback(document, entry, fileKey);
+extension/src/yjs-sync.ts:417:     this.log(`requesting workspace manifest (payloadBytes=${payload.length})`);
+extension/src/yjs-sync.ts:440:         this.log("workspace manifest retry limit reached");
+extension/src/yjs-sync.ts:445:         `workspace manifest retry (${this.workspaceManifestRetryCount}/${MAX_MANIFEST_RETRIES})`,
+extension/src/yjs-sync.ts:452:   private startGuestHydrationFallback(
+extension/src/yjs-sync.ts:457:     if (this.hydrationTimers.has(fileKey)) {
+extension/src/yjs-sync.ts:462:       this.hydrationTimers.delete(fileKey);
+extension/src/yjs-sync.ts:471:           `guest hydration fallback skipped: local file empty (${fileKey})`,
+extension/src/yjs-sync.ts:480:         "guest hydration timeout fallback",
+extension/src/yjs-sync.ts:483:     }, GUEST_HYDRATION_WAIT_MS);
+extension/src/yjs-sync.ts:485:     this.hydrationTimers.set(fileKey, timer);
+extension/src/yjs-sync.ts:488:   private clearHydrationTimer(fileKey: string): void {
+extension/src/yjs-sync.ts:489:     const timer = this.hydrationTimers.get(fileKey);
+extension/src/yjs-sync.ts:495:     this.hydrationTimers.delete(fileKey);
+extension/src/yjs-sync.ts:578:         this.log("Y.Doc update ignored: sync inactive");
+extension/src/yjs-sync.ts:642:   private async flushOutboundUpdates(fileKey: string): Promise<void> {
+extension/src/yjs-sync.ts:681:     const payload = encodeSyncPayload(fileKey, updateToSend);
+extension/src/yjs-sync.ts:684:       `outbound sync send (${fileKey}, mode=${mode}, mergedUpdates=${pendingUpdates.length}, updateBytes=${updateToSend.length}, payloadBytes=${payload.length})`,
+extension/src/yjs-sync.ts:695:       case MessageType.HYDRATION_REQUEST:
+extension/src/yjs-sync.ts:696:         this.handleHydrationRequest(data);
+extension/src/yjs-sync.ts:715:       case MessageType.SYNC:
+extension/src/yjs-sync.ts:723:     const payload = decodeSyncPayload(data);
+extension/src/yjs-sync.ts:725:       this.log("inbound frame ignored: decodeSyncPayload returned null");
+extension/src/yjs-sync.ts:730:       `inbound sync decoded (${payload.filePath}, updateBytes=${payload.update.length})`,
+extension/src/yjs-sync.ts:736:   private handleHydrationRequest(data: Uint8Array): void {
+extension/src/yjs-sync.ts:737:     const fileKey = decodeHydrationRequest(data);
+extension/src/yjs-sync.ts:739:       this.log("hydration request ignored: invalid payload");
+extension/src/yjs-sync.ts:744:       this.log(`hydration request ignored: not host (${fileKey})`);
+extension/src/yjs-sync.ts:750:       this.log(`hydration request ignored: no doc entry (${fileKey})`);
+extension/src/yjs-sync.ts:755:     const payload = encodeSyncPayload(fileKey, fullState);
+extension/src/yjs-sync.ts:758:       `responding to hydration request (${fileKey}, updateBytes=${fullState.length}, payloadBytes=${payload.length})`,
+extension/src/yjs-sync.ts:764:   private sendHydrationRequest(fileKey: string): void {
+extension/src/yjs-sync.ts:765:     const payload = encodeHydrationRequest(fileKey);
+extension/src/yjs-sync.ts:768:       `sending hydration request (${fileKey}, payloadBytes=${payload.length})`,
+extension/src/yjs-sync.ts:774:   private async handleWorkspaceManifestRequest(data: Uint8Array): Promise<void> {
+extension/src/yjs-sync.ts:777:       this.log("workspace manifest request ignored: invalid payload");
+extension/src/yjs-sync.ts:782:       this.log("workspace manifest request ignored: not host");
+extension/src/yjs-sync.ts:788:       this.log("workspace manifest response skipped: no workspace root");
+extension/src/yjs-sync.ts:795:       `responding to workspace manifest request (requestedAt=${request.requestedAt}, entries=${manifest.entries.length}, payloadBytes=${payload.length})`,
+extension/src/yjs-sync.ts:801:   private async handleWorkspaceManifestResponse(
+extension/src/yjs-sync.ts:806:       this.log("workspace manifest response ignored: invalid payload");
+extension/src/yjs-sync.ts:811:       this.log("workspace manifest response ignored: not guest");
+extension/src/yjs-sync.ts:822:       `received workspace manifest (root=${manifest.rootName}, entries=${manifest.entries.length})`,
+extension/src/yjs-sync.ts:829:   private async handleFileBootstrapRequest(data: Uint8Array): Promise<void> {
+extension/src/yjs-sync.ts:832:       this.log("file bootstrap request ignored: invalid payload");
+extension/src/yjs-sync.ts:837:       this.log(`file bootstrap request ignored: not host (${request.path})`);
+extension/src/yjs-sync.ts:843:       this.log("file bootstrap request ignored: no workspace root");
+extension/src/yjs-sync.ts:849:       this.log(`file bootstrap request ignored: invalid path (${request.path})`);
+extension/src/yjs-sync.ts:858:           `file bootstrap skipped: file too large (${request.path}, bytes=${bytes.length})`,
+extension/src/yjs-sync.ts:864:         this.log(`file bootstrap skipped: non-text file (${request.path})`);
+extension/src/yjs-sync.ts:876:         `responding to file bootstrap request (${request.path}, payloadBytes=${payload.length})`,
+extension/src/yjs-sync.ts:882:         `file bootstrap request failed (${request.path}): ${this.describeError(error)}`,
+extension/src/yjs-sync.ts:887:   private async handleFileBootstrapResponse(data: Uint8Array): Promise<void> {
+extension/src/yjs-sync.ts:890:       this.log("file bootstrap response ignored: invalid payload");
+extension/src/yjs-sync.ts:902:       this.log("file bootstrap response ignored: no materialization root");
+extension/src/yjs-sync.ts:909:         `file bootstrap response skipped: file currently bound (${response.path})`,
+extension/src/yjs-sync.ts:917:       this.log(`file bootstrap response ignored: invalid path (${response.path})`);
+extension/src/yjs-sync.ts:931:           `file bootstrap response skipped: local file has conflicting content (${response.path})`,
+extension/src/yjs-sync.ts:941:           `file bootstrap response applied (${response.path}, chars=${response.content.length})`,
+extension/src/yjs-sync.ts:946:         `file bootstrap response failed (${response.path}): ${this.describeError(error)}`,
+extension/src/yjs-sync.ts:953:   private async maybeOfferOpenHydratedProject(): Promise<void> {
+extension/src/yjs-sync.ts:1007:   private async buildWorkspaceManifest(): Promise<WorkspaceManifest | null> {
+extension/src/yjs-sync.ts:1025:   private async walkWorkspace(
+extension/src/yjs-sync.ts:1070:   private async materializeWorkspaceManifest(
+extension/src/yjs-sync.ts:1075:       this.log("workspace manifest materialization skipped: no materialization root");
+extension/src/yjs-sync.ts:1117:       `workspace manifest materialized (dirs=${dirs.length}, files=${files.length})`,
+extension/src/yjs-sync.ts:1132:       `requesting file bootstrap (${filePath}, payloadBytes=${payload.length})`,
+extension/src/yjs-sync.ts:1213:   private async fileExists(uri: vscode.Uri): Promise<boolean> {
+extension/src/yjs-sync.ts:1222:   private async ensureParentDirectory(fileUri: vscode.Uri): Promise<void> {
+extension/src/yjs-sync.ts:1227:   private async readFileTextIfExists(uri: vscode.Uri): Promise<string | null> {
+extension/src/yjs-sync.ts:1236:   private async applyRemoteUpdate(payload: SyncPayload): Promise<void> {
+extension/src/yjs-sync.ts:1243:     this.clearHydrationTimer(fileKey);
+extension/src/yjs-sync.ts:1280:   private async reconcileFile(fileKey: string): Promise<void> {
+extension/src/yjs-sync.ts:1386:     this.outputChannel.appendLine(`CodeDock[sync]: ${message}`);
+hydration-debug-bundle.txt:9: import { YjsSync } from "./yjs-sync";
+hydration-debug-bundle.txt:13: let yjsSync: YjsSync;
+hydration-debug-bundle.txt:16: export async function activate(
+hydration-debug-bundle.txt:26:   outputChannel.appendLine("CodeDock: DIAG BUILD LOADED (SYNC-ONLY)");
+hydration-debug-bundle.txt:27:   vscode.window.showInformationMessage("CodeDock: DIAG BUILD LOADED (SYNC-ONLY)");
+hydration-debug-bundle.txt:34:   yjsSync = new YjsSync(wsManager, outputChannel);
+hydration-debug-bundle.txt:37:     outputChannel.appendLine("CodeDock: login event received (sync-only mode)");
+hydration-debug-bundle.txt:43:     yjsSync.dispose();
+hydration-debug-bundle.txt:59:     vscode.commands.registerCommand("codedock.openChat", () =>
+hydration-debug-bundle.txt:61:         "CodeDock Chat is temporarily disabled in sync-only diagnostic mode.",
+hydration-debug-bundle.txt:67:       yjsSync.dispose();
+hydration-debug-bundle.txt:93: async function restoreSession(): Promise<void> {
+hydration-debug-bundle.txt:122: async function handleJoinRoom(
+hydration-debug-bundle.txt:149:   yjsSync.setSessionRole("guest");
+hydration-debug-bundle.txt:151:   yjsSync.activate();
+hydration-debug-bundle.txt:154: async function handleCreateRoom(
+hydration-debug-bundle.txt:186:     yjsSync.setSessionRole("host");
+hydration-debug-bundle.txt:188:     yjsSync.activate();
+hydration-debug-bundle.txt:200:   yjsSync?.dispose();
+hydration-debug-bundle.txt:203: FILE: extension/src/yjs-sync.ts
+hydration-debug-bundle.txt:209: import { encodeSyncPayload, decodeSyncPayload } from "./protocol";
+hydration-debug-bundle.txt:210: import { SyncPayload } from "./types";
+hydration-debug-bundle.txt:214: const GUEST_HYDRATION_WAIT_MS = 1200;
+hydration-debug-bundle.txt:243: export class YjsSync {
+hydration-debug-bundle.txt:250:   private hydrationTimers: Map<string, ReturnType<typeof setTimeout>> =
+hydration-debug-bundle.txt:344:     for (const timer of this.hydrationTimers.values()) {
+hydration-debug-bundle.txt:347:     this.hydrationTimers.clear();
+hydration-debug-bundle.txt:399:       this.log(`guest waiting for remote hydration (${fileKey})`);
+hydration-debug-bundle.txt:400:       this.startGuestHydrationFallback(document, entry, fileKey);
+hydration-debug-bundle.txt:476:   private startGuestHydrationFallback(
+hydration-debug-bundle.txt:481:     if (this.hydrationTimers.has(fileKey)) {
+hydration-debug-bundle.txt:486:       this.hydrationTimers.delete(fileKey);
+hydration-debug-bundle.txt:495:           `guest hydration fallback skipped: local file empty (${fileKey})`,
+hydration-debug-bundle.txt:504:         "guest hydration timeout fallback",
+hydration-debug-bundle.txt:507:     }, GUEST_HYDRATION_WAIT_MS);
+hydration-debug-bundle.txt:509:     this.hydrationTimers.set(fileKey, timer);
+hydration-debug-bundle.txt:512:   private clearHydrationTimer(fileKey: string): void {
+hydration-debug-bundle.txt:513:     const timer = this.hydrationTimers.get(fileKey);
+hydration-debug-bundle.txt:519:     this.hydrationTimers.delete(fileKey);
+hydration-debug-bundle.txt:584:         this.log("Y.Doc update ignored: sync inactive");
+internal/hub/hub.go:4: 	"sync"
+internal/hub/hub.go:30: 	mu        sync.RWMutex
+internal/hub/hub.go:33: 	countsMu  sync.Mutex
+internal/hub/hub.go:119: 	case MessageTypeSync:
+internal/hub/hub.go:120: 		h.Broadcast(msg.Sender, msg.Sender.RoomID, append([]byte{MessageTypeSync}, msg.Payload...))
+internal/hub/hub.go:123: 	case MessageTypeAwareness:
+internal/hub/hub.go:124: 		h.BroadcastAll(msg.Sender.RoomID, append([]byte{MessageTypeAwareness}, msg.Payload...))
+internal/hub/hub.go:126: 	case MessageTypeChat:
+internal/hub/hub.go:127: 		h.Broadcast(msg.Sender, msg.Sender.RoomID, append([]byte{MessageTypeChat}, msg.Payload...))
+internal/hub/hub.go:129: 	case MessageTypeHydrationRequest:
+internal/hub/hub.go:130: 		h.Broadcast(msg.Sender, msg.Sender.RoomID, append([]byte{MessageTypeHydrationRequest}, msg.Payload...))
+internal/hub/hub_test.go:238: func TestRoute_SyncBroadcastsWithTypePrefixAndTracksSnapshots(t *testing.T) {
+internal/hub/hub_test.go:252: 			Type:    MessageTypeSync,
+internal/hub/hub_test.go:258: 		expected := append([]byte{MessageTypeSync}, payload...)
+internal/hub/hub_test.go:271: 		Type:    MessageTypeSync,
+internal/hub/hub_test.go:277: 	expected := append([]byte{MessageTypeSync}, payload...)
+internal/hub/hub_test.go:294: func TestRoute_AwarenessBroadcastsToAllIncludingSender(t *testing.T) {
+internal/hub/hub_test.go:303: 	payload := []byte("awareness")
+internal/hub/hub_test.go:305: 		Type:    MessageTypeAwareness,
+internal/hub/hub_test.go:310: 	expected := append([]byte{MessageTypeAwareness}, payload...)
+internal/hub/hub_test.go:335: 		{name: MessageTypeChat},
+internal/hub/hub_test.go:336: 		{name: MessageTypeHydrationRequest},
+internal/hub/hub_test.go:392: 		[]byte{0x00, 0x05, 'a'},
+internal/hub/hub_test.go:393: 		[]byte{0x00, 0x01, 'a'},
+internal/hub/hub_test.go:399: 				Type:    MessageTypeSync,
+internal/hub/hub_test.go:422: 			Type:    MessageTypeSync,
+internal/hub/hub_test.go:435: 			Type:    MessageTypeSync,
+internal/hub/hub_test.go:448: 		Type:    MessageTypeSync,
+internal/hub/message.go:6: 	MessageTypeSync                 byte = 0x01 // CRDT document update from Yjs
+internal/hub/message.go:7: 	MessageTypeAwareness            byte = 0x02 // cursor position and presence
+internal/hub/message.go:8: 	MessageTypeChat                 byte = 0x03 // chat message
+internal/hub/message.go:9: 	MessageTypeHydrationRequest     byte = 0x04 // guest asks host for current file state
+internal/hub/message.go:10: 	MessageTypeWorkspaceManifestReq byte = 0x05 // guest asks host for workspace tree
+internal/hub/message.go:11: 	MessageTypeWorkspaceManifestRes byte = 0x06 // host returns workspace tree
+internal/hub/message.go:12: 	MessageTypeFileBootstrapReq     byte = 0x07 // guest asks host for file contents
+internal/hub/message.go:13: 	MessageTypeFileBootstrapRes     byte = 0x08 // host returns file contents
+internal/services/room_service_test.go:8: 	"sync"
+internal/services/room_service_test.go:15: var loadEnvOnce sync.Once
+scripts/collect_codedock_full_snapshot.sh:198:     "sync_and_protocol": re.compile(
+scripts/collect_codedock_full_snapshot.sh:199:         r"0x0[1-8]|workspace manifest|file bootstrap|hydration|awareness|sync|chat",
+scripts/collect_codedock_full_snapshot.sh:389:             "- sync_and_protocol",
+scripts/collect_codedock_full_snapshot.sh:429: - workspace manifest / bootstrap / hydration lines
+scripts/collect_codedock_full_snapshot.sh:469: Upload one of these back to ChatGPT:
+scripts/export-hydration-files.sh:5: OUTPUT_FILE="${2:-$PROJECT_ROOT/hydration-debug-bundle.txt}"
+scripts/export-hydration-files.sh:9:   "extension/src/yjs-sync.ts"
+scripts/export-hydration-files.sh:19:   echo "CodeDock Hydration Debug Bundle"
+scripts/export-workspace-phase-files.sh:11:   "extension/src/yjs-sync.ts"
+scripts/scaffold-codedock-web.sh:327: export default async function RoomDetailsPage({ params }: Props) {
+scripts/scaffold-codedock-web.sh:532:   async function onSubmit(e: React.FormEvent) {
+scripts/scaffold-codedock-web.sh:588:   async function onSubmit(e: React.FormEvent) {
+scripts/scaffold-codedock-web.sh:707:   async function onSubmit(e: React.FormEvent) {
+scripts/scaffold-codedock-web.sh:765:   async function onSubmit(e: React.FormEvent) {
+scripts/scaffold-codedock-web.sh:883:   async function onSubmit(e: React.FormEvent) {
+scripts/scaffold-codedock-web.sh:1049:     async function run() {
+scripts/scaffold-codedock-web.sh:1089:     async function run() {
+scripts/scaffold-codedock-web.sh:1125:   async function resolveCode(code: string) {
+scripts/scaffold-codedock-web.sh:1156:   const load = useCallback(async () => {
+scripts/scaffold-codedock-web.sh:1178:   async function createInvite(payload: {
+scripts/scaffold-codedock-web.sh:1190:   async function revokeInvite(inviteId: string) {
+scripts/scaffold-codedock-web.sh:1214:   async function openRoom() {
+scripts/scaffold-codedock-web.sh:1316: export async function apiRequest<T>(

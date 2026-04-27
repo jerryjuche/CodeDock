@@ -34,14 +34,17 @@ func main() {
 
 	authHandler := &handlers.AuthHandler{DB: db}
 
-	roomService := &services.RoomService{DB: db}
-	roomHandler := &handlers.RoomHandler{Services: roomService}
-
 	inviteService := &services.InviteService{DB: db}
 	inviteHandler := &handlers.InviteHandler{Service: inviteService}
 
 	launchService := &services.LaunchService{DB: db}
 	launchHandler := &handlers.LaunchHandler{Service: launchService}
+
+	roomService := &services.RoomService{DB: db}
+	roomHandler := &handlers.RoomHandler{
+		Services: roomService,
+		Hub:      h,
+	}
 
 	mux := http.NewServeMux()
 
@@ -57,6 +60,10 @@ func main() {
 	mux.Handle("POST /rooms", auth.RequireAuth(http.HandlerFunc(roomHandler.CreateRoom)))
 	mux.Handle("GET /rooms", auth.RequireAuth(http.HandlerFunc(roomHandler.GetUserRooms)))
 	mux.Handle("GET /rooms/{id}", auth.RequireAuth(http.HandlerFunc(roomHandler.GetRoom)))
+	mux.Handle("GET /rooms/{id}/details", auth.RequireAuth(http.HandlerFunc(roomHandler.GetRoomDetails)))
+	mux.Handle("GET /rooms/{id}/presence", auth.RequireAuth(http.HandlerFunc(roomHandler.GetRoomPresence)))
+	mux.Handle("POST /rooms/{id}/source/local/bind", auth.RequireAuth(http.HandlerFunc(roomHandler.BindLocalWorkspace)))
+	mux.Handle("DELETE /rooms/{id}", auth.RequireAuth(http.HandlerFunc(roomHandler.DeleteRoom)))
 
 	// New web control-plane routes
 	mux.Handle("POST /join-code/resolve", auth.RequireAuth(http.HandlerFunc(inviteHandler.ResolveJoinCode)))
@@ -68,7 +75,7 @@ func main() {
 	mux.HandleFunc("POST /vscode/launch/exchange", launchHandler.ExchangeLaunchToken)
 
 	// WebSocket route
-	mux.HandleFunc("GET /ws", handlers.ServeWS(h))
+	mux.HandleFunc("/ws", handlers.ServeWS(h, roomService))
 
 	port := os.Getenv("PORT")
 	if port == "" {

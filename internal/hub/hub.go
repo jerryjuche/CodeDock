@@ -1,7 +1,9 @@
 package hub
 
 import (
+	"log"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -18,8 +20,6 @@ type snapshotKey struct {
 
 const snapshotThreshold = 50
 
-// Client represents a single connected developer.
-// Each client belongs to one room and has a dedicated send channel.
 type Client struct {
 	Conn   *websocket.Conn
 	Send   chan []byte
@@ -27,8 +27,6 @@ type Client struct {
 	UserID string
 }
 
-// Hub is the central registry of all connected clients, organised by room.
-// It is the only place where broadcast decisions are made.
 type Hub struct {
 	rooms     map[string]map[*Client]bool
 	mu        sync.RWMutex
@@ -37,7 +35,6 @@ type Hub struct {
 	countsMu  sync.Mutex
 }
 
-// New creates and returns an empty Hub.
 func New(store SnapshotStore) *Hub {
 	return &Hub{
 		rooms:     make(map[string]map[*Client]bool),
@@ -46,7 +43,6 @@ func New(store SnapshotStore) *Hub {
 	}
 }
 
-// Register adds a client to its room.
 func (h *Hub) Register(client *Client) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -57,7 +53,6 @@ func (h *Hub) Register(client *Client) {
 	h.rooms[client.RoomID][client] = true
 }
 
-// Unregister removes a client from its room and closes its send channel.
 func (h *Hub) Unregister(client *Client) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -77,7 +72,6 @@ func (h *Hub) Unregister(client *Client) {
 	}
 }
 
-// Broadcast sends a message to all clients in a room except the sending connection.
 func (h *Hub) Broadcast(sender *Client, roomID string, message []byte) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -90,13 +84,38 @@ func (h *Hub) Broadcast(sender *Client, roomID string, message []byte) {
 		select {
 		case client.Send <- message:
 		default:
-			// Client's send buffer is full — they are too slow or disconnected.
-			// Drop rather than block the room.
 		}
 	}
 }
 
-// Route inspects the message type and dispatches accordingly.
+func (h *Hub) BroadcastAll(roomID string, message []byte) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	for client := range h.rooms[roomID] {
+		select {
+		case client.Send <- message:
+		default:
+		}
+	}
+}
+
+func (h *Hub) ConnectedUserIDs(roomID string) map[string]bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	connected := make(map[string]bool)
+
+	for client := range h.rooms[roomID] {
+		if client.UserID == "" {
+			continue
+		}
+		connected[client.UserID] = true
+	}
+
+	return connected
+}
+
 func (h *Hub) Route(msg Message) {
 	switch msg.Type {
 	case MessageTypeSync:
@@ -161,15 +180,55 @@ func (h *Hub) trackAndSnapshot(msg Message) {
 	}
 }
 
-// BroadcastAll sends a message to every client in a room including the sender.
-func (h *Hub) BroadcastAll(roomID string, message []byte) {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
+func (h *Hub) CloseRoom(roomID string, closeCode int, reason string) {
+	h.mu.Lock()
 
-	for client := range h.rooms[roomID] {
+	room, ok := h.rooms[roomID]
+	if !ok || len(room) == 0 {
+		h.mu.Unlock()
+		return
+	}
+
+	clients := make([]*Client, 0, len(room))
+	for client := range room {
+		clients = append(clients, client)
+	}
+
+	delete(h.rooms, roomID)
+	h.mu.Unlock()
+
+	closeMessage := websocket.FormatCloseMessage(closeCode, reason)
+
+	for _, client := range clients {
+		_ = client.Conn.WriteControl(
+			websocket.CloseMessage,
+			closeMessage,
+			time.Now().Add(writeWait),
+		)
+
 		select {
-		case client.Send <- message:
+		case <-time.After(50 * time.Millisecond):
 		default:
 		}
+
+		_ = client.Conn.Close()
+
+		select {
+		case <-client.Send:
+		default:
+		}
+
+		safelyCloseSend(client)
+		log.Printf("codedock: CloseRoom closing client room_id=%s user_id=%s", client.RoomID, client.UserID)
 	}
+
+	log.Printf("codedock: CloseRoom start room_id=%s", roomID)
+	log.Printf("codedock: CloseRoom clients=%d room_id=%s", len(clients), roomID)
+}
+
+func safelyCloseSend(client *Client) {
+	defer func() {
+		_ = recover()
+	}()
+	close(client.Send)
 }

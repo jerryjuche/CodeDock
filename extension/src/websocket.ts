@@ -7,6 +7,15 @@ export type ConnectionState =
   | "reconnecting";
 
 type MessageHandler = (data: Uint8Array) => void;
+type CloseHandler = (code: number, reason: string) => void;
+private closeHandlers: Set<CloseHandler> = new Set();
+
+onClose(handler: CloseHandler): vscode.Disposable {
+  this.closeHandlers.add(handler);
+  return new vscode.Disposable(() => {
+    this.closeHandlers.delete(handler);
+  });
+}
 
 const MAX_BACKOFF_MS = 30_000;
 const BASE_BACKOFF_MS = 1_000;
@@ -22,6 +31,7 @@ export class WebSocketManager {
   private roomId: string | null = null;
 
   private messageHandlers: Set<MessageHandler> = new Set();
+  private closeHandlers: Set<CloseHandler> = new Set();
 
   constructor(
     private readonly serverUrl: string,
@@ -42,6 +52,20 @@ export class WebSocketManager {
     });
   }
 
+  onClose(handler: CloseHandler): vscode.Disposable {
+    this.closeHandlers.add(handler);
+    this.outputChannel.appendLine(
+      `CodeDock[ws]: registered close handler (total=${this.closeHandlers.size})`,
+    );
+
+    return new vscode.Disposable(() => {
+      this.closeHandlers.delete(handler);
+      this.outputChannel.appendLine(
+        `CodeDock[ws]: removed close handler (total=${this.closeHandlers.size})`,
+      );
+    });
+  }
+
   connect(token: string, roomId: string): void {
     if (!token || !roomId) {
       vscode.window.showErrorMessage(
@@ -57,15 +81,18 @@ export class WebSocketManager {
       return;
     }
 
+    if (this.reconnectTimer !== undefined) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+
     this.token = token;
     this.roomId = roomId;
     this.manualDisconnect = false;
-    this.state = "connecting";
+    this.state = this.attemptCount > 0 ? "reconnecting" : "connecting";
 
     const wsUrl =
-      this.serverUrl
-        .replace("https://", "wss://")
-        .replace("http://", "ws://") +
+      this.serverUrl.replace("https://", "wss://").replace("http://", "ws://") +
       `/ws?token=${encodeURIComponent(token)}&room_id=${encodeURIComponent(roomId)}`;
 
     this.outputChannel.appendLine(
@@ -94,9 +121,16 @@ export class WebSocketManager {
       `CodeDock[ws]: disconnect requested (reason=${reason}, room=${this.roomId ?? "none"})`,
     );
 
-    this.socket?.close();
-    this.socket = null;
+    if (this.socket) {
+      this.socket.close();
+      this.socket = null;
+    }
+
     this.state = "disconnected";
+    this.queue = [];
+    this.token = null;
+    this.roomId = null;
+    this.attemptCount = 0;
   }
 
   send(message: Uint8Array): void {
@@ -126,10 +160,18 @@ export class WebSocketManager {
 
     this.outputChannel.appendLine("CodeDock[ws]: dispose");
 
-    this.socket?.close();
-    this.socket = null;
+    if (this.socket) {
+      this.socket.close();
+      this.socket = null;
+    }
+
     this.state = "disconnected";
+    this.queue = [];
+    this.token = null;
+    this.roomId = null;
+    this.attemptCount = 0;
     this.messageHandlers.clear();
+    this.closeHandlers.clear();
   }
 
   getConnectionState(): ConnectionState {
@@ -145,6 +187,11 @@ export class WebSocketManager {
     this.attemptCount = 0;
     this.manualDisconnect = false;
 
+    if (this.reconnectTimer !== undefined) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+
     this.outputChannel.appendLine(
       `CodeDock[ws]: connected (room=${this.roomId ?? "none"})`,
     );
@@ -156,12 +203,53 @@ export class WebSocketManager {
   private handleClose(code: number, reason: string): void {
     this.socket = null;
 
+    if (this.reconnectTimer !== undefined) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+
+    const normalizedReason = reason || "none";
+
     this.outputChannel.appendLine(
-      `CodeDock[ws]: closed (code=${code}, reason=${reason || "none"}, manual=${this.manualDisconnect})`,
+      `CodeDock[ws]: closed (code=${code}, reason=${normalizedReason}, manual=${this.manualDisconnect})`,
     );
 
-    if (this.manualDisconnect) {
+    for (const handler of this.closeHandlers) {
+      try {
+        handler(code, reason);
+      } catch (error) {
+        this.outputChannel.appendLine(
+          `CodeDock[ws]: close handler failure -> ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
+      }
+    }
+
+    const terminal = this.isTerminalClose(code, reason);
+
+    if (this.manualDisconnect || terminal) {
       this.state = "disconnected";
+      this.manualDisconnect = true;
+      this.queue = [];
+      this.token = null;
+      this.roomId = null;
+      this.attemptCount = 0;
+
+      if (reason === "room_deleted" || code === 4004) {
+        vscode.window.showWarningMessage(
+          "CodeDock: This session has ended because the room was deleted.",
+        );
+      } else if (
+        reason === "forbidden" ||
+        reason === "room_unavailable" ||
+        code === 4003
+      ) {
+        vscode.window.showWarningMessage(
+          "CodeDock: This room is no longer available.",
+        );
+      }
+
       return;
     }
 
@@ -211,6 +299,7 @@ export class WebSocketManager {
       this.outputChannel.appendLine(
         "CodeDock[ws]: reconnect aborted (missing token or room)",
       );
+      this.state = "disconnected";
       return;
     }
 
@@ -223,13 +312,14 @@ export class WebSocketManager {
       MAX_BACKOFF_MS,
     );
 
-    const delay = base + Math.random() * base;
+    const delay = Math.round(base + Math.random() * base);
 
     this.outputChannel.appendLine(
-      `CodeDock[ws]: reconnect in ${Math.round(delay)}ms (attempt=${this.attemptCount + 1})`,
+      `CodeDock[ws]: reconnect in ${delay}ms (attempt=${this.attemptCount + 1})`,
     );
 
     this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = undefined;
       this.attemptCount++;
       this.connect(this.token!, this.roomId!);
     }, delay);
@@ -251,5 +341,15 @@ export class WebSocketManager {
     for (const message of pending) {
       this.send(message);
     }
+  }
+
+  private isTerminalClose(code: number, reason: string): boolean {
+    return (
+      code === 4003 ||
+      code === 4004 ||
+      reason === "forbidden" ||
+      reason === "room_deleted" ||
+      reason === "room_unavailable"
+    );
   }
 }

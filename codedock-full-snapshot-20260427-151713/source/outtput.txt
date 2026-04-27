@@ -1,0 +1,9 @@
+  Compiling arcium-macros v0.9.7
+   Compiling arcium-client v0.9.7
+   Compiling spl-associated-token-account v7.0.0
+   Compiling anchor-spl v0.32.1
+   Compiling arcium-anchor v0.9.7
+   Compiling private_connect_arcium v0.1.0 (/home/gamp/Desktop/private_connect_arcium/programs/private_connect_arcium)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3m 11s
+     Running unittests src/lib.rs (/home/gamp/Desktop/private_connect_arcium/target/debug/deps/private_connect_arcium-36d28f6f876fa594)
+gamp@CL2-T1-S03:~/Desktop/private_connect_arcium$ 

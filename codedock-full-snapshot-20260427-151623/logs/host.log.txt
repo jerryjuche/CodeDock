@@ -1,0 +1,9 @@
+Paste the host log here from one focused run.
+
+Include:
+- startup / activation
+- websocket connect/join
+- room creation/join lines
+- readiness / details / presence calls if relevant
+- workspace manifest / bootstrap / hydration lines
+- final failure or incorrect behavior

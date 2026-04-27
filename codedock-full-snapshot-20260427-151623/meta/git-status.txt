@@ -1,0 +1,15 @@
+ M codedock-web/app/(app)/rooms/[roomId]/page.tsx
+ M codedock-web/components/rooms/room-header.tsx
+ M codedock-web/lib/api/rooms.ts
+ M codedock-web/types/room.ts
+ M internal/handlers/integration_test.go
+ M internal/handlers/rooms.go
+ M internal/hub/hub.go
+ M internal/services/rooms.go
+ M main.go
+?? codedock-full-snapshot-20260427-151623/
+?? codedock-web/components/rooms/delete-room-button.tsx
+?? codedock-web/components/rooms/room-details-page.tsx
+?? codedock-web/components/rooms/source-state-card.tsx
+?? codedock-web/hooks/use-room-details.ts
+?? scripts/collect_codedock_full_snapshot.sh

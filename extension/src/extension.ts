@@ -10,7 +10,6 @@ import { YjsSync } from "./yjs-sync";
 
 const PENDING_HYDRATED_ROOM_ID_KEY = "codedock.pendingHydrated.roomId";
 const PENDING_HYDRATED_ROOT_KEY = "codedock.pendingHydrated.rootPath";
-
 const PENDING_LAUNCH_CONTEXT_KEY = "codedock.pendingLaunch.context";
 
 type PendingLaunchContext = LaunchContext & {
@@ -33,7 +32,9 @@ export async function activate(
 
   outputChannel.show(true);
   outputChannel.appendLine("CodeDock: DIAG BUILD LOADED (SYNC-ONLY)");
-  vscode.window.showInformationMessage("CodeDock: DIAG BUILD LOADED (SYNC-ONLY)");
+  vscode.window.showInformationMessage(
+    "CodeDock: DIAG BUILD LOADED (SYNC-ONLY)",
+  );
 
   const emitter = new EventEmitter();
 
@@ -42,16 +43,63 @@ export async function activate(
   wsManager = new WebSocketManager(serverUrl, outputChannel);
   yjsSync = new YjsSync(wsManager, outputChannel, context.globalState);
 
+  context.subscriptions.push(
+    wsManager.onClose((code, reason) => {
+      const sessionEnded =
+        code === 4004 ||
+        code === 4003 ||
+        reason === "room_deleted" ||
+        reason === "room_unavailable" ||
+        reason === "forbidden";
+
+      if (!sessionEnded) {
+        return;
+      }
+
+      outputChannel.appendLine(
+        `CodeDock: room session terminated by server (code=${code}, reason=${reason || "none"})`,
+      );
+
+      void clearPendingHydratedJoin(context);
+      void clearPendingLaunch(context);
+      yjsSync.setActiveRoomId(null);
+      yjsSync.setGuestMaterializationRoot(null);
+      yjsSync.dispose();
+    }),
+  );
+
+  context.subscriptions.push(
+    wsManager.onClose((code, reason) => {
+      const sessionEnded =
+        code === 4004 ||
+        code === 4003 ||
+        reason === "room_deleted" ||
+        reason === "room_unavailable" ||
+        reason === "forbidden";
+
+      if (!sessionEnded) {
+        return;
+      }
+
+      outputChannel.appendLine(
+        `CodeDock: room session terminated by server (code=${code}, reason=${reason || "none"})`,
+      );
+
+      void clearPendingHydratedJoin(context);
+      void clearPendingLaunch(context);
+      yjsSync.setActiveRoomId(null);
+      yjsSync.setGuestMaterializationRoot(null);
+      yjsSync.dispose();
+    }),
+  );
+
   emitter.on("login", () => {
     outputChannel.appendLine("CodeDock: login event received (sync-only mode)");
   });
 
   emitter.on("logout", () => {
     outputChannel.appendLine("CodeDock: logout event received");
-    void clearPendingHydratedJoin(context);
-    void clearPendingLaunch(context);
-    yjsSync.setActiveRoomId(null);
-    yjsSync.setGuestMaterializationRoot(null);
+    void cleanupActiveRoomState(context);
     wsManager.disconnect("logout");
     yjsSync.dispose();
   });
@@ -76,10 +124,7 @@ export async function activate(
     ),
     vscode.commands.registerCommand("codedock.disconnectRoom", () => {
       outputChannel.appendLine("CodeDock: user requested room disconnect");
-      void clearPendingHydratedJoin(context);
-      void clearPendingLaunch(context);
-      yjsSync.setActiveRoomId(null);
-      yjsSync.setGuestMaterializationRoot(null);
+      void cleanupActiveRoomState(context);
       wsManager.disconnect("user");
       yjsSync.dispose();
     }),
@@ -154,10 +199,15 @@ async function handleLaunchUri(
 
     if (launchContext.auth_token) {
       await authManager.storeTokenSilently(launchContext.auth_token);
-      outputChannel.appendLine("CodeDock: stored auth token from launch exchange");
+      outputChannel.appendLine(
+        "CodeDock: stored auth token from launch exchange",
+      );
     }
 
-    const workspaceUri = await ensureManagedWorkspace(launchContext, outputChannel);
+    const workspaceUri = await ensureManagedWorkspace(
+      launchContext,
+      outputChannel,
+    );
     const pending: PendingLaunchContext = {
       ...launchContext,
       workspace_fs_path: workspaceUri.fsPath,
@@ -166,8 +216,13 @@ async function handleLaunchUri(
     await context.globalState.update(PENDING_LAUNCH_CONTEXT_KEY, pending);
 
     const currentRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    if (currentRoot && normalizeFsPath(currentRoot) === normalizeFsPath(workspaceUri.fsPath)) {
-      outputChannel.appendLine("CodeDock: launch workspace already open, resuming directly");
+    if (
+      currentRoot &&
+      normalizeFsPath(currentRoot) === normalizeFsPath(workspaceUri.fsPath)
+    ) {
+      outputChannel.appendLine(
+        "CodeDock: launch workspace already open, resuming directly",
+      );
       await resumePendingLaunch(context, outputChannel);
       return;
     }
@@ -176,13 +231,21 @@ async function handleLaunchUri(
       `CodeDock: opening managed workspace (${workspaceUri.fsPath})`,
     );
 
-    await vscode.commands.executeCommand("vscode.openFolder", workspaceUri, true);
+    await vscode.commands.executeCommand(
+      "vscode.openFolder",
+      workspaceUri,
+      true,
+    );
   } catch (error) {
     outputChannel.appendLine(
-      `CodeDock: launch exchange failed -> ${error instanceof Error ? error.message : "unknown error"}`
+      `CodeDock: launch exchange failed -> ${
+        error instanceof Error ? error.message : "unknown error"
+      }`,
     );
     vscode.window.showErrorMessage(
-      `CodeDock: Launch failed — ${error instanceof Error ? error.message : "unknown error"}`
+      `CodeDock: Launch failed — ${
+        error instanceof Error ? error.message : "unknown error"
+      }`,
     );
   }
 }
@@ -201,12 +264,18 @@ async function resumePendingLaunch(
 
   const currentRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!currentRoot) {
-    outputChannel.appendLine("CodeDock: pending launch found but no workspace root is open");
+    outputChannel.appendLine(
+      "CodeDock: pending launch found but no workspace root is open",
+    );
     return;
   }
 
-  if (normalizeFsPath(currentRoot) !== normalizeFsPath(pending.workspace_fs_path)) {
-    outputChannel.appendLine("CodeDock: current workspace does not match pending launch root");
+  if (
+    normalizeFsPath(currentRoot) !== normalizeFsPath(pending.workspace_fs_path)
+  ) {
+    outputChannel.appendLine(
+      "CodeDock: current workspace does not match pending launch root",
+    );
     return;
   }
 
@@ -370,7 +439,7 @@ async function handleCreateRoom(
     yjsSync.activate();
   } catch (err) {
     vscode.window.showErrorMessage(
-      `CodeDock: Failed to create room — ${
+      `CodeDock: Failed to create a room — ${
         err instanceof Error ? err.message : "unknown error"
       }`,
     );
@@ -388,6 +457,15 @@ async function joinRoomNow(
   yjsSync.setActiveRoomId(roomId);
   wsManager.connect(token, roomId);
   yjsSync.activate();
+}
+
+async function cleanupActiveRoomState(
+  context: vscode.ExtensionContext,
+): Promise<void> {
+  await clearPendingHydratedJoin(context);
+  await clearPendingLaunch(context);
+  yjsSync.setActiveRoomId(null);
+  yjsSync.setGuestMaterializationRoot(null);
 }
 
 async function clearPendingHydratedJoin(

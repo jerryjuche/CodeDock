@@ -1,0 +1,671 @@
+README.md:2: CodeDock is a self-hosted, low-latency collaborative coding platform that enables multiple developers to edit code simultaneously inside their editor, with real-time synchronization, presence awareness, and integrated team communication.
+README.md:69: These details came from the uploaded project handoff and remain the baseline technical status. 
+README.md:433: 5. launch Ubuntu VM on an Always Free eligible shape
+codedock-core-debug-bundle.txt:534: 	payload := []byte("presence update")
+codedock-core-debug-bundle.txt:696: 	MessageTypeAwareness            byte = 0x02 // cursor position and presence
+codedock-core-debug-bundle.txt:712: FILE: internal/handlers/auth.go
+codedock-core-debug-bundle.txt:722: 	"github.com/jerryjuche/CodeDock/internal/auth"
+codedock-core-debug-bundle.txt:846: 	details, err := services.ExchangeInviteCode(h.DB, Det.Code)
+codedock-core-debug-bundle.txt:855: 	token, err := auth.GenerateToken(details.UserID, details.Email)
+codedock-core-debug-bundle.txt:870: 		Email:    details.Email,
+codedock-core-debug-bundle.txt:871: 		RoomID:   details.RoomID,
+codedock-core-debug-bundle.txt:872: 		RoomName: details.RoomName,
+codedock-core-debug-bundle.txt:893: 	"github.com/jerryjuche/CodeDock/internal/auth"
+codedock-core-debug-bundle.txt:959: 	app.mux.HandleFunc("POST /auth/register", app.authHandler.Register)
+codedock-core-debug-bundle.txt:960: 	app.mux.HandleFunc("POST /auth/login", app.authHandler.Login)
+codedock-core-debug-bundle.txt:961: 	app.mux.HandleFunc("POST /auth/exchange", app.authHandler.ExchangeCode)
+codedock-core-debug-bundle.txt:962: 	app.mux.Handle("POST /rooms", auth.RequireAuth(http.HandlerFunc(app.roomHandler.CreateRoom)))
+codedock-core-debug-bundle.txt:963: 	app.mux.Handle("GET /rooms", auth.RequireAuth(http.HandlerFunc(app.roomHandler.GetUserRooms)))
+codedock-core-debug-bundle.txt:964: 	app.mux.Handle("GET /rooms/{id}", auth.RequireAuth(http.HandlerFunc(app.roomHandler.GetRoom)))
+codedock-core-debug-bundle.txt:1014: 	rr := app.postJSON(t, "/auth/register", map[string]string{
+codedock-core-debug-bundle.txt:1032: 	rr := app.postJSON(t, "/auth/register", map[string]string{
+codedock-core-debug-bundle.txt:1062: 	first := app.postJSON(t, "/auth/register", body, "")
+codedock-core-debug-bundle.txt:1067: 	rr := app.postJSON(t, "/auth/register", body, "")
+codedock-core-debug-bundle.txt:1077: 	rr := app.postJSON(t, "/auth/register", map[string]string{
+codedock-core-debug-bundle.txt:1090: 	app.postJSON(t, "/auth/register", map[string]string{
+codedock-core-debug-bundle.txt:1095: 	rr := app.postJSON(t, "/auth/login", map[string]string{
+codedock-core-debug-bundle.txt:1117: 	app.postJSON(t, "/auth/register", map[string]string{
+codedock-core-debug-bundle.txt:1122: 	rr := app.postJSON(t, "/auth/login", map[string]string{
+codedock-core-debug-bundle.txt:1136: 	rr := app.postJSON(t, "/auth/login", map[string]string{
+codedock-core-debug-bundle.txt:1150: 	rr := app.getJSON(t, "/rooms", "")
+codedock-core-debug-bundle.txt:1160: 	rr := app.getJSON(t, "/rooms", "this.is.not.a.valid.jwt")
+codedock-core-debug-bundle.txt:1172: 	rr := app.postJSON(t, "/rooms", map[string]string{
+codedock-core-debug-bundle.txt:1198: 	rr := app.postJSON(t, "/rooms", map[string]string{
+codedock-core-debug-bundle.txt:1211: 	rr := app.postJSON(t, "/rooms", map[string]string{
+codedock-core-debug-bundle.txt:1226: 	createRR := app.postJSON(t, "/rooms", map[string]string{
+codedock-core-debug-bundle.txt:1239: 	rr := app.getJSON(t, "/rooms/"+roomID, token)
+codedock-core-debug-bundle.txt:1259: 	rr := app.getJSON(t, "/rooms/00000000-0000-0000-0000-000000000000", token)
+codedock-core-debug-bundle.txt:1271: 	first := app.postJSON(t, "/rooms", map[string]string{"name": "Room One"}, token)
+codedock-core-debug-bundle.txt:1276: 	second := app.postJSON(t, "/rooms", map[string]string{"name": "Room Two"}, token)
+codedock-core-debug-bundle.txt:1282: FILE: internal/handlers/rooms.go
+codedock-core-debug-bundle.txt:1290: 	"github.com/jerryjuche/CodeDock/internal/auth"
+codedock-core-debug-bundle.txt:1402: 	"github.com/jerryjuche/CodeDock/internal/auth"
+codedock-core-debug-bundle.txt:1432: //  5. Launch readPump and writePump goroutines
+codedock-core-debug-bundle.txt:1473: 		// Step 5 — launch goroutines
+codedock-core-debug-bundle.txt:1495: type InviteDetails struct {
+codedock-core-debug-bundle.txt:1502: func ExchangeInviteCode(db *sql.DB, code string) (*InviteDetails, error) {
+codedock-core-debug-bundle.txt:1509: 	var details InviteDetails
+codedock-core-debug-bundle.txt:1529: 		&details.UserID,
+codedock-core-debug-bundle.txt:1530: 		&details.RoomID,
+codedock-core-debug-bundle.txt:1531: 		&details.RoomName,
+codedock-core-debug-bundle.txt:1532: 		&details.Email,
+codedock-core-debug-bundle.txt:1576: 	return &details, nil
+codedock-core-debug-bundle.txt:2057: FILE: internal/services/rooms.go
+codedock-core-debug-bundle.txt:2441:             '/auth/login',
+codedock-core-debug-bundle.txt:2452:             '/auth/me',
+codedock-core-debug-bundle.txt:2461:             '/rooms',
+codedock-core-debug-bundle.txt:2470:             '/rooms',
+codedock-core-debug-bundle.txt:2527: FILE: extension/src/auth.ts
+codedock-core-debug-bundle.txt:3103: import { AuthManager } from "./auth";
+codedock-core-debug-bundle.txt:4545: 	"github.com/jerryjuche/CodeDock/internal/auth"
+codedock-core-debug-bundle.txt:4579: 	mux.HandleFunc("POST /auth/register", authHandler.Register)
+codedock-core-debug-bundle.txt:4580: 	mux.HandleFunc("POST /auth/login", authHandler.Login)
+codedock-core-debug-bundle.txt:4581: 	mux.HandleFunc("POST /auth/exchange", authHandler.ExchangeCode)
+codedock-core-debug-bundle.txt:4584: 	mux.Handle("POST /rooms", auth.RequireAuth(http.HandlerFunc(roomHandler.CreateRoom)))
+codedock-core-debug-bundle.txt:4585: 	mux.Handle("GET /rooms", auth.RequireAuth(http.HandlerFunc(roomHandler.GetUserRooms)))
+codedock-core-debug-bundle.txt:4586: 	mux.Handle("GET /rooms/{id}", auth.RequireAuth(http.HandlerFunc(roomHandler.GetRoom)))
+codedock-web/app/(app)/dashboard/page.tsx:3: import JoinCodeForm from "@/components/dashboard/join-code-form";
+codedock-web/app/(app)/dashboard/page.tsx:12:           Manage rooms, join by code, and launch collaboration sessions.
+codedock-web/app/(app)/join/page.tsx:3: import JoinCodeForm from "@/components/dashboard/join-code-form";
+codedock-web/app/(app)/layout.tsx:1: import AuthGuard from "@/components/auth/auth-guard";
+codedock-web/app/(app)/layout.tsx:12:     </AuthGuard>
+codedock-web/app/(app)/rooms/[roomId]/page.tsx:1: import RoomDetailsPageClient from "@/components/rooms/room-details-page";
+codedock-web/app/(app)/rooms/[roomId]/page.tsx:9: export default async function RoomDetailsPage({ params }: Props) {
+codedock-web/app/(app)/rooms/[roomId]/page.tsx:11:   return <RoomDetailsPageClient roomId={roomId} />;
+codedock-web/app/(app)/rooms/new/page.tsx:1: import CreateRoomForm from "@/components/rooms/create-room-form";
+codedock-web/app/(auth)/login/page.tsx:1: import LoginForm from "@/components/auth/login-form";
+codedock-web/app/(auth)/register/page.tsx:1: import RegisterForm from "@/components/auth/register-form";
+codedock-web/app/page.tsx:9:           Web control plane for rooms, invites, launch tokens, and VS Code collaboration.
+codedock-web/components/app-shell.tsx:51:                 href="/rooms/new"
+codedock-web/components/app-shell.tsx:52:                 className={navClass(pathname === "/rooms/new")}
+codedock-web/components/auth/login-form.tsx:6: import { login } from "@/lib/api/auth";
+codedock-web/components/auth/register-form.tsx:6: import { register } from "@/lib/api/auth";
+codedock-web/components/dashboard/join-code-form.tsx:5: import { useJoinCode } from "@/hooks/use-join-code";
+codedock-web/components/dashboard/join-code-form.tsx:27:       router.push(`/rooms/${result.room.id}`);
+codedock-web/components/dashboard/join-code-form.tsx:40:           <Label htmlFor="join-code">Invite Code</Label>
+codedock-web/components/dashboard/join-code-form.tsx:42:             id="join-code"
+codedock-web/components/dashboard/room-card.tsx:17:       <Link className="mt-4 inline-block text-sm font-medium underline" href={`/rooms/${room.id}`}>
+codedock-web/components/dashboard/room-list.tsx:17:           href="/rooms/new"
+codedock-web/components/rooms/create-room-form.tsx:5: import { createRoom } from "@/lib/api/rooms";
+codedock-web/components/rooms/create-room-form.tsx:57:       router.push(`/rooms/${room.id}`);
+codedock-web/components/rooms/delete-room-button.tsx:5: import { deleteRoom } from "@/lib/api/rooms";
+codedock-web/components/rooms/delete-room-button.tsx:28:       `Delete room "${roomName}"? This will hide the room and invalidate future launches.`,
+codedock-web/components/rooms/invite-create-form.tsx:4: import { useInvites } from "@/hooks/use-invites";
+codedock-web/components/rooms/invite-create-form.tsx:11:   const { createInvite } = useInvites(roomId);
+codedock-web/components/rooms/invite-list.tsx:3: import { useInvites } from "@/hooks/use-invites";
+codedock-web/components/rooms/invite-list.tsx:8:   const { invites, loading, error, revokeInvite } = useInvites(roomId);
+codedock-web/components/rooms/invite-list.tsx:17:           <div>Loading invites...</div>
+codedock-web/components/rooms/invite-list.tsx:20:         ) : invites.length === 0 ? (
+codedock-web/components/rooms/invite-list.tsx:23:           invites.map((invite) => (
+codedock-web/components/rooms/open-in-vscode-button.tsx:3: import { useLaunch } from "@/hooks/use-launch";
+codedock-web/components/rooms/open-in-vscode-button.tsx:8:   const { openRoom, loading } = useLaunch(roomId);
+codedock-web/components/rooms/open-in-vscode-button.tsx:12:       <h3 className="text-lg font-semibold">Launch</h3>
+codedock-web/components/rooms/open-in-vscode-button.tsx:14:         Generate a one-time launch token and open this room in VS Code.
+codedock-web/components/rooms/room-details-page.tsx:3: import InviteCreateForm from "@/components/rooms/invite-create-form";
+codedock-web/components/rooms/room-details-page.tsx:4: import InviteList from "@/components/rooms/invite-list";
+codedock-web/components/rooms/room-details-page.tsx:5: import OpenInVSCodeButton from "@/components/rooms/open-in-vscode-button";
+codedock-web/components/rooms/room-details-page.tsx:6: import RoomHeader from "@/components/rooms/room-header";
+codedock-web/components/rooms/room-details-page.tsx:7: import SourceStateCard from "@/components/rooms/source-state-card";
+codedock-web/components/rooms/room-details-page.tsx:8: import DeleteRoomButton from "@/components/rooms/delete-room-button";
+codedock-web/components/rooms/room-details-page.tsx:10: import { useRoomDetails } from "@/hooks/use-room-details";
+codedock-web/components/rooms/room-details-page.tsx:12: export default function RoomDetailsPageClient({ roomId }: { roomId: string }) {
+codedock-web/components/rooms/room-details-page.tsx:13:   const { details, loading, error } = useRoomDetails(roomId);
+codedock-web/components/rooms/room-details-page.tsx:18:         <Card>Loading room details...</Card>
+codedock-web/components/rooms/room-details-page.tsx:23:   if (error || !details) {
+codedock-web/components/rooms/room-details-page.tsx:31:   const isHost = details.membership.role === "host";
+codedock-web/components/rooms/room-details-page.tsx:35:       <RoomHeader details={details} />
+codedock-web/components/rooms/room-details-page.tsx:55:           <SourceStateCard sourceState={details.source_state} />
+codedock-web/components/rooms/room-details-page.tsx:58:             <DeleteRoomButton roomId={roomId} roomName={details.room.name} />
+codedock-web/components/rooms/room-header.tsx:4: import type { RoomDetails } from "@/types/room";
+codedock-web/components/rooms/room-header.tsx:6: export default function RoomHeader({ details }: { details: RoomDetails }) {
+codedock-web/components/rooms/room-header.tsx:7:   const { room, membership } = details;
+codedock-web/hooks/use-auth.ts:4: import { getCurrentUser } from "@/lib/api/auth";
+codedock-web/hooks/use-invites.ts:6:   getRoomInvites,
+codedock-web/hooks/use-invites.ts:8: } from "@/lib/api/invites";
+codedock-web/hooks/use-invites.ts:12: export function useInvites(roomId: string) {
+codedock-web/hooks/use-invites.ts:14:   const [invites, setInvites] = useState<RoomInviteToken[]>([]);
+codedock-web/hooks/use-invites.ts:28:       const response = await getRoomInvites(token, roomId);
+codedock-web/hooks/use-invites.ts:29:       setInvites(response);
+codedock-web/hooks/use-invites.ts:32:       setError(err instanceof Error ? err.message : "Failed to load invites");
+codedock-web/hooks/use-invites.ts:64:     invites,
+codedock-web/hooks/use-join-code.ts:4: import { resolveJoinCode } from "@/lib/api/rooms";
+codedock-web/hooks/use-launch.ts:4: import { openInVSCode } from "@/lib/api/launch";
+codedock-web/hooks/use-launch.ts:7: export function useLaunch(roomId: string) {
+codedock-web/hooks/use-room-details.ts:4: import { getRoomDetails } from "@/lib/api/rooms";
+codedock-web/hooks/use-room-details.ts:6: import type { RoomDetails } from "@/types/room";
+codedock-web/hooks/use-room-details.ts:8: export function useRoomDetails(roomId: string) {
+codedock-web/hooks/use-room-details.ts:10:   const [details, setDetails] = useState<RoomDetails | null>(null);
+codedock-web/hooks/use-room-details.ts:22:       const response = await getRoomDetails(token, roomId);
+codedock-web/hooks/use-room-details.ts:23:       setDetails(response);
+codedock-web/hooks/use-room-details.ts:26:       setError(err instanceof Error ? err.message : "Failed to load room details");
+codedock-web/hooks/use-room-details.ts:38:     details,
+codedock-web/hooks/use-room.ts:4: import { getRoom } from "@/lib/api/rooms";
+codedock-web/hooks/use-rooms.ts:4: import { getRooms } from "@/lib/api/rooms";
+codedock-web/lib/api/auth.ts:2: import type { AuthResponse, CurrentUser } from "@/types/auth";
+codedock-web/lib/api/auth.ts:5:   return apiRequest<AuthResponse>("/auth/register", {
+codedock-web/lib/api/auth.ts:12:   return apiRequest<AuthResponse>("/auth/login", {
+codedock-web/lib/api/auth.ts:19:   return apiRequest<CurrentUser>("/auth/me", {
+codedock-web/lib/api/invites.ts:4: export function getRoomInvites(token: string, roomId: string) {
+codedock-web/lib/api/invites.ts:5:   return apiRequest<RoomInviteToken[]>(`/rooms/${roomId}/invites`, { token });
+codedock-web/lib/api/invites.ts:16:   return apiRequest<RoomInviteToken>(`/rooms/${roomId}/invites`, {
+codedock-web/lib/api/invites.ts:29:     `/rooms/${roomId}/invites/${inviteId}/revoke`,
+codedock-web/lib/api/launch.ts:2: import type { LaunchTokenResponse } from "@/types/launch";
+codedock-web/lib/api/launch.ts:5:   return apiRequest<LaunchTokenResponse>(`/rooms/${roomId}/open-in-vscode`, {
+codedock-web/lib/api/rooms.ts:2: import type { Room, RoomDetails } from "@/types/room";
+codedock-web/lib/api/rooms.ts:5:   return apiRequest<Room[]>("/rooms", { token });
+codedock-web/lib/api/rooms.ts:9:   return apiRequest<Room>(`/rooms/${roomId}`, { token });
+codedock-web/lib/api/rooms.ts:12: export function getRoomDetails(token: string, roomId: string) {
+codedock-web/lib/api/rooms.ts:13:   return apiRequest<RoomDetails>(`/rooms/${roomId}/details`, { token });
+codedock-web/lib/api/rooms.ts:24:   return apiRequest<Room>("/rooms", {
+codedock-web/lib/api/rooms.ts:38:   }>("/join-code/resolve", {
+codedock-web/lib/api/rooms.ts:46:   return apiRequest<{ success: boolean }>(`/rooms/${roomId}`, {
+codedock-web/types/launch.ts:1: export type LaunchTokenResponse = {
+codedock-web/types/launch.ts:2:   launch_token: string;
+codedock-web/types/launch.ts:6: export type LaunchContext = {
+codedock-web/types/room.ts:29: export type RoomDetails = {
+extension/README.md:92: - team presence
+extension/src/api.ts:5: export type LaunchContext = {
+extension/src/api.ts:21:       "/auth/login",
+extension/src/api.ts:32:       "/auth/me",
+extension/src/api.ts:41:       "/rooms",
+extension/src/api.ts:50:       "/rooms",
+extension/src/api.ts:60:   async exchangeLaunchToken(rawToken: string): Promise<LaunchContext> {
+extension/src/api.ts:61:     return this.request<LaunchContext>(
+extension/src/api.ts:62:       "/vscode/launch/exchange",
+extension/src/api.ts:65:         body: JSON.stringify({ launch_token: rawToken }),
+extension/src/extension.ts:6: import { AuthManager } from "./auth";
+extension/src/extension.ts:7: import { ApiClient, LaunchContext } from "./api";
+extension/src/extension.ts:14: const PENDING_LAUNCH_CONTEXT_KEY = "codedock.pendingLaunch.context";
+extension/src/extension.ts:16: type PendingLaunchContext = LaunchContext & {
+extension/src/extension.ts:52:     void clearPendingLaunch(context);
+extension/src/extension.ts:80:       void clearPendingLaunch(context);
+extension/src/extension.ts:91:         await handleLaunchUri(context, uri, outputChannel);
+extension/src/extension.ts:97:   await resumePendingLaunch(context, outputChannel);
+extension/src/extension.ts:129: async function handleLaunchUri(
+extension/src/extension.ts:137:   const launchToken = params.get("token");
+extension/src/extension.ts:141:   outputChannel.appendLine(`token: ${launchToken ?? "null"}`);
+extension/src/extension.ts:145:   if (!launchToken) {
+extension/src/extension.ts:147:       "CodeDock: This launch link is missing its token.",
+extension/src/extension.ts:153:     const launchContext = await apiClient.exchangeLaunchToken(launchToken);
+extension/src/extension.ts:155:     if (launchContext.auth_token) {
+extension/src/extension.ts:156:       await authManager.storeTokenSilently(launchContext.auth_token);
+extension/src/extension.ts:157:       outputChannel.appendLine("CodeDock: stored auth token from launch exchange");
+extension/src/extension.ts:160:     const workspaceUri = await ensureManagedWorkspace(launchContext, outputChannel);
+extension/src/extension.ts:161:     const pending: PendingLaunchContext = {
+extension/src/extension.ts:162:       ...launchContext,
+extension/src/extension.ts:166:     await context.globalState.update(PENDING_LAUNCH_CONTEXT_KEY, pending);
+extension/src/extension.ts:170:       outputChannel.appendLine("CodeDock: launch workspace already open, resuming directly");
+extension/src/extension.ts:171:       await resumePendingLaunch(context, outputChannel);
+extension/src/extension.ts:182:       `CodeDock: launch exchange failed -> ${error instanceof Error ? error.message : "unknown error"}`
+extension/src/extension.ts:185:       `CodeDock: Launch failed — ${error instanceof Error ? error.message : "unknown error"}`
+extension/src/extension.ts:190: async function resumePendingLaunch(
+extension/src/extension.ts:194:   const pending = context.globalState.get<PendingLaunchContext>(
+extension/src/extension.ts:195:     PENDING_LAUNCH_CONTEXT_KEY,
+extension/src/extension.ts:204:     outputChannel.appendLine("CodeDock: pending launch found but no workspace root is open");
+extension/src/extension.ts:209:     outputChannel.appendLine("CodeDock: current workspace does not match pending launch root");
+extension/src/extension.ts:216:       "CodeDock: No auth session found for this launch. Please log in again.",
+extension/src/extension.ts:222:     `CodeDock: resuming launched room ${pending.room_id} (${pending.role})`,
+extension/src/extension.ts:232:   await clearPendingLaunch(context);
+extension/src/extension.ts:240:   launchContext: LaunchContext,
+extension/src/extension.ts:244:   const roomDir = path.join(baseDir, launchContext.room_slug);
+extension/src/extension.ts:250:     roomId: launchContext.room_id,
+extension/src/extension.ts:251:     roomName: launchContext.room_name,
+extension/src/extension.ts:252:     roomSlug: launchContext.room_slug,
+extension/src/extension.ts:253:     sourceType: launchContext.source_type,
+extension/src/extension.ts:400: async function clearPendingLaunch(
+extension/src/extension.ts:403:   await context.globalState.update(PENDING_LAUNCH_CONTEXT_KEY, undefined);
+hydration-debug-bundle.txt:6: import { AuthManager } from "./auth";
+internal/auth/jwt_test.go:17: 	req := httptest.NewRequest("GET", "/rooms", nil)
+internal/auth/jwt_test.go:33: 	req := httptest.NewRequest("GET", "/rooms", nil)
+internal/auth/jwt_test.go:50: 	req := httptest.NewRequest("GET", "/rooms", nil)
+internal/auth/jwt_test.go:67: 	req := httptest.NewRequest("GET", "/rooms", nil)
+internal/auth/jwt_test.go:91: 	req := httptest.NewRequest("GET", "/rooms", nil)
+internal/auth/jwt_test.go:128: 	req := httptest.NewRequest("GET", "/rooms", nil)
+internal/auth/jwt_test.go:139: 	req := httptest.NewRequest("GET", "/rooms", nil)
+internal/handlers/auth.go:9: 	"github.com/jerryjuche/CodeDock/internal/auth"
+internal/handlers/auth.go:147: 		"legacy invite exchange is deprecated; use /join-code/resolve from the web app",
+internal/handlers/integration_test.go:20: 	"github.com/jerryjuche/CodeDock/internal/auth"
+internal/handlers/integration_test.go:36: 	launchHandler *LaunchHandler
+internal/handlers/integration_test.go:78: type launchTokenJSON struct {
+internal/handlers/integration_test.go:79: 	LaunchToken string `json:"launch_token"`
+internal/handlers/integration_test.go:83: type launchContextJSON struct {
+internal/handlers/integration_test.go:143: 	registerResp := performJSONRequest(t, app.mux, http.MethodPost, "/auth/register", map[string]any{
+internal/handlers/integration_test.go:159: 	loginResp := performJSONRequest(t, app.mux, http.MethodPost, "/auth/login", map[string]any{
+internal/handlers/integration_test.go:175: 	dupResp := performJSONRequest(t, app.mux, http.MethodPost, "/auth/register", map[string]any{
+internal/handlers/integration_test.go:189: 	invalidResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms", map[string]any{
+internal/handlers/integration_test.go:195: 	roomCreateResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms", map[string]any{
+internal/handlers/integration_test.go:233: 	listResp := performJSONRequest(t, app.mux, http.MethodGet, "/rooms", nil, hostToken)
+internal/handlers/integration_test.go:246: 	getResp := performJSONRequest(t, app.mux, http.MethodGet, "/rooms/"+room.ID, nil, hostToken)
+internal/handlers/integration_test.go:257: func TestRoomJoinInviteAndLaunchControlPlane(t *testing.T) {
+internal/handlers/integration_test.go:273: 	createRoomResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms", map[string]any{
+internal/handlers/integration_test.go:285: 	forbiddenBeforeJoin := performJSONRequest(t, app.mux, http.MethodGet, "/rooms/"+room.ID, nil, guestAToken)
+internal/handlers/integration_test.go:288: 	joinPrimaryResp := performJSONRequest(t, app.mux, http.MethodPost, "/join-code/resolve", map[string]any{
+internal/handlers/integration_test.go:306: 	rejoinPrimaryResp := performJSONRequest(t, app.mux, http.MethodPost, "/join-code/resolve", map[string]any{
+internal/handlers/integration_test.go:318: 	getAfterJoinResp := performJSONRequest(t, app.mux, http.MethodGet, "/rooms/"+room.ID, nil, guestAToken)
+internal/handlers/integration_test.go:321: 	nonHostListInvitesResp := performJSONRequest(t, app.mux, http.MethodGet, "/rooms/"+room.ID+"/invites", nil, guestAToken)
+internal/handlers/integration_test.go:322: 	assertStatus(t, nonHostListInvitesResp, http.StatusForbidden)
+internal/handlers/integration_test.go:324: 	createInviteResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms/"+room.ID+"/invites", map[string]any{
+internal/handlers/integration_test.go:340: 	listInvitesResp := performJSONRequest(t, app.mux, http.MethodGet, "/rooms/"+room.ID+"/invites", nil, hostToken)
+internal/handlers/integration_test.go:341: 	assertStatus(t, listInvitesResp, http.StatusOK)
+internal/handlers/integration_test.go:343: 	var invites []inviteJSON
+internal/handlers/integration_test.go:344: 	decodeJSON(t, listInvitesResp, &invites)
+internal/handlers/integration_test.go:346: 	if len(invites) != 1 {
+internal/handlers/integration_test.go:347: 		t.Fatalf("expected 1 invite, got %d", len(invites))
+internal/handlers/integration_test.go:349: 	if invites[0].Code != invite.Code {
+internal/handlers/integration_test.go:350: 		t.Fatalf("expected invite code %q, got %q", invite.Code, invites[0].Code)
+internal/handlers/integration_test.go:353: 	guestBJoinInviteResp := performJSONRequest(t, app.mux, http.MethodPost, "/join-code/resolve", map[string]any{
+internal/handlers/integration_test.go:368: 	listInvitesAfterUseResp := performJSONRequest(t, app.mux, http.MethodGet, "/rooms/"+room.ID+"/invites", nil, hostToken)
+internal/handlers/integration_test.go:369: 	assertStatus(t, listInvitesAfterUseResp, http.StatusOK)
+internal/handlers/integration_test.go:371: 	var invitesAfterUse []inviteJSON
+internal/handlers/integration_test.go:372: 	decodeJSON(t, listInvitesAfterUseResp, &invitesAfterUse)
+internal/handlers/integration_test.go:374: 	if len(invitesAfterUse) != 1 {
+internal/handlers/integration_test.go:375: 		t.Fatalf("expected 1 invite after use, got %d", len(invitesAfterUse))
+internal/handlers/integration_test.go:377: 	if invitesAfterUse[0].UsesCount != 1 {
+internal/handlers/integration_test.go:378: 		t.Fatalf("expected uses_count=1, got %d", invitesAfterUse[0].UsesCount)
+internal/handlers/integration_test.go:381: 	guestCJoinInviteResp := performJSONRequest(t, app.mux, http.MethodPost, "/join-code/resolve", map[string]any{
+internal/handlers/integration_test.go:386: 	revokeInviteResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms/"+room.ID+"/invites/"+invite.ID+"/revoke", nil, hostToken)
+internal/handlers/integration_test.go:389: 	createRevokableInviteResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms/"+room.ID+"/invites", map[string]any{
+internal/handlers/integration_test.go:397: 	revokeSecondInviteResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms/"+room.ID+"/invites/"+revokableInvite.ID+"/revoke", nil, hostToken)
+internal/handlers/integration_test.go:400: 	guestDJoinRevokedResp := performJSONRequest(t, app.mux, http.MethodPost, "/join-code/resolve", map[string]any{
+internal/handlers/integration_test.go:405: 	invalidInviteConfigResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms/"+room.ID+"/invites", map[string]any{
+internal/handlers/integration_test.go:410: 	hostLaunchResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms/"+room.ID+"/open-in-vscode", nil, hostToken)
+internal/handlers/integration_test.go:411: 	assertStatus(t, hostLaunchResp, http.StatusOK)
+internal/handlers/integration_test.go:413: 	var hostLaunch launchTokenJSON
+internal/handlers/integration_test.go:414: 	decodeJSON(t, hostLaunchResp, &hostLaunch)
+internal/handlers/integration_test.go:416: 	if hostLaunch.LaunchToken == "" {
+internal/handlers/integration_test.go:417: 		t.Fatalf("expected host launch token to be non-empty")
+internal/handlers/integration_test.go:419: 	if !strings.HasPrefix(hostLaunch.DeepLink, "vscode://jerryjuche.codedock/launch?token=") {
+internal/handlers/integration_test.go:420: 		t.Fatalf("unexpected deep link: %q", hostLaunch.DeepLink)
+internal/handlers/integration_test.go:423: 	exchangeHostResp := performJSONRequest(t, app.mux, http.MethodPost, "/vscode/launch/exchange", map[string]any{
+internal/handlers/integration_test.go:424: 		"launch_token": hostLaunch.LaunchToken,
+internal/handlers/integration_test.go:428: 	var hostLaunchCtx launchContextJSON
+internal/handlers/integration_test.go:429: 	decodeJSON(t, exchangeHostResp, &hostLaunchCtx)
+internal/handlers/integration_test.go:431: 	if hostLaunchCtx.RoomID != room.ID {
+internal/handlers/integration_test.go:432: 		t.Fatalf("expected exchanged room id %q, got %q", room.ID, hostLaunchCtx.RoomID)
+internal/handlers/integration_test.go:434: 	if hostLaunchCtx.Role != "host" {
+internal/handlers/integration_test.go:435: 		t.Fatalf("expected host launch role host, got %q", hostLaunchCtx.Role)
+internal/handlers/integration_test.go:437: 	if !strings.Contains(hostLaunchCtx.WorkspacePathHint, room.Slug) {
+internal/handlers/integration_test.go:438: 		t.Fatalf("expected workspace path hint to contain slug %q, got %q", room.Slug, hostLaunchCtx.WorkspacePathHint)
+internal/handlers/integration_test.go:441: 	reuseHostLaunchResp := performJSONRequest(t, app.mux, http.MethodPost, "/vscode/launch/exchange", map[string]any{
+internal/handlers/integration_test.go:442: 		"launch_token": hostLaunch.LaunchToken,
+internal/handlers/integration_test.go:444: 	assertStatus(t, reuseHostLaunchResp, http.StatusUnauthorized)
+internal/handlers/integration_test.go:446: 	guestLaunchResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms/"+room.ID+"/open-in-vscode", nil, guestAToken)
+internal/handlers/integration_test.go:447: 	assertStatus(t, guestLaunchResp, http.StatusOK)
+internal/handlers/integration_test.go:449: 	var guestLaunch launchTokenJSON
+internal/handlers/integration_test.go:450: 	decodeJSON(t, guestLaunchResp, &guestLaunch)
+internal/handlers/integration_test.go:452: 	exchangeGuestResp := performJSONRequest(t, app.mux, http.MethodPost, "/vscode/launch/exchange", map[string]any{
+internal/handlers/integration_test.go:453: 		"launch_token": guestLaunch.LaunchToken,
+internal/handlers/integration_test.go:457: 	var guestLaunchCtx launchContextJSON
+internal/handlers/integration_test.go:458: 	decodeJSON(t, exchangeGuestResp, &guestLaunchCtx)
+internal/handlers/integration_test.go:460: 	if guestLaunchCtx.Role != "editor" {
+internal/handlers/integration_test.go:461: 		t.Fatalf("expected guest launch role editor, got %q", guestLaunchCtx.Role)
+internal/handlers/integration_test.go:464: 	invalidLaunchResp := performJSONRequest(t, app.mux, http.MethodPost, "/vscode/launch/exchange", map[string]any{
+internal/handlers/integration_test.go:465: 		"launch_token": "not-a-real-token",
+internal/handlers/integration_test.go:467: 	assertStatus(t, invalidLaunchResp, http.StatusUnauthorized)
+internal/handlers/integration_test.go:469: 	expiredToken := "expired-launch-token"
+internal/handlers/integration_test.go:470: 	expiredHash := hashLaunchTokenForTest(expiredToken)
+internal/handlers/integration_test.go:473: 		INSERT INTO room_launch_tokens (
+internal/handlers/integration_test.go:483: 		t.Fatalf("could not insert expired launch token: %v", err)
+internal/handlers/integration_test.go:486: 	expiredLaunchResp := performJSONRequest(t, app.mux, http.MethodPost, "/vscode/launch/exchange", map[string]any{
+internal/handlers/integration_test.go:487: 		"launch_token": expiredToken,
+internal/handlers/integration_test.go:489: 	assertStatus(t, expiredLaunchResp, http.StatusGone)
+internal/handlers/integration_test.go:502: 			Service: &services.InviteService{DB: testDB},
+internal/handlers/integration_test.go:504: 		launchHandler: &LaunchHandler{
+internal/handlers/integration_test.go:505: 			Service: &services.LaunchService{DB: testDB},
+internal/handlers/integration_test.go:511: 	mux.HandleFunc("POST /auth/register", app.authHandler.Register)
+internal/handlers/integration_test.go:512: 	mux.HandleFunc("POST /auth/login", app.authHandler.Login)
+internal/handlers/integration_test.go:513: 	mux.HandleFunc("POST /auth/exchange", app.authHandler.ExchangeCode)
+internal/handlers/integration_test.go:515: 	mux.Handle("POST /rooms", auth.RequireAuth(http.HandlerFunc(app.roomHandler.CreateRoom)))
+internal/handlers/integration_test.go:516: 	mux.Handle("GET /rooms", auth.RequireAuth(http.HandlerFunc(app.roomHandler.GetUserRooms)))
+internal/handlers/integration_test.go:517: 	mux.Handle("GET /rooms/{id}", auth.RequireAuth(http.HandlerFunc(app.roomHandler.GetRoom)))
+internal/handlers/integration_test.go:518: 	mux.Handle("GET /auth/me", auth.RequireAuth(http.HandlerFunc(app.authHandler.Me)))
+internal/handlers/integration_test.go:520: 	mux.Handle("POST /join-code/resolve", auth.RequireAuth(http.HandlerFunc(app.inviteHandler.ResolveJoinCode)))
+internal/handlers/integration_test.go:521: 	mux.Handle("GET /rooms/{roomId}/invites", auth.RequireAuth(http.HandlerFunc(app.inviteHandler.ListRoomInvites)))
+internal/handlers/integration_test.go:522: 	mux.Handle("POST /rooms/{roomId}/invites", auth.RequireAuth(http.HandlerFunc(app.inviteHandler.CreateRoomInvite)))
+internal/handlers/integration_test.go:523: 	mux.Handle("POST /rooms/{roomId}/invites/{inviteId}/revoke", auth.RequireAuth(http.HandlerFunc(app.inviteHandler.RevokeRoomInvite)))
+internal/handlers/integration_test.go:525: 	mux.Handle("POST /rooms/{roomId}/open-in-vscode", auth.RequireAuth(http.HandlerFunc(app.launchHandler.OpenInVSCode)))
+internal/handlers/integration_test.go:526: 	mux.HandleFunc("POST /vscode/launch/exchange", app.launchHandler.ExchangeLaunchToken)
+internal/handlers/integration_test.go:528: 	mux.Handle("GET /rooms/{id}/details", auth.RequireAuth(http.HandlerFunc(app.roomHandler.GetRoomDetails)))
+internal/handlers/integration_test.go:529: 	mux.Handle("DELETE /rooms/{id}", auth.RequireAuth(http.HandlerFunc(app.roomHandler.DeleteRoom)))
+internal/handlers/integration_test.go:591: 	rr := performJSONRequest(t, app.mux, http.MethodPost, "/auth/register", map[string]any{
+internal/handlers/integration_test.go:620: func hashLaunchTokenForTest(token string) string {
+internal/handlers/integration_test.go:682: 		"room_launch_tokens",
+internal/handlers/integration_test.go:726: 	rr := performJSONRequest(t, app.mux, http.MethodGet, "/auth/me", nil, token)
+internal/handlers/integration_test.go:743: func TestGetRoomDetails_ReturnsMembershipAndSourceState(t *testing.T) {
+internal/handlers/integration_test.go:747: 	host := mustRegisterUser(t, app, "room-details-host")
+internal/handlers/integration_test.go:748: 	guest := mustRegisterUser(t, app, "room-details-guest")
+internal/handlers/integration_test.go:750: 	createResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms", map[string]any{
+internal/handlers/integration_test.go:764: 	joinResp := performJSONRequest(t, app.mux, http.MethodPost, "/join-code/resolve", map[string]any{
+internal/handlers/integration_test.go:769: 	detailsResp := performJSONRequest(t, app.mux, http.MethodGet, "/rooms/"+room.ID+"/details", nil, guest.Token)
+internal/handlers/integration_test.go:770: 	assertStatus(t, detailsResp, http.StatusOK)
+internal/handlers/integration_test.go:772: 	var details struct {
+internal/handlers/integration_test.go:789: 	decodeJSON(t, detailsResp, &details)
+internal/handlers/integration_test.go:791: 	if details.Room.ID != room.ID {
+internal/handlers/integration_test.go:792: 		t.Fatalf("expected room id %q, got %q", room.ID, details.Room.ID)
+internal/handlers/integration_test.go:794: 	if details.Membership.Role != "editor" {
+internal/handlers/integration_test.go:795: 		t.Fatalf("expected membership role editor, got %q", details.Membership.Role)
+internal/handlers/integration_test.go:797: 	if details.SourceState.Type != services.SourceTypeGitHubRepo {
+internal/handlers/integration_test.go:798: 		t.Fatalf("expected source_state type %q, got %q", services.SourceTypeGitHubRepo, details.SourceState.Type)
+internal/handlers/integration_test.go:800: 	if !details.SourceState.Ready {
+internal/handlers/integration_test.go:803: 	if details.SourceState.RepoOwner != "jerryjuche" {
+internal/handlers/integration_test.go:804: 		t.Fatalf("expected repo_owner jerryjuche, got %q", details.SourceState.RepoOwner)
+internal/handlers/integration_test.go:806: 	if details.SourceState.RepoName != "CodeDock" {
+internal/handlers/integration_test.go:807: 		t.Fatalf("expected repo_name CodeDock, got %q", details.SourceState.RepoName)
+internal/handlers/integration_test.go:809: 	if details.SourceState.Branch != "staging" {
+internal/handlers/integration_test.go:810: 		t.Fatalf("expected branch staging, got %q", details.SourceState.Branch)
+internal/handlers/integration_test.go:821: 	createResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms", map[string]any{
+internal/handlers/integration_test.go:830: 	joinResp := performJSONRequest(t, app.mux, http.MethodPost, "/join-code/resolve", map[string]any{
+internal/handlers/integration_test.go:835: 	guestDeleteResp := performJSONRequest(t, app.mux, http.MethodDelete, "/rooms/"+room.ID, nil, guest.Token)
+internal/handlers/integration_test.go:838: 	hostDeleteResp := performJSONRequest(t, app.mux, http.MethodDelete, "/rooms/"+room.ID, nil, host.Token)
+internal/handlers/integration_test.go:841: 	listResp := performJSONRequest(t, app.mux, http.MethodGet, "/rooms", nil, host.Token)
+internal/handlers/integration_test.go:852: func TestGetRoomPresence_ReturnsConnectedMembers(t *testing.T) {
+internal/handlers/integration_test.go:856: 	host := mustRegisterUser(t, app, "presence-host")
+internal/handlers/integration_test.go:857: 	guest := mustRegisterUser(t, app, "presence-guest")
+internal/handlers/integration_test.go:859: 	createResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms", map[string]any{
+internal/handlers/integration_test.go:860: 		"name":        "Presence Room",
+internal/handlers/integration_test.go:868: 	joinResp := performJSONRequest(t, app.mux, http.MethodPost, "/join-code/resolve", map[string]any{
+internal/handlers/integration_test.go:887: 	presenceResp := performJSONRequest(t, app.mux, http.MethodGet, "/rooms/"+room.ID+"/presence", nil, host.Token)
+internal/handlers/integration_test.go:888: 	assertStatus(t, presenceResp, http.StatusOK)
+internal/handlers/integration_test.go:890: 	var presence struct {
+internal/handlers/integration_test.go:900: 	decodeJSON(t, presenceResp, &presence)
+internal/handlers/integration_test.go:902: 	if presence.TotalMembers != 2 {
+internal/handlers/integration_test.go:903: 		t.Fatalf("expected total_members=2, got %d", presence.TotalMembers)
+internal/handlers/integration_test.go:905: 	if presence.ConnectedCount != 2 {
+internal/handlers/integration_test.go:906: 		t.Fatalf("expected connected_count=2, got %d", presence.ConnectedCount)
+internal/handlers/integration_test.go:917: 	createResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms", map[string]any{
+internal/handlers/integration_test.go:926: 	joinResp := performJSONRequest(t, app.mux, http.MethodPost, "/join-code/resolve", map[string]any{
+internal/handlers/integration_test.go:931: 	beforeResp := performJSONRequest(t, app.mux, http.MethodGet, "/rooms/"+room.ID+"/details", nil, guest.Token)
+internal/handlers/integration_test.go:934: 	var beforeDetails struct {
+internal/handlers/integration_test.go:939: 			LaunchAllowed bool   `json:"launch_allowed"`
+internal/handlers/integration_test.go:942: 	decodeJSON(t, beforeResp, &beforeDetails)
+internal/handlers/integration_test.go:944: 	if beforeDetails.SourceState.Ready {
+internal/handlers/integration_test.go:947: 	if beforeDetails.SourceState.LaunchAllowed {
+internal/handlers/integration_test.go:948: 		t.Fatal("expected guest launch_allowed=false before host binds workspace")
+internal/handlers/integration_test.go:951: 	bindResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms/"+room.ID+"/source/local/bind", map[string]any{
+internal/handlers/integration_test.go:956: 	var boundDetails struct {
+internal/handlers/integration_test.go:961: 			LaunchAllowed  bool   `json:"launch_allowed"`
+internal/handlers/integration_test.go:965: 	decodeJSON(t, bindResp, &boundDetails)
+internal/handlers/integration_test.go:967: 	if !boundDetails.SourceState.Ready {
+internal/handlers/integration_test.go:970: 	if !boundDetails.SourceState.HostBound {
+internal/handlers/integration_test.go:973: 	if boundDetails.SourceState.Status != "ready" {
+internal/handlers/integration_test.go:974: 		t.Fatalf("expected status=ready, got %q", boundDetails.SourceState.Status)
+internal/handlers/integration_test.go:976: 	if !boundDetails.SourceState.LaunchAllowed {
+internal/handlers/integration_test.go:977: 		t.Fatal("expected launch_allowed=true after bind")
+internal/handlers/integration_test.go:979: 	if boundDetails.SourceState.WorkspaceLabel != "my-project" {
+internal/handlers/integration_test.go:980: 		t.Fatalf("expected workspace_label=my-project, got %q", boundDetails.SourceState.WorkspaceLabel)
+internal/handlers/invites.go:8: 	"github.com/jerryjuche/CodeDock/internal/auth"
+internal/handlers/invites.go:13: 	Service *services.InviteService
+internal/handlers/invites.go:62: func (h *InviteHandler) ListRoomInvites(w http.ResponseWriter, r *http.Request) {
+internal/handlers/invites.go:75: 	invites, err := h.Service.ListRoomInviteTokens(roomID, claims.UserID)
+internal/handlers/invites.go:85: 	writeJSON(w, http.StatusOK, invites)
+internal/handlers/launch.go:8: 	"github.com/jerryjuche/CodeDock/internal/auth"
+internal/handlers/launch.go:12: type LaunchHandler struct {
+internal/handlers/launch.go:13: 	Service *services.LaunchService
+internal/handlers/launch.go:16: type exchangeLaunchTokenRequest struct {
+internal/handlers/launch.go:17: 	LaunchToken string `json:"launch_token"`
+internal/handlers/launch.go:20: func (h *LaunchHandler) OpenInVSCode(w http.ResponseWriter, r *http.Request) {
+internal/handlers/launch.go:33: 	response, err := h.Service.CreateRoomLaunch(roomID, claims.UserID)
+internal/handlers/launch.go:46: func (h *LaunchHandler) ExchangeLaunchToken(w http.ResponseWriter, r *http.Request) {
+internal/handlers/launch.go:47: 	var req exchangeLaunchTokenRequest
+internal/handlers/launch.go:53: 	context, err := h.Service.ExchangeLaunchToken(req.LaunchToken)
+internal/handlers/launch.go:56: 		case errors.Is(err, services.ErrLaunchTokenInvalid):
+internal/handlers/launch.go:57: 			http.Error(w, "invalid launch token", http.StatusUnauthorized)
+internal/handlers/launch.go:59: 		case errors.Is(err, services.ErrLaunchTokenExpired):
+internal/handlers/launch.go:60: 			http.Error(w, "launch token expired", http.StatusGone)
+internal/handlers/rooms.go:8: 	"github.com/jerryjuche/CodeDock/internal/auth"
+internal/handlers/rooms.go:99: func (h *RoomHandler) GetRoomDetails(w http.ResponseWriter, r *http.Request) {
+internal/handlers/rooms.go:112: 	details, err := h.Services.GetRoomDetails(roomID, claims.UserID)
+internal/handlers/rooms.go:127: 	writeJSON(w, http.StatusOK, details)
+internal/handlers/rooms.go:130: func (h *RoomHandler) GetRoomPresence(w http.ResponseWriter, r *http.Request) {
+internal/handlers/rooms.go:148: 	presence, err := h.Services.GetRoomPresence(roomID, claims.UserID, connectedUserIDs)
+internal/handlers/rooms.go:163: 	writeJSON(w, http.StatusOK, presence)
+internal/handlers/rooms.go:185: 	details, err := h.Services.MarkLocalWorkspaceBound(roomID, claims.UserID, req.WorkspaceLabel)
+internal/handlers/rooms.go:203: 	writeJSON(w, http.StatusOK, details)
+internal/handlers/ws.go:7: 	"github.com/jerryjuche/CodeDock/internal/auth"
+internal/handlers/ws.go:37: //  5. Launch readPump and writePump goroutines
+internal/handlers/ws.go:78: 		// Step 5 — launch goroutines
+internal/hub/hub_test.go:222: 	payload := []byte("presence-update")
+internal/hub/message.go:7: 	MessageTypeAwareness            byte = 0x02 // cursor position and presence
+internal/services/invite.go:35: type InviteService struct {
+internal/services/invite.go:39: func (s *InviteService) ResolveJoinCodeForUser(code string, userID string) (*JoinCodeResolution, error) {
+internal/services/invite.go:122: func (s *InviteService) ListRoomInviteTokens(roomID, requesterUserID string) ([]RoomInviteToken, error) {
+internal/services/invite.go:147: 	invites := make([]RoomInviteToken, 0)
+internal/services/invite.go:176: 		invites = append(invites, invite)
+internal/services/invite.go:183: 	return invites, nil
+internal/services/invite.go:186: func (s *InviteService) CreateRoomInviteToken(
+internal/services/invite.go:284: func (s *InviteService) RevokeRoomInviteToken(roomID, inviteID, requesterUserID string) error {
+internal/services/invite_test.go:18: func TestInviteService_ResolvePrimaryJoinCode_AddsMembershipAndIsIdempotent(t *testing.T) {
+internal/services/invite_test.go:19: 	db := openInviteServiceTestDB(t)
+internal/services/invite_test.go:22: 	prepareInviteServiceTestDB(t, db)
+internal/services/invite_test.go:24: 	hostID := mustCreateInviteServiceUser(t, db, "invite-host-primary")
+internal/services/invite_test.go:25: 	guestID := mustCreateInviteServiceUser(t, db, "invite-guest-primary")
+internal/services/invite_test.go:27: 	room := mustCreateInviteServiceRoom(t, db, hostID, "Primary Join Room")
+internal/services/invite_test.go:29: 	service := &InviteService{DB: db}
+internal/services/invite_test.go:37: 		t.Fatal("expected room in join-code resolution result")
+internal/services/invite_test.go:72: func TestInviteService_CreateListRevokeAndResolveInviteTokens(t *testing.T) {
+internal/services/invite_test.go:73: 	db := openInviteServiceTestDB(t)
+internal/services/invite_test.go:76: 	prepareInviteServiceTestDB(t, db)
+internal/services/invite_test.go:78: 	hostID := mustCreateInviteServiceUser(t, db, "invite-host-token")
+internal/services/invite_test.go:79: 	guestAID := mustCreateInviteServiceUser(t, db, "invite-guest-a")
+internal/services/invite_test.go:80: 	guestBID := mustCreateInviteServiceUser(t, db, "invite-guest-b")
+internal/services/invite_test.go:81: 	guestCID := mustCreateInviteServiceUser(t, db, "invite-guest-c")
+internal/services/invite_test.go:83: 	room := mustCreateInviteServiceRoom(t, db, hostID, "Token Join Room")
+internal/services/invite_test.go:85: 	service := &InviteService{DB: db}
+internal/services/invite_test.go:110: 		t.Fatalf("expected no error listing room invites, got %v", err)
+internal/services/invite_test.go:132: 		t.Fatalf("expected no error listing room invites after use, got %v", err)
+internal/services/invite_test.go:161: func TestInviteService_CreateAndListInvites_RequiresHost(t *testing.T) {
+internal/services/invite_test.go:162: 	db := openInviteServiceTestDB(t)
+internal/services/invite_test.go:165: 	prepareInviteServiceTestDB(t, db)
+internal/services/invite_test.go:167: 	hostID := mustCreateInviteServiceUser(t, db, "invite-host-access")
+internal/services/invite_test.go:168: 	guestID := mustCreateInviteServiceUser(t, db, "invite-guest-access")
+internal/services/invite_test.go:170: 	room := mustCreateInviteServiceRoom(t, db, hostID, "Invite Access Room")
+internal/services/invite_test.go:172: 	service := &InviteService{DB: db}
+internal/services/invite_test.go:181: 		t.Fatalf("expected ErrRoomForbidden when guest lists invites, got %v", err)
+internal/services/invite_test.go:190: func TestInviteService_CreateInvite_ValidatesConfig(t *testing.T) {
+internal/services/invite_test.go:191: 	db := openInviteServiceTestDB(t)
+internal/services/invite_test.go:194: 	prepareInviteServiceTestDB(t, db)
+internal/services/invite_test.go:196: 	hostID := mustCreateInviteServiceUser(t, db, "invite-host-config")
+internal/services/invite_test.go:197: 	room := mustCreateInviteServiceRoom(t, db, hostID, "Invite Config Room")
+internal/services/invite_test.go:199: 	service := &InviteService{DB: db}
+internal/services/invite_test.go:214: func TestInviteService_ResolveInvalidAndExpiredCode(t *testing.T) {
+internal/services/invite_test.go:215: 	db := openInviteServiceTestDB(t)
+internal/services/invite_test.go:218: 	prepareInviteServiceTestDB(t, db)
+internal/services/invite_test.go:220: 	hostID := mustCreateInviteServiceUser(t, db, "invite-host-expired")
+internal/services/invite_test.go:221: 	guestID := mustCreateInviteServiceUser(t, db, "invite-guest-expired")
+internal/services/invite_test.go:223: 	room := mustCreateInviteServiceRoom(t, db, hostID, "Expired Invite Room")
+internal/services/invite_test.go:225: 	service := &InviteService{DB: db}
+internal/services/invite_test.go:252: func TestInviteService_RevokeInvite_NotFound(t *testing.T) {
+internal/services/invite_test.go:253: 	db := openInviteServiceTestDB(t)
+internal/services/invite_test.go:256: 	prepareInviteServiceTestDB(t, db)
+internal/services/invite_test.go:258: 	hostID := mustCreateInviteServiceUser(t, db, "invite-host-notfound")
+internal/services/invite_test.go:259: 	room := mustCreateInviteServiceRoom(t, db, hostID, "Revoke Missing Invite Room")
+internal/services/invite_test.go:261: 	service := &InviteService{DB: db}
+internal/services/invite_test.go:269: func openInviteServiceTestDB(t *testing.T) *sql.DB {
+internal/services/invite_test.go:272: 	loadInviteServiceTestEnv()
+internal/services/invite_test.go:289: 		inviteServiceEnvOrDefault("DB_SSLMODE", "disable"),
+internal/services/invite_test.go:302: 	if err := applyInviteServicePhase1Migration(db); err != nil {
+internal/services/invite_test.go:310: func prepareInviteServiceTestDB(t *testing.T, db *sql.DB) {
+internal/services/invite_test.go:314: 		"room_launch_tokens",
+internal/services/invite_test.go:351: func mustCreateInviteServiceUser(t *testing.T, db *sql.DB, prefix string) string {
+internal/services/invite_test.go:362: func mustCreateInviteServiceRoom(t *testing.T, db *sql.DB, hostID string, name string) *Room {
+internal/services/invite_test.go:377: func loadInviteServiceTestEnv() {
+internal/services/invite_test.go:392: func inviteServiceEnvOrDefault(key, fallback string) string {
+internal/services/invite_test.go:400: func applyInviteServicePhase1Migration(db *sql.DB) error {
+internal/services/launch.go:15: 	"github.com/jerryjuche/CodeDock/internal/auth"
+internal/services/launch.go:19: 	ErrLaunchTokenInvalid = errors.New("invalid launch token")
+internal/services/launch.go:20: 	ErrLaunchTokenExpired = errors.New("launch token expired")
+internal/services/launch.go:24: 	launchTokenTTL      = 2 * time.Minute
+internal/services/launch.go:28: type LaunchTokenResponse struct {
+internal/services/launch.go:29: 	LaunchToken string `json:"launch_token"`
+internal/services/launch.go:33: type LaunchContext struct {
+internal/services/launch.go:44: type LaunchService struct {
+internal/services/launch.go:48: func (s *LaunchService) CreateRoomLaunch(roomID, userID string) (*LaunchTokenResponse, error) {
+internal/services/launch.go:65: 	rawToken, err := generateLaunchToken()
+internal/services/launch.go:70: 	tokenHash := hashLaunchToken(rawToken)
+internal/services/launch.go:73: 		INSERT INTO room_launch_tokens (
+internal/services/launch.go:81: 	`, roomID, userID, role, tokenHash, time.Now().Add(launchTokenTTL))
+internal/services/launch.go:87: 		"vscode://%s/launch?token=%s",
+internal/services/launch.go:92: 	return &LaunchTokenResponse{
+internal/services/launch.go:93: 		LaunchToken: rawToken,
+internal/services/launch.go:98: func (s *LaunchService) ExchangeLaunchToken(rawToken string) (*LaunchContext, error) {
+internal/services/launch.go:100: 		return nil, ErrLaunchTokenInvalid
+internal/services/launch.go:103: 	tokenHash := hashLaunchToken(rawToken)
+internal/services/launch.go:111: 	var ctx LaunchContext
+internal/services/launch.go:130: 		FROM room_launch_tokens rlt
+internal/services/launch.go:149: 		return nil, ErrLaunchTokenInvalid
+internal/services/launch.go:156: 		return nil, ErrLaunchTokenInvalid
+internal/services/launch.go:159: 		return nil, ErrLaunchTokenExpired
+internal/services/launch.go:163: 		UPDATE room_launch_tokens
+internal/services/launch.go:177: 	ctx.WorkspacePathHint = fmt.Sprintf("~/.codedock/rooms/%s", ctx.RoomSlug)
+internal/services/launch.go:187: func generateLaunchToken() (string, error) {
+internal/services/launch.go:195: func hashLaunchToken(token string) string {
+internal/services/rooms.go:57: 	LaunchAllowed bool   `json:"launch_allowed"`
+internal/services/rooms.go:58: 	LaunchReason  string `json:"launch_reason,omitempty"`
+internal/services/rooms.go:67: type RoomDetails struct {
+internal/services/rooms.go:73: type RoomPresenceMember struct {
+internal/services/rooms.go:80: type RoomPresence struct {
+internal/services/rooms.go:81: 	Members        []RoomPresenceMember `json:"members"`
+internal/services/rooms.go:240: func (s *RoomService) GetRoomDetails(roomID, userID string) (*RoomDetails, error) {
+internal/services/rooms.go:251: 	return &RoomDetails{
+internal/services/rooms.go:260: func (s *RoomService) GetRoomPresence(roomID, userID string, connectedUserIDs map[string]bool) (*RoomPresence, error) {
+internal/services/rooms.go:285: 	members := make([]RoomPresenceMember, 0)
+internal/services/rooms.go:289: 		var member RoomPresenceMember
+internal/services/rooms.go:306: 	return &RoomPresence{
+internal/services/rooms.go:313: func (s *RoomService) MarkLocalWorkspaceBound(roomID, userID, workspaceLabel string) (*RoomDetails, error) {
+internal/services/rooms.go:359: 	return s.GetRoomDetails(roomID, userID)
+internal/services/rooms.go:483: 		UPDATE room_launch_tokens
+internal/services/rooms.go:516: 			state.LaunchAllowed = true
+internal/services/rooms.go:520: 			state.LaunchAllowed = false
+internal/services/rooms.go:521: 			state.LaunchReason = "GitHub workspace provisioning is not ready yet."
+internal/services/rooms.go:525: 			state.LaunchAllowed = false
+internal/services/rooms.go:526: 			state.LaunchReason = "Repository metadata is incomplete."
+internal/services/rooms.go:544: 			state.LaunchAllowed = true
+internal/services/rooms.go:548: 			state.LaunchAllowed = true
+internal/services/rooms.go:549: 			state.LaunchReason = "Select your project folder in VS Code to publish this room."
+internal/services/rooms.go:553: 			state.LaunchAllowed = false
+internal/services/rooms.go:554: 			state.LaunchReason = "The host has not selected a project folder yet."
+internal/services/rooms.go:559: 		state.LaunchAllowed = false
+internal/services/rooms.go:560: 		state.LaunchReason = "Unknown room source type."
+main.go:11: 	"github.com/jerryjuche/CodeDock/internal/auth"
+main.go:37: 	inviteService := &services.InviteService{DB: db}
+main.go:38: 	inviteHandler := &handlers.InviteHandler{Service: inviteService}
+main.go:40: 	launchService := &services.LaunchService{DB: db}
+main.go:41: 	launchHandler := &handlers.LaunchHandler{Service: launchService}
+main.go:52: 	mux.HandleFunc("POST /auth/register", authHandler.Register)
+main.go:53: 	mux.HandleFunc("POST /auth/login", authHandler.Login)
+main.go:54: 	mux.Handle("GET /auth/me", auth.RequireAuth(http.HandlerFunc(authHandler.Me)))
+main.go:57: 	mux.HandleFunc("POST /auth/exchange", authHandler.ExchangeCode)
+main.go:60: 	mux.Handle("POST /rooms", auth.RequireAuth(http.HandlerFunc(roomHandler.CreateRoom)))
+main.go:61: 	mux.Handle("GET /rooms", auth.RequireAuth(http.HandlerFunc(roomHandler.GetUserRooms)))
+main.go:62: 	mux.Handle("GET /rooms/{id}", auth.RequireAuth(http.HandlerFunc(roomHandler.GetRoom)))
+main.go:63: 	mux.Handle("GET /rooms/{id}/details", auth.RequireAuth(http.HandlerFunc(roomHandler.GetRoomDetails)))
+main.go:64: 	mux.Handle("GET /rooms/{id}/presence", auth.RequireAuth(http.HandlerFunc(roomHandler.GetRoomPresence)))
+main.go:65: 	mux.Handle("POST /rooms/{id}/source/local/bind", auth.RequireAuth(http.HandlerFunc(roomHandler.BindLocalWorkspace)))
+main.go:66: 	mux.Handle("DELETE /rooms/{id}", auth.RequireAuth(http.HandlerFunc(roomHandler.DeleteRoom)))
+main.go:69: 	mux.Handle("POST /join-code/resolve", auth.RequireAuth(http.HandlerFunc(inviteHandler.ResolveJoinCode)))
+main.go:70: 	mux.Handle("GET /rooms/{roomId}/invites", auth.RequireAuth(http.HandlerFunc(inviteHandler.ListRoomInvites)))
+main.go:71: 	mux.Handle("POST /rooms/{roomId}/invites", auth.RequireAuth(http.HandlerFunc(inviteHandler.CreateRoomInvite)))
+main.go:72: 	mux.Handle("POST /rooms/{roomId}/invites/{inviteId}/revoke", auth.RequireAuth(http.HandlerFunc(inviteHandler.RevokeRoomInvite)))
+main.go:74: 	mux.Handle("POST /rooms/{roomId}/open-in-vscode", auth.RequireAuth(http.HandlerFunc(launchHandler.OpenInVSCode)))
+main.go:75: 	mux.HandleFunc("POST /vscode/launch/exchange", launchHandler.ExchangeLaunchToken)
+migration/0002_phase1_control_plane.sql:127: CREATE TABLE IF NOT EXISTS room_launch_tokens (
+migration/0002_phase1_control_plane.sql:138: CREATE INDEX IF NOT EXISTS idx_room_launch_tokens_room_id
+migration/0002_phase1_control_plane.sql:139:     ON room_launch_tokens(room_id);
+migration/0002_phase1_control_plane.sql:141: CREATE INDEX IF NOT EXISTS idx_room_launch_tokens_user_id
+migration/0002_phase1_control_plane.sql:142:     ON room_launch_tokens(user_id);
+migration/0002_phase1_control_plane.sql:144: CREATE INDEX IF NOT EXISTS idx_room_launch_tokens_expires_at
+migration/0002_phase1_control_plane.sql:145:     ON room_launch_tokens(expires_at);
+scripts/check-phase1-control-plane.sql:29: FROM room_launch_tokens
+scripts/collect_codedock_full_snapshot.sh:195:         r"/auth|/rooms|join-code|invites|launch|presence|details|source/local/bind|open-in-vscode",
+scripts/collect_codedock_full_snapshot.sh:203:         r"source_state|launch_allowed|ready|local_workspace|github_repo|source_type|source_metadata",
+scripts/collect_codedock_full_snapshot.sh:207:         r"owner|host|guest|editor|viewer|membership|presence|connected",
+scripts/collect_codedock_full_snapshot.sh:428: - readiness / details / presence calls if relevant
+scripts/create-test-users.sh:20:   curl -sS -X POST "$BASE_URL/auth/register" \
+scripts/create-test-users.sh:32:   curl -sS -X POST "$BASE_URL/auth/login" \
+scripts/scaffold-codedock-web.sh:11:   "$ROOT/app/(app)/rooms/new" \
+scripts/scaffold-codedock-web.sh:12:   "$ROOT/app/(app)/rooms/[roomId]" \
+scripts/scaffold-codedock-web.sh:13:   "$ROOT/components/auth" \
+scripts/scaffold-codedock-web.sh:15:   "$ROOT/components/rooms" \
+scripts/scaffold-codedock-web.sh:215:           Web control plane for rooms, invites, launch tokens, and VS Code collaboration.
+scripts/scaffold-codedock-web.sh:235: import LoginForm from "@/components/auth/login-form";
+scripts/scaffold-codedock-web.sh:247: import RegisterForm from "@/components/auth/register-form";
+scripts/scaffold-codedock-web.sh:261: import JoinCodeForm from "@/components/dashboard/join-code-form";
+scripts/scaffold-codedock-web.sh:269:         <p className="mt-2 text-zinc-400">Manage rooms, join by code, and launch collaboration sessions.</p>
+scripts/scaffold-codedock-web.sh:284: import JoinCodeForm from "@/components/dashboard/join-code-form";
+scripts/scaffold-codedock-web.sh:299: cat > "$ROOT/app/(app)/rooms/new/page.tsx" <<'EOF'
+scripts/scaffold-codedock-web.sh:300: import CreateRoomForm from "@/components/rooms/create-room-form";
+scripts/scaffold-codedock-web.sh:315: cat > "$ROOT/app/(app)/rooms/[roomId]/page.tsx" <<'EOF'
+scripts/scaffold-codedock-web.sh:316: import InviteCreateForm from "@/components/rooms/invite-create-form";
+scripts/scaffold-codedock-web.sh:317: import InviteList from "@/components/rooms/invite-list";
+scripts/scaffold-codedock-web.sh:318: import OpenInVSCodeButton from "@/components/rooms/open-in-vscode-button";
+scripts/scaffold-codedock-web.sh:319: import RoomHeader from "@/components/rooms/room-header";
+scripts/scaffold-codedock-web.sh:327: export default async function RoomDetailsPage({ params }: Props) {
+scripts/scaffold-codedock-web.sh:483: cat > "$ROOT/components/auth/auth-guard.tsx" <<'EOF'
+scripts/scaffold-codedock-web.sh:512: cat > "$ROOT/components/auth/login-form.tsx" <<'EOF'
+scripts/scaffold-codedock-web.sh:517: import { login } from "@/lib/api/auth";
+scripts/scaffold-codedock-web.sh:568: cat > "$ROOT/components/auth/register-form.tsx" <<'EOF'
+scripts/scaffold-codedock-web.sh:573: import { register } from "@/lib/api/auth";
+scripts/scaffold-codedock-web.sh:645:       <Link className="mt-4 inline-block text-sm font-medium underline" href={`/rooms/${room.id}`}>
+scripts/scaffold-codedock-web.sh:668:         <Link className="rounded-xl border border-zinc-700 px-4 py-2 text-sm font-medium" href="/rooms/new">
+scripts/scaffold-codedock-web.sh:691: cat > "$ROOT/components/dashboard/join-code-form.tsx" <<'EOF'
+scripts/scaffold-codedock-web.sh:696: import { useJoinCode } from "@/hooks/use-join-code";
+scripts/scaffold-codedock-web.sh:711:       router.push(`/rooms/${result.room.id}`);
+scripts/scaffold-codedock-web.sh:723:           <Label htmlFor="join-code">Invite Code</Label>
+scripts/scaffold-codedock-web.sh:725:             id="join-code"
+scripts/scaffold-codedock-web.sh:745: cat > "$ROOT/components/rooms/create-room-form.tsx" <<'EOF'
+scripts/scaffold-codedock-web.sh:750: import { createRoom } from "@/lib/api/rooms";
+scripts/scaffold-codedock-web.sh:780:       router.push(`/rooms/${room.id}`);
+scripts/scaffold-codedock-web.sh:818: cat > "$ROOT/components/rooms/invite-list.tsx" <<'EOF'
+scripts/scaffold-codedock-web.sh:821: import { useInvites } from "@/hooks/use-invites";
+scripts/scaffold-codedock-web.sh:826:   const { invites, loading, error, revokeInvite } = useInvites(roomId);
+scripts/scaffold-codedock-web.sh:835:           <div>Loading invites...</div>
+scripts/scaffold-codedock-web.sh:838:         ) : invites.length === 0 ? (
+scripts/scaffold-codedock-web.sh:841:           invites.map((invite) => (
+scripts/scaffold-codedock-web.sh:868: cat > "$ROOT/components/rooms/invite-create-form.tsx" <<'EOF'
+scripts/scaffold-codedock-web.sh:872: import { useInvites } from "@/hooks/use-invites";
+scripts/scaffold-codedock-web.sh:879:   const { createInvite } = useInvites(roomId);
+scripts/scaffold-codedock-web.sh:929: cat > "$ROOT/components/rooms/open-in-vscode-button.tsx" <<'EOF'
+scripts/scaffold-codedock-web.sh:932: import { useLaunch } from "@/hooks/use-launch";
+scripts/scaffold-codedock-web.sh:937:   const { openRoom, loading } = useLaunch(roomId);
+scripts/scaffold-codedock-web.sh:941:       <h3 className="text-lg font-semibold">Launch</h3>
+scripts/scaffold-codedock-web.sh:943:         Generate a one-time launch token and open the room in VS Code.
+scripts/scaffold-codedock-web.sh:955: cat > "$ROOT/components/rooms/room-header.tsx" <<'EOF'
+scripts/scaffold-codedock-web.sh:988: cat > "$ROOT/components/rooms/room-source-badge.tsx" <<'EOF'
+scripts/scaffold-codedock-web.sh:1038: import { getRooms } from "@/lib/api/rooms";
+scripts/scaffold-codedock-web.sh:1078: import { getRoom } from "@/lib/api/rooms";
+scripts/scaffold-codedock-web.sh:1114: cat > "$ROOT/hooks/use-join-code.ts" <<'EOF'
+scripts/scaffold-codedock-web.sh:1118: import { resolveJoinCode } from "@/lib/api/rooms";
+scripts/scaffold-codedock-web.sh:1142: cat > "$ROOT/hooks/use-invites.ts" <<'EOF'
+scripts/scaffold-codedock-web.sh:1146: import { createRoomInvite, getRoomInvites, revokeRoomInvite } from "@/lib/api/invites";
+scripts/scaffold-codedock-web.sh:1150: export function useInvites(roomId: string) {
+scripts/scaffold-codedock-web.sh:1152:   const [invites, setInvites] = useState<RoomInviteToken[]>([]);
+scripts/scaffold-codedock-web.sh:1164:       const response = await getRoomInvites(token, roomId);
+scripts/scaffold-codedock-web.sh:1165:       setInvites(response);
+scripts/scaffold-codedock-web.sh:1168:       setError(err instanceof Error ? err.message : "Failed to load invites");
+scripts/scaffold-codedock-web.sh:1199:   return { invites, loading, error, createInvite, revokeInvite, reload: load };
+scripts/scaffold-codedock-web.sh:1203: cat > "$ROOT/hooks/use-launch.ts" <<'EOF'
+scripts/scaffold-codedock-web.sh:1207: import { openInVSCode } from "@/lib/api/launch";
+scripts/scaffold-codedock-web.sh:1210: export function useLaunch(roomId: string) {
+scripts/scaffold-codedock-web.sh:1236: cat > "$ROOT/types/auth.ts" <<'EOF'
+scripts/scaffold-codedock-web.sh:1278: cat > "$ROOT/types/launch.ts" <<'EOF'
+scripts/scaffold-codedock-web.sh:1279: export type LaunchTokenResponse = {
+scripts/scaffold-codedock-web.sh:1280:   launch_token: string;
+scripts/scaffold-codedock-web.sh:1284: export type LaunchContext = {
+scripts/scaffold-codedock-web.sh:1346: cat > "$ROOT/lib/api/auth.ts" <<'EOF'
+scripts/scaffold-codedock-web.sh:1348: import type { AuthResponse, CurrentUser } from "@/types/auth";
+scripts/scaffold-codedock-web.sh:1351:   return apiRequest<AuthResponse>("/auth/register", {
+scripts/scaffold-codedock-web.sh:1358:   return apiRequest<AuthResponse>("/auth/login", {
+scripts/scaffold-codedock-web.sh:1365:   return apiRequest<CurrentUser>("/auth/me", {
+scripts/scaffold-codedock-web.sh:1371: cat > "$ROOT/lib/api/rooms.ts" <<'EOF'
+scripts/scaffold-codedock-web.sh:1376:   return apiRequest<Room[]>("/rooms", { token });
+scripts/scaffold-codedock-web.sh:1380:   return apiRequest<Room>(`/rooms/${roomId}`, { token });
+scripts/scaffold-codedock-web.sh:1391:   return apiRequest<Room>("/rooms", {
+scripts/scaffold-codedock-web.sh:1405:   }>("/join-code/resolve", {
+scripts/scaffold-codedock-web.sh:1413: cat > "$ROOT/lib/api/invites.ts" <<'EOF'
+scripts/scaffold-codedock-web.sh:1417: export function getRoomInvites(token: string, roomId: string) {
+scripts/scaffold-codedock-web.sh:1418:   return apiRequest<RoomInviteToken[]>(`/rooms/${roomId}/invites`, { token });
+scripts/scaffold-codedock-web.sh:1429:   return apiRequest<RoomInviteToken>(`/rooms/${roomId}/invites`, {
+scripts/scaffold-codedock-web.sh:1442:     `/rooms/${roomId}/invites/${inviteId}/revoke`,
+scripts/scaffold-codedock-web.sh:1451: cat > "$ROOT/lib/api/launch.ts" <<'EOF'
+scripts/scaffold-codedock-web.sh:1453: import type { LaunchTokenResponse } from "@/types/launch";
+scripts/scaffold-codedock-web.sh:1456:   return apiRequest<LaunchTokenResponse>(`/rooms/${roomId}/open-in-vscode`, {

@@ -1,5 +1,5 @@
 import { apiRequest } from "./client";
-import type { Room } from "@/types/room";
+import type { Room, RoomDetails, RoomPresence } from "@/types/room";
 
 export function getRooms(token: string) {
   return apiRequest<Room[]>("/rooms", { token });
@@ -7,6 +7,26 @@ export function getRooms(token: string) {
 
 export function getRoom(token: string, roomId: string) {
   return apiRequest<Room>(`/rooms/${roomId}`, { token });
+}
+
+export function getRoomDetails(token: string, roomId: string) {
+  return apiRequest<RoomDetails>(`/rooms/${roomId}/details`, { token });
+}
+
+export function getRoomPresence(token: string, roomId: string) {
+  return apiRequest<RoomPresence>(`/rooms/${roomId}/presence`, { token });
+}
+
+export function bindLocalWorkspace(
+  token: string,
+  roomId: string,
+  payload: { workspace_label?: string },
+) {
+  return apiRequest<RoomDetails>(`/rooms/${roomId}/source/local/bind`, {
+    method: "POST",
+    token,
+    body: payload,
+  });
 }
 
 export function createRoom(
@@ -20,7 +40,7 @@ export function createRoom(
   return apiRequest<Room>("/rooms", {
     method: "POST",
     token,
-    body: payload
+    body: payload,
   });
 }
 
@@ -34,6 +54,13 @@ export function resolveJoinCode(token: string, code: string) {
   }>("/join-code/resolve", {
     method: "POST",
     token,
-    body: { code }
+    body: { code },
+  });
+}
+
+export function deleteRoom(token: string, roomId: string) {
+  return apiRequest<{ success: boolean }>(`/rooms/${roomId}`, {
+    method: "DELETE",
+    token,
   });
 }

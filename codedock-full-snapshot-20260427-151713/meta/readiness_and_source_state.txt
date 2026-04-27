@@ -1,0 +1,172 @@
+README.md:15: This handoff captures the current state of CodeDock, the hosting decisions already reasoned through, what changed, what is now recommended, and the exact next direction.
+README.md:40: Backend and extension are already far along.
+README.md:398: These were already identified in the uploaded project handoff and remain the broader roadmap after deployment. 
+README.md:479: CodeDock is already technically advanced enough that the main blocker is no longer core product architecture but finding the right zero-cost hosting model for a persistent WebSocket backend. Koyeb is no longer the preferred free solution, Appwrite is not the right main backend fit, and the strongest current approach is Oracle Cloud Always Free for the Go/WebSocket server plus Supabase for the managed app/database layer. The next step is to deploy a minimal Oracle VM stack using Ubuntu, a direct Go binary, systemd, Caddy, and manual deploys, then run the first real public multi-user collaboration test. 
+README.md:483: ## 17. Paste-ready continuation prompt for the next chat
+codedock-core-debug-bundle.txt:511: 	slowReceiver.Send <- []byte("already buffered")
+codedock-core-debug-bundle.txt:516: 	if string(first) != "already buffered" {
+codedock-core-debug-bundle.txt:705: // Message carries a decoded incoming message ready for routing.
+codedock-core-debug-bundle.txt:764: 			http.Error(w, "email already registered", http.StatusConflict)
+codedock-core-debug-bundle.txt:1493: var ErrInviteExpired = errors.New("invite token expired or already used")
+codedock-core-debug-bundle.txt:1544: 	// Step 2 — check if token is expired or already used
+codedock-core-debug-bundle.txt:1670: func TestExchangeInviteCode_AlreadyUsedCode(t *testing.T) {
+codedock-core-debug-bundle.txt:2358: // uses an email address that already exists in the database.
+codedock-core-debug-bundle.txt:2359: var ErrDuplicateEmail = errors.New("email already registered")
+codedock-core-debug-bundle.txt:2731:         // skip own messages — already rendered optimistically
+codedock-core-debug-bundle.txt:2861:             // content is already sanitized by the extension host
+codedock-core-debug-bundle.txt:3196:   const sessionReady = await restoreSession();
+codedock-core-debug-bundle.txt:3198:   if (sessionReady) {
+codedock-core-debug-bundle.txt:4319:       this.log("activate skipped: already active");
+codedock-core-debug-bundle.txt:4452:       this.log(`bind skipped: already bound (${fileKey})`);
+codedock-web/components/auth/register-form.tsx:88:         Already have an account?{" "}
+codedock-web/components/dashboard/room-card.tsx:14:         <Badge>{room.source_type}</Badge>
+codedock-web/components/rooms/create-room-form.tsx:17:   const [sourceType, setSourceType] = useState<"local_workspace" | "github_repo">(
+codedock-web/components/rooms/create-room-form.tsx:18:     "local_workspace",
+codedock-web/components/rooms/create-room-form.tsx:34:       sourceType === "github_repo"
+codedock-web/components/rooms/create-room-form.tsx:43:       sourceType === "github_repo" &&
+codedock-web/components/rooms/create-room-form.tsx:54:         source_type: sourceType,
+codedock-web/components/rooms/create-room-form.tsx:55:         source_metadata: sourceMetadata,
+codedock-web/components/rooms/create-room-form.tsx:86:               setSourceType(e.target.value as "local_workspace" | "github_repo")
+codedock-web/components/rooms/create-room-form.tsx:89:             <option value="local_workspace">Local Workspace</option>
+codedock-web/components/rooms/create-room-form.tsx:90:             <option value="github_repo">GitHub Repository</option>
+codedock-web/components/rooms/create-room-form.tsx:94:         {sourceType === "github_repo" && (
+codedock-web/components/rooms/room-details-page.tsx:55:           <SourceStateCard sourceState={details.source_state} />
+codedock-web/components/rooms/room-header.tsx:26:           <Badge>{room.source_type}</Badge>
+codedock-web/components/rooms/room-source-badge.tsx:6:   sourceType: "local_workspace" | "github_repo";
+codedock-web/components/rooms/source-state-card.tsx:35:           <span className="text-zinc-500">Ready:</span> {sourceState.ready ? "Yes" : "No"}
+codedock-web/components/rooms/source-state-card.tsx:38:         {sourceState.type === "local_workspace" && (
+codedock-web/components/rooms/source-state-card.tsx:45:         {sourceState.type === "github_repo" && (
+codedock-web/lib/api/rooms.ts:20:     source_type: "local_workspace" | "github_repo";
+codedock-web/lib/api/rooms.ts:21:     source_metadata?: Record<string, unknown>;
+codedock-web/types/launch.ts:11:   source_type: "local_workspace" | "github_repo";
+codedock-web/types/launch.ts:12:   source_metadata: Record<string, unknown>;
+codedock-web/types/room.ts:7:   source_type: "local_workspace" | "github_repo";
+codedock-web/types/room.ts:8:   source_metadata: Record<string, unknown>;
+codedock-web/types/room.ts:20:   type: "local_workspace" | "github_repo" | string;
+codedock-web/types/room.ts:21:   ready: boolean;
+codedock-web/types/room.ts:32:   source_state: RoomSourceState;
+extension/README.md:63:   Work where your code already lives.
+extension/src/api.ts:10:   source_type: "local_workspace" | "github_repo";
+extension/src/api.ts:11:   source_metadata: Record<string, unknown>;
+extension/src/chat.ts:102:         // skip own messages — already rendered optimistically
+extension/src/chat.ts:232:             // content is already sanitized by the extension host
+extension/src/extension.ts:170:       outputChannel.appendLine("CodeDock: launch workspace already open, resuming directly");
+extension/src/extension.ts:253:     sourceType: launchContext.source_type,
+extension/src/yjs-sync.ts:189:       this.log("activate skipped: already active");
+extension/src/yjs-sync.ts:322:       this.log(`bind skipped: already bound (${fileKey})`);
+extension/src/yjs-sync.ts:1109:         const alreadyBound = this.bindings.has(entry.path);
+extension/src/yjs-sync.ts:1110:         if (!alreadyBound) {
+extension/src/yjs-sync.ts:1319:           this.log(`reconcile skipped: content already matches (${fileKey})`);
+hydration-debug-bundle.txt:269:       this.log("activate skipped: already active");
+hydration-debug-bundle.txt:385:       this.log(`bind skipped: already bound (${fileKey})`);
+internal/handlers/auth.go:55: 			http.Error(w, "email already registered", http.StatusConflict)
+internal/handlers/integration_test.go:51: 	SourceType      string          `json:"source_type"`
+internal/handlers/integration_test.go:52: 	SourceMetadata  json.RawMessage `json:"source_metadata"`
+internal/handlers/integration_test.go:88: 	SourceType        string          `json:"source_type"`
+internal/handlers/integration_test.go:89: 	SourceMetadata    json.RawMessage `json:"source_metadata"`
+internal/handlers/integration_test.go:191: 		"source_type": "bad_source",
+internal/handlers/integration_test.go:197: 		"source_type": "github_repo",
+internal/handlers/integration_test.go:198: 		"source_metadata": map[string]any{
+internal/handlers/integration_test.go:275: 		"source_type": "local_workspace",
+internal/handlers/integration_test.go:276: 		"source_metadata": map[string]any{
+internal/handlers/integration_test.go:752: 		"source_type": "github_repo",
+internal/handlers/integration_test.go:753: 		"source_metadata": map[string]any{
+internal/handlers/integration_test.go:775: 			SourceType string `json:"source_type"`
+internal/handlers/integration_test.go:782: 			Ready     bool   `json:"ready"`
+internal/handlers/integration_test.go:787: 		} `json:"source_state"`
+internal/handlers/integration_test.go:798: 		t.Fatalf("expected source_state type %q, got %q", services.SourceTypeGitHubRepo, details.SourceState.Type)
+internal/handlers/integration_test.go:800: 	if !details.SourceState.Ready {
+internal/handlers/integration_test.go:801: 		t.Fatal("expected github source_state ready=true")
+internal/handlers/integration_test.go:823: 		"source_type": "local_workspace",
+internal/handlers/integration_test.go:861: 		"source_type": "local_workspace",
+internal/handlers/integration_test.go:919: 		"source_type": "local_workspace",
+internal/handlers/integration_test.go:936: 			Ready         bool   `json:"ready"`
+internal/handlers/integration_test.go:939: 			LaunchAllowed bool   `json:"launch_allowed"`
+internal/handlers/integration_test.go:940: 		} `json:"source_state"`
+internal/handlers/integration_test.go:944: 	if beforeDetails.SourceState.Ready {
+internal/handlers/integration_test.go:945: 		t.Fatal("expected room not ready before host binds workspace")
+internal/handlers/integration_test.go:948: 		t.Fatal("expected guest launch_allowed=false before host binds workspace")
+internal/handlers/integration_test.go:958: 			Ready          bool   `json:"ready"`
+internal/handlers/integration_test.go:961: 			LaunchAllowed  bool   `json:"launch_allowed"`
+internal/handlers/integration_test.go:963: 		} `json:"source_state"`
+internal/handlers/integration_test.go:967: 	if !boundDetails.SourceState.Ready {
+internal/handlers/integration_test.go:968: 		t.Fatal("expected room ready after bind")
+internal/handlers/integration_test.go:973: 	if boundDetails.SourceState.Status != "ready" {
+internal/handlers/integration_test.go:974: 		t.Fatalf("expected status=ready, got %q", boundDetails.SourceState.Status)
+internal/handlers/integration_test.go:977: 		t.Fatal("expected launch_allowed=true after bind")
+internal/handlers/rooms.go:20: 	SourceType     string          `json:"source_type"`
+internal/handlers/rooms.go:21: 	SourceMetadata json.RawMessage `json:"source_metadata"`
+internal/hub/hub_test.go:200: 	slowReceiver.Send <- []byte("already-buffered")
+internal/hub/hub_test.go:204: 	if string(first) != "already-buffered" {
+internal/hub/message.go:16: // Message carries a decoded incoming message ready for routing.
+internal/services/invite.go:321: 			source_type,
+internal/services/invite.go:322: 			source_metadata,
+internal/services/invite.go:366: 			r.source_type,
+internal/services/invite.go:367: 			r.source_metadata,
+internal/services/launch.go:38: 	SourceType        string          `json:"source_type"`
+internal/services/launch.go:39: 	SourceMetadata    json.RawMessage `json:"source_metadata"`
+internal/services/launch.go:128: 			r.source_type,
+internal/services/launch.go:129: 			r.source_metadata
+internal/services/rooms.go:22: 	SourceTypeLocalWorkspace = "local_workspace"
+internal/services/rooms.go:23: 	SourceTypeGitHubRepo     = "github_repo"
+internal/services/rooms.go:34: 	SourceType      string          `json:"source_type"`
+internal/services/rooms.go:35: 	SourceMetadata  json.RawMessage `json:"source_metadata"`
+internal/services/rooms.go:44: 	SourceType     string          `json:"source_type"`
+internal/services/rooms.go:45: 	SourceMetadata json.RawMessage `json:"source_metadata"`
+internal/services/rooms.go:54: 	Ready         bool   `json:"ready"`
+internal/services/rooms.go:57: 	LaunchAllowed bool   `json:"launch_allowed"`
+internal/services/rooms.go:70: 	SourceState RoomSourceState `json:"source_state"`
+internal/services/rooms.go:139: 			source_type,
+internal/services/rooms.go:140: 			source_metadata,
+internal/services/rooms.go:150: 			source_type,
+internal/services/rooms.go:151: 			source_metadata,
+internal/services/rooms.go:208: 			source_type,
+internal/services/rooms.go:209: 			source_metadata,
+internal/services/rooms.go:336: 	metadata["ready"] = true
+internal/services/rooms.go:337: 	metadata["status"] = "ready"
+internal/services/rooms.go:350: 		SET source_metadata = $2,
+internal/services/rooms.go:370: 			r.source_type,
+internal/services/rooms.go:371: 			r.source_metadata,
+internal/services/rooms.go:503: 			CloneReady bool   `json:"clone_ready"`
+internal/services/rooms.go:504: 			Ready      bool   `json:"ready"`
+internal/services/rooms.go:513: 		if meta.CloneReady || meta.Ready {
+internal/services/rooms.go:514: 			state.Ready = true
+internal/services/rooms.go:515: 			state.Status = "ready"
+internal/services/rooms.go:518: 			state.Ready = false
+internal/services/rooms.go:519: 			state.Status = "clone_not_ready"
+internal/services/rooms.go:521: 			state.LaunchReason = "GitHub workspace provisioning is not ready yet."
+internal/services/rooms.go:523: 			state.Ready = false
+internal/services/rooms.go:532: 			Ready          bool   `json:"ready"`
+internal/services/rooms.go:538: 		state.HostBound = meta.WorkspaceBound || meta.Ready
+internal/services/rooms.go:542: 			state.Ready = true
+internal/services/rooms.go:543: 			state.Status = "ready"
+internal/services/rooms.go:546: 			state.Ready = false
+internal/services/rooms.go:551: 			state.Ready = false
+internal/services/rooms.go:587: 		return nil, errors.New("invalid source_metadata json")
+internal/services/users.go:11: // uses an email address that already exists in the database.
+internal/services/users.go:12: var ErrDuplicateEmail = errors.New("email already registered")
+migration/0002_phase1_control_plane.sql:53:     ADD COLUMN IF NOT EXISTS source_type TEXT,
+migration/0002_phase1_control_plane.sql:54:     ADD COLUMN IF NOT EXISTS source_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+migration/0002_phase1_control_plane.sql:64: SET source_type = 'local_workspace'
+migration/0002_phase1_control_plane.sql:65: WHERE source_type IS NULL
+migration/0002_phase1_control_plane.sql:66:    OR btrim(source_type) = '';
+migration/0002_phase1_control_plane.sql:184:     ALTER COLUMN source_type SET NOT NULL,
+scripts/check-phase1-control-plane.sql:6:     source_type,
+scripts/collect_codedock_full_snapshot.sh:202:     "readiness_and_source_state": re.compile(
+scripts/collect_codedock_full_snapshot.sh:203:         r"source_state|launch_allowed|ready|local_workspace|github_repo|source_type|source_metadata",
+scripts/collect_codedock_full_snapshot.sh:390:             "- readiness_and_source_state",
+scripts/scaffold-codedock-web.sh:642:         <Badge>{room.source_type}</Badge>
+scripts/scaffold-codedock-web.sh:762:   const [sourceType, setSourceType] = useState<"local_workspace" | "github_repo">("local_workspace");
+scripts/scaffold-codedock-web.sh:777:         source_type: sourceType,
+scripts/scaffold-codedock-web.sh:778:         source_metadata: {}
+scripts/scaffold-codedock-web.sh:802:             onChange={(e) => setSourceType(e.target.value as "local_workspace" | "github_repo")}
+scripts/scaffold-codedock-web.sh:804:             <option value="local_workspace">Local Workspace</option>
+scripts/scaffold-codedock-web.sh:805:             <option value="github_repo">GitHub Repository</option>
+scripts/scaffold-codedock-web.sh:981:         <RoomSourceBadge sourceType={room.source_type} />
+scripts/scaffold-codedock-web.sh:994:   sourceType: "local_workspace" | "github_repo";
+scripts/scaffold-codedock-web.sh:1255:   source_type: "local_workspace" | "github_repo";
+scripts/scaffold-codedock-web.sh:1256:   source_metadata: Record<string, unknown>;
+scripts/scaffold-codedock-web.sh:1289:   source_type: "local_workspace" | "github_repo";
+scripts/scaffold-codedock-web.sh:1290:   source_metadata: Record<string, unknown>;
+scripts/scaffold-codedock-web.sh:1387:     source_type: "local_workspace" | "github_repo";
+scripts/scaffold-codedock-web.sh:1388:     source_metadata?: Record<string, unknown>;

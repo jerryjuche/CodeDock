@@ -242,6 +242,7 @@ var WebSocketManager = class {
     this.token = null;
     this.roomId = null;
     this.messageHandlers = /* @__PURE__ */ new Set();
+    this.closeHandlers = /* @__PURE__ */ new Set();
   }
   onMessage(handler) {
     this.messageHandlers.add(handler);
@@ -252,6 +253,18 @@ var WebSocketManager = class {
       this.messageHandlers.delete(handler);
       this.outputChannel.appendLine(
         `CodeDock[ws]: removed message handler (total=${this.messageHandlers.size})`
+      );
+    });
+  }
+  onClose(handler) {
+    this.closeHandlers.add(handler);
+    this.outputChannel.appendLine(
+      `CodeDock[ws]: registered close handler (total=${this.closeHandlers.size})`
+    );
+    return new vscode2.Disposable(() => {
+      this.closeHandlers.delete(handler);
+      this.outputChannel.appendLine(
+        `CodeDock[ws]: removed close handler (total=${this.closeHandlers.size})`
       );
     });
   }
@@ -268,10 +281,14 @@ var WebSocketManager = class {
       );
       return;
     }
+    if (this.reconnectTimer !== void 0) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = void 0;
+    }
     this.token = token;
     this.roomId = roomId;
     this.manualDisconnect = false;
-    this.state = "connecting";
+    this.state = this.attemptCount > 0 ? "reconnecting" : "connecting";
     const wsUrl = this.serverUrl.replace("https://", "wss://").replace("http://", "ws://") + `/ws?token=${encodeURIComponent(token)}&room_id=${encodeURIComponent(roomId)}`;
     this.outputChannel.appendLine(
       `CodeDock[ws]: connecting (room=${roomId}, handlers=${this.messageHandlers.size})`
@@ -292,9 +309,15 @@ var WebSocketManager = class {
     this.outputChannel.appendLine(
       `CodeDock[ws]: disconnect requested (reason=${reason}, room=${this.roomId ?? "none"})`
     );
-    this.socket?.close();
-    this.socket = null;
+    if (this.socket) {
+      this.socket.close();
+      this.socket = null;
+    }
     this.state = "disconnected";
+    this.queue = [];
+    this.token = null;
+    this.roomId = null;
+    this.attemptCount = 0;
   }
   send(message) {
     const messageType = message.length > 0 ? message[0] : -1;
@@ -317,10 +340,17 @@ var WebSocketManager = class {
       this.reconnectTimer = void 0;
     }
     this.outputChannel.appendLine("CodeDock[ws]: dispose");
-    this.socket?.close();
-    this.socket = null;
+    if (this.socket) {
+      this.socket.close();
+      this.socket = null;
+    }
     this.state = "disconnected";
+    this.queue = [];
+    this.token = null;
+    this.roomId = null;
+    this.attemptCount = 0;
     this.messageHandlers.clear();
+    this.closeHandlers.clear();
   }
   getConnectionState() {
     return this.state;
@@ -332,6 +362,10 @@ var WebSocketManager = class {
     this.state = "connected";
     this.attemptCount = 0;
     this.manualDisconnect = false;
+    if (this.reconnectTimer !== void 0) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = void 0;
+    }
     this.outputChannel.appendLine(
       `CodeDock[ws]: connected (room=${this.roomId ?? "none"})`
     );
@@ -340,11 +374,40 @@ var WebSocketManager = class {
   }
   handleClose(code, reason) {
     this.socket = null;
+    if (this.reconnectTimer !== void 0) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = void 0;
+    }
+    const normalizedReason = reason || "none";
     this.outputChannel.appendLine(
-      `CodeDock[ws]: closed (code=${code}, reason=${reason || "none"}, manual=${this.manualDisconnect})`
+      `CodeDock[ws]: closed (code=${code}, reason=${normalizedReason}, manual=${this.manualDisconnect})`
     );
-    if (this.manualDisconnect) {
+    for (const handler of this.closeHandlers) {
+      try {
+        handler(code, reason);
+      } catch (error) {
+        this.outputChannel.appendLine(
+          `CodeDock[ws]: close handler failure -> ${error instanceof Error ? error.message : "unknown error"}`
+        );
+      }
+    }
+    const terminal = this.isTerminalClose(code, reason);
+    if (this.manualDisconnect || terminal) {
       this.state = "disconnected";
+      this.manualDisconnect = true;
+      this.queue = [];
+      this.token = null;
+      this.roomId = null;
+      this.attemptCount = 0;
+      if (reason === "room_deleted" || code === 4004) {
+        vscode2.window.showWarningMessage(
+          "CodeDock: This session has ended because the room was deleted."
+        );
+      } else if (reason === "forbidden" || reason === "room_unavailable" || code === 4003) {
+        vscode2.window.showWarningMessage(
+          "CodeDock: This room is no longer available."
+        );
+      }
       return;
     }
     this.state = "reconnecting";
@@ -384,6 +447,7 @@ var WebSocketManager = class {
       this.outputChannel.appendLine(
         "CodeDock[ws]: reconnect aborted (missing token or room)"
       );
+      this.state = "disconnected";
       return;
     }
     if (this.reconnectTimer !== void 0) {
@@ -393,11 +457,12 @@ var WebSocketManager = class {
       BASE_BACKOFF_MS * Math.pow(2, this.attemptCount),
       MAX_BACKOFF_MS
     );
-    const delay = base + Math.random() * base;
+    const delay = Math.round(base + Math.random() * base);
     this.outputChannel.appendLine(
-      `CodeDock[ws]: reconnect in ${Math.round(delay)}ms (attempt=${this.attemptCount + 1})`
+      `CodeDock[ws]: reconnect in ${delay}ms (attempt=${this.attemptCount + 1})`
     );
     this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = void 0;
       this.attemptCount++;
       this.connect(this.token, this.roomId);
     }, delay);
@@ -415,6 +480,9 @@ var WebSocketManager = class {
     for (const message of pending) {
       this.send(message);
     }
+  }
+  isTerminalClose(code, reason) {
+    return code === 4003 || code === 4004 || reason === "forbidden" || reason === "room_deleted" || reason === "room_unavailable";
   }
 };
 
@@ -9094,15 +9162,28 @@ async function activate(context) {
   authManager = new AuthManager(context.secrets, apiClient, emitter);
   wsManager = new WebSocketManager(serverUrl, outputChannel);
   yjsSync = new YjsSync(wsManager, outputChannel, context.globalState);
+  context.subscriptions.push(
+    wsManager.onClose((code, reason) => {
+      const sessionEnded = code === 4004 || code === 4003 || reason === "room_deleted" || reason === "room_unavailable" || reason === "forbidden";
+      if (!sessionEnded) {
+        return;
+      }
+      outputChannel.appendLine(
+        `CodeDock: room session terminated by server (code=${code}, reason=${reason || "none"})`
+      );
+      void clearPendingHydratedJoin(context);
+      void clearPendingLaunch(context);
+      yjsSync.setActiveRoomId(null);
+      yjsSync.setGuestMaterializationRoot(null);
+      yjsSync.dispose();
+    })
+  );
   emitter.on("login", () => {
     outputChannel.appendLine("CodeDock: login event received (sync-only mode)");
   });
   emitter.on("logout", () => {
     outputChannel.appendLine("CodeDock: logout event received");
-    void clearPendingHydratedJoin(context);
-    void clearPendingLaunch(context);
-    yjsSync.setActiveRoomId(null);
-    yjsSync.setGuestMaterializationRoot(null);
+    void cleanupActiveRoomState(context);
     wsManager.disconnect("logout");
     yjsSync.dispose();
   });
@@ -9131,10 +9212,7 @@ async function activate(context) {
     ),
     vscode4.commands.registerCommand("codedock.disconnectRoom", () => {
       outputChannel.appendLine("CodeDock: user requested room disconnect");
-      void clearPendingHydratedJoin(context);
-      void clearPendingLaunch(context);
-      yjsSync.setActiveRoomId(null);
-      yjsSync.setGuestMaterializationRoot(null);
+      void cleanupActiveRoomState(context);
       wsManager.disconnect("user");
       yjsSync.dispose();
     })
@@ -9200,7 +9278,9 @@ async function handleLaunchUri(context, uri, outputChannel) {
     await context.globalState.update(PENDING_LAUNCH_CONTEXT_KEY, pending);
     const currentRoot = vscode4.workspace.workspaceFolders?.[0]?.uri.fsPath;
     if (currentRoot && normalizeFsPath(currentRoot) === normalizeFsPath(workspaceUri.fsPath)) {
-      outputChannel.appendLine("CodeDock: launch workspace already open, resuming directly");
+      outputChannel.appendLine(
+        "CodeDock: launch workspace already open, resuming directly"
+      );
       await resumePendingLaunch(context, outputChannel);
       return;
     }
@@ -9226,11 +9306,15 @@ async function resumePendingLaunch(context, outputChannel) {
   }
   const currentRoot = vscode4.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (!currentRoot) {
-    outputChannel.appendLine("CodeDock: pending launch found but no workspace root is open");
+    outputChannel.appendLine(
+      "CodeDock: pending launch found but no workspace root is open"
+    );
     return;
   }
   if (normalizeFsPath(currentRoot) !== normalizeFsPath(pending.workspace_fs_path)) {
-    outputChannel.appendLine("CodeDock: current workspace does not match pending launch root");
+    outputChannel.appendLine(
+      "CodeDock: current workspace does not match pending launch root"
+    );
     return;
   }
   const token = await authManager.getToken();
@@ -9352,7 +9436,7 @@ async function handleCreateRoom(outputChannel) {
     yjsSync.activate();
   } catch (err) {
     vscode4.window.showErrorMessage(
-      `CodeDock: Failed to create room \u2014 ${err instanceof Error ? err.message : "unknown error"}`
+      `CodeDock: Failed to create a room \u2014 ${err instanceof Error ? err.message : "unknown error"}`
     );
   }
 }
@@ -9362,6 +9446,12 @@ async function joinRoomNow(token, roomId, outputChannel) {
   yjsSync.setActiveRoomId(roomId);
   wsManager.connect(token, roomId);
   yjsSync.activate();
+}
+async function cleanupActiveRoomState(context) {
+  await clearPendingHydratedJoin(context);
+  await clearPendingLaunch(context);
+  yjsSync.setActiveRoomId(null);
+  yjsSync.setGuestMaterializationRoot(null);
 }
 async function clearPendingHydratedJoin(context) {
   await context.globalState.update(PENDING_HYDRATED_ROOM_ID_KEY2, void 0);

@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jerryjuche/CodeDock/internal/hub"
+
 	"github.com/jerryjuche/CodeDock/internal/auth"
 	"github.com/jerryjuche/CodeDock/internal/services"
 	"github.com/joho/godotenv"
@@ -32,6 +34,7 @@ type testApp struct {
 	roomHandler   *RoomHandler
 	inviteHandler *InviteHandler
 	launchHandler *LaunchHandler
+	realtimeHub   *hub.Hub
 }
 
 type authJSON struct {
@@ -489,11 +492,15 @@ func TestRoomJoinInviteAndLaunchControlPlane(t *testing.T) {
 func setupTestApp(t *testing.T) *testApp {
 	t.Helper()
 
+	realtimeHub := hub.New(nil)
+
 	app := &testApp{
 		db:          testDB,
+		realtimeHub: realtimeHub,
 		authHandler: &AuthHandler{DB: testDB},
 		roomHandler: &RoomHandler{
 			Services: &services.RoomService{DB: testDB},
+			Hub:      realtimeHub,
 		},
 		inviteHandler: &InviteHandler{
 			Service: &services.InviteService{DB: testDB},
@@ -512,6 +519,11 @@ func setupTestApp(t *testing.T) *testApp {
 	mux.Handle("POST /rooms", auth.RequireAuth(http.HandlerFunc(app.roomHandler.CreateRoom)))
 	mux.Handle("GET /rooms", auth.RequireAuth(http.HandlerFunc(app.roomHandler.GetUserRooms)))
 	mux.Handle("GET /rooms/{id}", auth.RequireAuth(http.HandlerFunc(app.roomHandler.GetRoom)))
+	mux.Handle("GET /rooms/{id}/details", auth.RequireAuth(http.HandlerFunc(app.roomHandler.GetRoomDetails)))
+	mux.Handle("GET /rooms/{id}/presence", auth.RequireAuth(http.HandlerFunc(app.roomHandler.GetRoomPresence)))
+	mux.Handle("POST /rooms/{id}/source/local/bind", auth.RequireAuth(http.HandlerFunc(app.roomHandler.BindLocalWorkspace)))
+	mux.Handle("DELETE /rooms/{id}", auth.RequireAuth(http.HandlerFunc(app.roomHandler.DeleteRoom)))
+
 	mux.Handle("GET /auth/me", auth.RequireAuth(http.HandlerFunc(app.authHandler.Me)))
 
 	mux.Handle("POST /join-code/resolve", auth.RequireAuth(http.HandlerFunc(app.inviteHandler.ResolveJoinCode)))
@@ -731,5 +743,246 @@ func TestAuthMe_ReturnsCurrentUser(t *testing.T) {
 	}
 	if me.Email == "" {
 		t.Fatal("expected auth/me email to be non-empty")
+	}
+}
+
+func TestGetRoomDetails_ReturnsMembershipAndSourceState(t *testing.T) {
+	app := setupTestApp(t)
+	resetTestDB(t, app.db)
+
+	host := mustRegisterUser(t, app, "room-details-host")
+	guest := mustRegisterUser(t, app, "room-details-guest")
+
+	createResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms", map[string]any{
+		"name":        "Frontend Revamp",
+		"source_type": "github_repo",
+		"source_metadata": map[string]any{
+			"repo_owner": "jerryjuche",
+			"repo_name":  "CodeDock",
+			"branch":     "staging",
+		},
+	}, host.Token)
+	assertStatus(t, createResp, http.StatusCreated)
+
+	var room roomJSON
+	decodeJSON(t, createResp, &room)
+
+	joinResp := performJSONRequest(t, app.mux, http.MethodPost, "/join-code/resolve", map[string]any{
+		"code": room.PrimaryJoinCode,
+	}, guest.Token)
+	assertStatus(t, joinResp, http.StatusOK)
+
+	detailsResp := performJSONRequest(t, app.mux, http.MethodGet, "/rooms/"+room.ID+"/details", nil, guest.Token)
+	assertStatus(t, detailsResp, http.StatusOK)
+
+	var details struct {
+		Room struct {
+			ID         string `json:"id"`
+			SourceType string `json:"source_type"`
+		} `json:"room"`
+		Membership struct {
+			Role string `json:"role"`
+		} `json:"membership"`
+		SourceState struct {
+			Type      string `json:"type"`
+			Ready     bool   `json:"ready"`
+			Status    string `json:"status"`
+			RepoOwner string `json:"repo_owner"`
+			RepoName  string `json:"repo_name"`
+			Branch    string `json:"branch"`
+		} `json:"source_state"`
+	}
+	decodeJSON(t, detailsResp, &details)
+
+	if details.Room.ID != room.ID {
+		t.Fatalf("expected room id %q, got %q", room.ID, details.Room.ID)
+	}
+	if details.Membership.Role != "editor" {
+		t.Fatalf("expected membership role editor, got %q", details.Membership.Role)
+	}
+	if details.SourceState.Type != services.SourceTypeGitHubRepo {
+		t.Fatalf("expected source_state type %q, got %q", services.SourceTypeGitHubRepo, details.SourceState.Type)
+	}
+	if !details.SourceState.Ready {
+		t.Fatal("expected github source_state ready=true")
+	}
+	if details.SourceState.RepoOwner != "jerryjuche" {
+		t.Fatalf("expected repo_owner jerryjuche, got %q", details.SourceState.RepoOwner)
+	}
+	if details.SourceState.RepoName != "CodeDock" {
+		t.Fatalf("expected repo_name CodeDock, got %q", details.SourceState.RepoName)
+	}
+	if details.SourceState.Branch != "staging" {
+		t.Fatalf("expected branch staging, got %q", details.SourceState.Branch)
+	}
+}
+
+func TestDeleteRoom_HostOnlySoftDelete(t *testing.T) {
+	app := setupTestApp(t)
+	resetTestDB(t, app.db)
+
+	host := mustRegisterUser(t, app, "delete-room-host")
+	guest := mustRegisterUser(t, app, "delete-room-guest")
+
+	createResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms", map[string]any{
+		"name":        "Delete Me",
+		"source_type": "local_workspace",
+	}, host.Token)
+	assertStatus(t, createResp, http.StatusCreated)
+
+	var room roomJSON
+	decodeJSON(t, createResp, &room)
+
+	joinResp := performJSONRequest(t, app.mux, http.MethodPost, "/join-code/resolve", map[string]any{
+		"code": room.PrimaryJoinCode,
+	}, guest.Token)
+	assertStatus(t, joinResp, http.StatusOK)
+
+	guestDeleteResp := performJSONRequest(t, app.mux, http.MethodDelete, "/rooms/"+room.ID, nil, guest.Token)
+	assertStatus(t, guestDeleteResp, http.StatusForbidden)
+
+	hostDeleteResp := performJSONRequest(t, app.mux, http.MethodDelete, "/rooms/"+room.ID, nil, host.Token)
+	assertStatus(t, hostDeleteResp, http.StatusOK)
+
+	listResp := performJSONRequest(t, app.mux, http.MethodGet, "/rooms", nil, host.Token)
+	assertStatus(t, listResp, http.StatusOK)
+
+	var rooms []roomJSON
+	decodeJSON(t, listResp, &rooms)
+
+	if len(rooms) != 0 {
+		t.Fatalf("expected 0 active rooms after delete, got %d", len(rooms))
+	}
+}
+
+func TestGetRoomPresence_ReturnsConnectedMembers(t *testing.T) {
+	app := setupTestApp(t)
+	resetTestDB(t, app.db)
+
+	host := mustRegisterUser(t, app, "presence-host")
+	guest := mustRegisterUser(t, app, "presence-guest")
+
+	createResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms", map[string]any{
+		"name":        "Presence Room",
+		"source_type": "local_workspace",
+	}, host.Token)
+	assertStatus(t, createResp, http.StatusCreated)
+
+	var room roomJSON
+	decodeJSON(t, createResp, &room)
+
+	joinResp := performJSONRequest(t, app.mux, http.MethodPost, "/join-code/resolve", map[string]any{
+		"code": room.PrimaryJoinCode,
+	}, guest.Token)
+	assertStatus(t, joinResp, http.StatusOK)
+
+	hostUserID := guestAUserIDFromToken(t, host.Token)
+	guestUserID := guestAUserIDFromToken(t, guest.Token)
+
+	app.realtimeHub.Register(&hub.Client{
+		Send:   make(chan []byte, 1),
+		RoomID: room.ID,
+		UserID: hostUserID,
+	})
+	app.realtimeHub.Register(&hub.Client{
+		Send:   make(chan []byte, 1),
+		RoomID: room.ID,
+		UserID: guestUserID,
+	})
+
+	presenceResp := performJSONRequest(t, app.mux, http.MethodGet, "/rooms/"+room.ID+"/presence", nil, host.Token)
+	assertStatus(t, presenceResp, http.StatusOK)
+
+	var presence struct {
+		Members        []struct {
+			UserID    string `json:"user_id"`
+			Email     string `json:"email"`
+			Role      string `json:"role"`
+			Connected bool   `json:"connected"`
+		} `json:"members"`
+		ConnectedCount int `json:"connected_count"`
+		TotalMembers   int `json:"total_members"`
+	}
+	decodeJSON(t, presenceResp, &presence)
+
+	if presence.TotalMembers != 2 {
+		t.Fatalf("expected total_members=2, got %d", presence.TotalMembers)
+	}
+	if presence.ConnectedCount != 2 {
+		t.Fatalf("expected connected_count=2, got %d", presence.ConnectedCount)
+	}
+}
+
+func TestBindLocalWorkspace_UpdatesSourceState(t *testing.T) {
+	app := setupTestApp(t)
+	resetTestDB(t, app.db)
+
+	host := mustRegisterUser(t, app, "bind-host")
+	guest := mustRegisterUser(t, app, "bind-guest")
+
+	createResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms", map[string]any{
+		"name":        "Local Room",
+		"source_type": "local_workspace",
+	}, host.Token)
+	assertStatus(t, createResp, http.StatusCreated)
+
+	var room roomJSON
+	decodeJSON(t, createResp, &room)
+
+	joinResp := performJSONRequest(t, app.mux, http.MethodPost, "/join-code/resolve", map[string]any{
+		"code": room.PrimaryJoinCode,
+	}, guest.Token)
+	assertStatus(t, joinResp, http.StatusOK)
+
+	beforeResp := performJSONRequest(t, app.mux, http.MethodGet, "/rooms/"+room.ID+"/details", nil, guest.Token)
+	assertStatus(t, beforeResp, http.StatusOK)
+
+	var beforeDetails struct {
+		SourceState struct {
+			Ready         bool   `json:"ready"`
+			HostBound     bool   `json:"host_bound"`
+			Status        string `json:"status"`
+			LaunchAllowed bool   `json:"launch_allowed"`
+		} `json:"source_state"`
+	}
+	decodeJSON(t, beforeResp, &beforeDetails)
+
+	if beforeDetails.SourceState.Ready {
+		t.Fatal("expected room not ready before host binds workspace")
+	}
+	if beforeDetails.SourceState.LaunchAllowed {
+		t.Fatal("expected guest launch_allowed=false before host binds workspace")
+	}
+
+	bindResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms/"+room.ID+"/source/local/bind", map[string]any{
+		"workspace_label": "my-project",
+	}, host.Token)
+	assertStatus(t, bindResp, http.StatusOK)
+
+	var boundDetails struct {
+		SourceState struct {
+			Ready          bool   `json:"ready"`
+			HostBound      bool   `json:"host_bound"`
+			Status         string `json:"status"`
+			LaunchAllowed  bool   `json:"launch_allowed"`
+			WorkspaceLabel string `json:"workspace_label"`
+		} `json:"source_state"`
+	}
+	decodeJSON(t, bindResp, &boundDetails)
+
+	if !boundDetails.SourceState.Ready {
+		t.Fatal("expected room ready after bind")
+	}
+	if !boundDetails.SourceState.HostBound {
+		t.Fatal("expected host_bound=true after bind")
+	}
+	if boundDetails.SourceState.Status != "ready" {
+		t.Fatalf("expected status=ready, got %q", boundDetails.SourceState.Status)
+	}
+	if !boundDetails.SourceState.LaunchAllowed {
+		t.Fatal("expected launch_allowed=true after bind")
+	}
+	if boundDetails.SourceState.WorkspaceLabel != "my-project" {
+		t.Fatalf("expected workspace_label=my-project, got %q", boundDetails.SourceState.WorkspaceLabel)
 	}
 }

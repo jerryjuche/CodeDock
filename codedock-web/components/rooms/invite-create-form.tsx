@@ -1,29 +1,38 @@
 "use client";
 
 import { useState } from "react";
-import { useInvites } from "@/hooks/use-invites";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-export default function InviteCreateForm({ roomId }: { roomId: string }) {
-  const { createInvite } = useInvites(roomId);
+export default function InviteCreateForm({
+  onCreate,
+}: {
+  onCreate: (payload: {
+    expires_in_hours?: number;
+    max_uses?: number;
+  }) => Promise<void>;
+}) {
   const [expiresInHours, setExpiresInHours] = useState("");
   const [maxUses, setMaxUses] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
 
+    setSubmitting(true);
     try {
-      await createInvite({
+      await onCreate({
         expires_in_hours: expiresInHours ? Number(expiresInHours) : undefined,
-        max_uses: maxUses ? Number(maxUses) : undefined
+        max_uses: maxUses ? Number(maxUses) : undefined,
       });
       setExpiresInHours("");
       setMaxUses("");
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "Invite creation failed");
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -51,7 +60,9 @@ export default function InviteCreateForm({ roomId }: { roomId: string }) {
             onChange={(e) => setMaxUses(e.target.value)}
           />
         </div>
-        <Button type="submit">Create Invite Token</Button>
+        <Button type="submit" disabled={submitting}>
+          {submitting ? "Creating..." : "Create Invite Token"}
+        </Button>
       </form>
     </Card>
   );

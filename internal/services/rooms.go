@@ -15,6 +15,7 @@ var (
 	ErrRoomNotFound     = errors.New("no room found")
 	ErrRoomForbidden    = errors.New("forbidden")
 	ErrInvalidSource    = errors.New("invalid source type")
+	ErrInvalidRoomState = errors.New("invalid room state")
 )
 
 const (
@@ -42,6 +43,44 @@ type CreateRoomInput struct {
 	Name           string          `json:"name"`
 	SourceType     string          `json:"source_type"`
 	SourceMetadata json.RawMessage `json:"source_metadata"`
+}
+
+type RoomMembership struct {
+	Role string `json:"role"`
+}
+
+type RoomSourceState struct {
+	Type          string `json:"type"`
+	Ready         bool   `json:"ready"`
+	HostBound     bool   `json:"host_bound"`
+	Status        string `json:"status"`
+	LaunchAllowed bool   `json:"launch_allowed"`
+	LaunchReason  string `json:"launch_reason,omitempty"`
+
+	WorkspaceLabel string `json:"workspace_label,omitempty"`
+
+	RepoOwner string `json:"repo_owner,omitempty"`
+	RepoName  string `json:"repo_name,omitempty"`
+	Branch    string `json:"branch,omitempty"`
+}
+
+type RoomDetails struct {
+	Room        *Room           `json:"room"`
+	Membership  RoomMembership  `json:"membership"`
+	SourceState RoomSourceState `json:"source_state"`
+}
+
+type RoomPresenceMember struct {
+	UserID    string `json:"user_id"`
+	Email     string `json:"email"`
+	Role      string `json:"role"`
+	Connected bool   `json:"connected"`
+}
+
+type RoomPresence struct {
+	Members        []RoomPresenceMember `json:"members"`
+	ConnectedCount int                  `json:"connected_count"`
+	TotalMembers   int                  `json:"total_members"`
 }
 
 type RoomService struct {
@@ -198,6 +237,128 @@ func (s *RoomService) GetRoom(roomID string) (*Room, error) {
 	return &room, nil
 }
 
+func (s *RoomService) GetRoomDetails(roomID, userID string) (*RoomDetails, error) {
+	role, err := s.GetUserRole(roomID, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	room, err := s.GetRoom(roomID)
+	if err != nil {
+		return nil, err
+	}
+
+	return &RoomDetails{
+		Room: room,
+		Membership: RoomMembership{
+			Role: role,
+		},
+		SourceState: buildRoomSourceState(room, role),
+	}, nil
+}
+
+func (s *RoomService) GetRoomPresence(roomID, userID string, connectedUserIDs map[string]bool) (*RoomPresence, error) {
+	_, err := s.GetUserRole(roomID, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := s.DB.Query(`
+		SELECT
+			u.id,
+			u.email,
+			rm.role
+		FROM room_members rm
+		INNER JOIN users u ON u.id = rm.user_id
+		INNER JOIN rooms r ON r.id = rm.room_id
+		WHERE rm.room_id = $1
+		  AND r.is_active = TRUE
+		ORDER BY
+		  CASE rm.role WHEN 'host' THEN 0 WHEN 'editor' THEN 1 ELSE 2 END,
+		  u.email ASC
+	`, roomID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	members := make([]RoomPresenceMember, 0)
+	connectedCount := 0
+
+	for rows.Next() {
+		var member RoomPresenceMember
+		if err := rows.Scan(&member.UserID, &member.Email, &member.Role); err != nil {
+			return nil, err
+		}
+
+		member.Connected = connectedUserIDs[member.UserID]
+		if member.Connected {
+			connectedCount++
+		}
+
+		members = append(members, member)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return &RoomPresence{
+		Members:        members,
+		ConnectedCount: connectedCount,
+		TotalMembers:   len(members),
+	}, nil
+}
+
+func (s *RoomService) MarkLocalWorkspaceBound(roomID, userID, workspaceLabel string) (*RoomDetails, error) {
+	role, err := s.GetUserRole(roomID, userID)
+	if err != nil {
+		return nil, err
+	}
+	if role != "host" {
+		return nil, ErrRoomForbidden
+	}
+
+	room, err := s.GetRoom(roomID)
+	if err != nil {
+		return nil, err
+	}
+	if room.SourceType != SourceTypeLocalWorkspace {
+		return nil, ErrInvalidRoomState
+	}
+
+	metadata := map[string]any{}
+	if len(room.SourceMetadata) > 0 {
+		_ = json.Unmarshal(room.SourceMetadata, &metadata)
+	}
+
+	metadata["workspace_bound"] = true
+	metadata["ready"] = true
+	metadata["status"] = "ready"
+	metadata["host_selected_at"] = time.Now().UTC().Format(time.RFC3339)
+	if strings.TrimSpace(workspaceLabel) != "" {
+		metadata["workspace_label"] = strings.TrimSpace(workspaceLabel)
+	}
+
+	metadataBytes, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = s.DB.Exec(`
+		UPDATE rooms
+		SET source_metadata = $2,
+		    updated_at = NOW()
+		WHERE id = $1
+		  AND is_active = TRUE
+	`, roomID, metadataBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.GetRoomDetails(roomID, userID)
+}
+
 func (s *RoomService) GetUserRooms(userID string) ([]Room, error) {
 	rows, err := s.DB.Query(`
 		SELECT
@@ -287,6 +448,114 @@ func (s *RoomService) GetUserRole(roomID, userID string) (string, error) {
 		return "", err
 	}
 	return role, nil
+}
+
+func (s *RoomService) DeleteRoom(roomID, userID string) error {
+	role, err := s.GetUserRole(roomID, userID)
+	if err != nil {
+		return err
+	}
+	if role != "host" {
+		return ErrRoomForbidden
+	}
+
+	result, err := s.DB.Exec(`
+		UPDATE rooms
+		SET is_active = FALSE,
+		    updated_at = NOW()
+		WHERE id = $1
+		  AND owner_user_id = $2
+		  AND is_active = TRUE
+	`, roomID, userID)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return ErrRoomNotFound
+	}
+
+	_, _ = s.DB.Exec(`
+		UPDATE room_launch_tokens
+		SET used_at = COALESCE(used_at, NOW())
+		WHERE room_id = $1
+		  AND used_at IS NULL
+	`, roomID)
+
+	return nil
+}
+
+func buildRoomSourceState(room *Room, role string) RoomSourceState {
+	state := RoomSourceState{
+		Type: room.SourceType,
+	}
+
+	switch room.SourceType {
+	case SourceTypeGitHubRepo:
+		var meta struct {
+			RepoOwner  string `json:"repo_owner"`
+			RepoName   string `json:"repo_name"`
+			Branch     string `json:"branch"`
+			CloneReady bool   `json:"clone_ready"`
+			Ready      bool   `json:"ready"`
+			Status     string `json:"status"`
+		}
+		_ = json.Unmarshal(room.SourceMetadata, &meta)
+
+		state.RepoOwner = meta.RepoOwner
+		state.RepoName = meta.RepoName
+		state.Branch = meta.Branch
+
+		if meta.RepoOwner != "" && meta.RepoName != "" {
+			state.Ready = true
+			state.Status = "ready"
+			state.LaunchAllowed = true
+		} else {
+			state.Ready = false
+			state.Status = "repo_not_configured"
+			state.LaunchAllowed = false
+			state.LaunchReason = "Repository metadata is incomplete."
+		}
+
+	case SourceTypeLocalWorkspace:
+		var meta struct {
+			WorkspaceBound bool   `json:"workspace_bound"`
+			Ready          bool   `json:"ready"`
+			Status         string `json:"status"`
+			WorkspaceLabel string `json:"workspace_label"`
+		}
+		_ = json.Unmarshal(room.SourceMetadata, &meta)
+
+		state.HostBound = meta.WorkspaceBound || meta.Ready
+		state.WorkspaceLabel = meta.WorkspaceLabel
+
+		if state.HostBound {
+			state.Ready = true
+			state.Status = "ready"
+			state.LaunchAllowed = true
+		} else if role == "host" {
+			state.Ready = false
+			state.Status = "host_workspace_required"
+			state.LaunchAllowed = true
+			state.LaunchReason = "Select your project folder in VS Code to publish this room."
+		} else {
+			state.Ready = false
+			state.Status = "waiting_for_host_workspace"
+			state.LaunchAllowed = false
+			state.LaunchReason = "The host has not selected a project folder yet."
+		}
+
+	default:
+		state.Status = "unknown"
+		state.LaunchAllowed = false
+		state.LaunchReason = "Unknown room source type."
+	}
+
+	return state
 }
 
 func normalizeSourceType(sourceType string) (string, error) {
@@ -417,4 +686,27 @@ func ensureJSON(data []byte) json.RawMessage {
 		return json.RawMessage(`{}`)
 	}
 	return json.RawMessage(data)
+}
+
+func (s *RoomService) CanConnectToRoom(roomID, userID string) error {
+	var exists bool
+
+	err := s.DB.QueryRow(`
+		SELECT EXISTS (
+			SELECT 1
+			FROM room_members rm
+			INNER JOIN rooms r ON r.id = rm.room_id
+			WHERE rm.room_id = $1
+			  AND rm.user_id = $2
+			  AND r.is_active = TRUE
+		)
+	`, roomID, userID).Scan(&exists)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return ErrRoomForbidden
+	}
+
+	return nil
 }
