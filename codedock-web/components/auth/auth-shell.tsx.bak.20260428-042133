@@ -1,0 +1,61 @@
+import type { ReactNode } from "react";
+import BrandLogo from "@/components/brand/logo";
+import TextRotate from "@/components/fancy/text/text-rotate";
+
+export default function AuthShell({
+  title,
+  description,
+  children,
+  footer,
+}: {
+  title: string;
+  description: string;
+  children: ReactNode;
+  footer?: ReactNode;
+}) {
+  return (
+    <div className="grid min-h-[calc(100vh-96px)] items-center gap-10 py-8 lg:grid-cols-[1.05fr_0.95fr]">
+      <section className="hidden lg:block">
+        <div className="space-y-6">
+          <BrandLogo priority />
+          <div className="space-y-4">
+            <h1 className="max-w-2xl text-5xl font-semibold tracking-tight text-white">
+              Real-time collaboration that feels{" "}
+              <TextRotate texts={["fast", "serious", "stable", "focused", "owned"]} className="align-middle" />
+            </h1>
+            <p className="max-w-2xl text-base leading-8 text-[rgb(158,183,211)]">
+              CodeDock gives engineering teams a focused control plane for shared coding sessions,
+              launch flow, invites, and workspace readiness without giving up ownership.
+            </p>
+          </div>
+
+          <div className="grid max-w-2xl gap-4 sm:grid-cols-3">
+            <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5">
+              <div className="text-sm font-medium text-white">Self-hosted</div>
+              <p className="mt-2 text-sm text-[rgb(158,183,211)]">Keep the collaboration stack under your control.</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5">
+              <div className="text-sm font-medium text-white">Room-based</div>
+              <p className="mt-2 text-sm text-[rgb(158,183,211)]">Create rooms, invite teammates, and launch into VS Code.</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5">
+              <div className="text-sm font-medium text-white">Operational</div>
+              <p className="mt-2 text-sm text-[rgb(158,183,211)]">Manage readiness, access, and session flow from one place.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="mx-auto w-full max-w-xl">
+        <div className="rounded-[22px] border border-white/10 bg-[rgba(8,30,63,0.78)] p-7 shadow-[0_18px_60px_rgba(0,0,0,0.28)] backdrop-blur-xl sm:p-8">
+          <div className="mb-6 space-y-2">
+            <h2 className="text-3xl font-semibold text-white">{title}</h2>
+            <p className="text-sm leading-7 text-[rgb(158,183,211)]">{description}</p>
+          </div>
+          {children}
+          {footer ? <div className="mt-6">{footer}</div> : null}
+        </div>
+      </section>
+    </div>
+  );
+}
