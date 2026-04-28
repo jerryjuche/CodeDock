@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { resolveJoinCode } from "@/lib/api/rooms";
 import { useAuth } from "@/hooks/use-auth";
+import { resolveJoinCode } from "@/lib/api/rooms";
 
 export function useJoinCode() {
   const { token } = useAuth();
@@ -21,5 +21,8 @@ export function useJoinCode() {
     }
   }
 
-  return { resolveCode, loading };
+  return {
+    resolveCode,
+    loading,
+  };
 }

@@ -17,18 +17,6 @@ export function getRoomPresence(token: string, roomId: string) {
   return apiRequest<RoomPresence>(`/rooms/${roomId}/presence`, { token });
 }
 
-export function bindLocalWorkspace(
-  token: string,
-  roomId: string,
-  payload: { workspace_label?: string },
-) {
-  return apiRequest<RoomDetails>(`/rooms/${roomId}/source/local/bind`, {
-    method: "POST",
-    token,
-    body: payload,
-  });
-}
-
 export function createRoom(
   token: string,
   payload: {

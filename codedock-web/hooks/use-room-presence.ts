@@ -21,18 +21,19 @@ export function useRoomPresence(roomId: string) {
     }
 
     try {
-      const response = await getRoomPresence(token, roomId);
-      setPresence(response);
+      const data = await getRoomPresence(token, roomId);
+      setPresence(data);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load presence");
     } finally {
       setLoading(false);
     }
-  }, [hydrated, token, roomId]);
+  }, [token, hydrated, roomId]);
 
   useEffect(() => {
     void load();
+
     const timer = window.setInterval(() => {
       void load();
     }, 5000);

@@ -17,31 +17,36 @@ export default function InviteList({
 }) {
   return (
     <Card>
-      <h2 className="text-xl font-semibold">Invite Tokens</h2>
-      <p className="mt-2 text-sm text-zinc-400">Manage room-specific invite tokens.</p>
+      <h2 className="text-xl font-semibold text-white">Invite tokens</h2>
+      <p className="mt-2 text-sm text-[rgb(158,183,211)]">
+        Manage room-specific invite tokens for collaborators.
+      </p>
 
       <div className="mt-6 space-y-3">
         {loading ? (
-          <div>Loading invites...</div>
+          <div className="text-sm text-[rgb(158,183,211)]">Loading invites...</div>
         ) : error ? (
-          <div>{error}</div>
+          <div className="text-sm text-red-300">{error}</div>
         ) : invites.length === 0 ? (
-          <div className="text-sm text-zinc-400">No invite tokens yet.</div>
+          <div className="text-sm text-[rgb(158,183,211)]">No invite tokens yet.</div>
         ) : (
           invites.map((invite) => (
             <div
               key={invite.id}
-              className="rounded-xl border border-zinc-800 bg-zinc-950 p-4"
+              className="rounded-2xl border border-white/8 bg-white/[0.03] p-4"
             >
               <div className="flex items-center justify-between gap-4">
                 <div>
-                  <div className="font-mono text-sm font-semibold">{invite.code}</div>
-                  <div className="mt-1 text-xs text-zinc-500">
+                  <div className="font-mono text-sm font-semibold text-white">
+                    {invite.code}
+                  </div>
+                  <div className="mt-1 text-xs text-[rgb(158,183,211)]">
                     uses: {invite.uses_count}
                     {invite.max_uses ? ` / ${invite.max_uses}` : ""}
-                    {invite.is_revoked ? " · revoked" : ""}
+                    {invite.is_revoked ? " Â· revoked" : ""}
                   </div>
                 </div>
+
                 <Button
                   variant="secondary"
                   disabled={invite.is_revoked}

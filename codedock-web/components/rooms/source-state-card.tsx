@@ -27,61 +27,56 @@ export default function SourceStateCard({
 }) {
   return (
     <Card>
-      <h3 className="text-lg font-semibold">Project Source</h3>
-      <p className="mt-2 text-sm text-zinc-400">{readableStatus(sourceState)}</p>
+      <h3 className="text-lg font-semibold text-white">Source readiness</h3>
+      <p className="mt-2 text-sm text-[rgb(158,183,211)]">
+        {readableStatus(sourceState)}
+      </p>
 
-      <div className="mt-4 space-y-2 text-sm text-zinc-300">
-        <div>
-          <span className="text-zinc-500">Type:</span> {sourceState.type}
+      <div className="mt-5 space-y-3 text-sm text-white">
+        <div className="flex items-center justify-between gap-4">
+          <span className="text-[rgb(158,183,211)]">Type</span>
+          <span>{sourceState.type}</span>
         </div>
 
-        <div>
-          <span className="text-zinc-500">Ready:</span> {sourceState.ready ? "Yes" : "No"}
+        <div className="flex items-center justify-between gap-4">
+          <span className="text-[rgb(158,183,211)]">Ready</span>
+          <span>{sourceState.ready ? "Yes" : "No"}</span>
         </div>
 
-        <div>
-          <span className="text-zinc-500">Launch allowed:</span>{" "}
-          {sourceState.launch_allowed ? "Yes" : "No"}
+        <div className="flex items-center justify-between gap-4">
+          <span className="text-[rgb(158,183,211)]">Launch allowed</span>
+          <span>{sourceState.launch_allowed ? "Yes" : "No"}</span>
         </div>
 
         {sourceState.launch_reason ? (
-          <div>
-            <span className="text-zinc-500">Launch reason:</span> {sourceState.launch_reason}
+          <div className="rounded-2xl border border-amber-300/15 bg-amber-300/10 p-3 text-sm text-amber-100">
+            {sourceState.launch_reason}
           </div>
         ) : null}
 
-        {sourceState.type === "local_workspace" && (
-          <>
-            <div>
-              <span className="text-zinc-500">Host bound:</span>{" "}
-              {sourceState.host_bound ? "Yes" : "No"}
-            </div>
+        {sourceState.workspace_label ? (
+          <div className="flex items-center justify-between gap-4">
+            <span className="text-[rgb(158,183,211)]">Workspace</span>
+            <span>{sourceState.workspace_label}</span>
+          </div>
+        ) : null}
 
-            {sourceState.workspace_label ? (
-              <div>
-                <span className="text-zinc-500">Workspace:</span>{" "}
-                {sourceState.workspace_label}
-              </div>
-            ) : null}
-          </>
-        )}
-
-        {sourceState.type === "github_repo" && (
+        {sourceState.repo_owner || sourceState.repo_name ? (
           <>
-            <div>
-              <span className="text-zinc-500">Repo owner:</span>{" "}
-              {sourceState.repo_owner || "—"}
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-[rgb(158,183,211)]">Repo owner</span>
+              <span>{sourceState.repo_owner || "â€”"}</span>
             </div>
-            <div>
-              <span className="text-zinc-500">Repo name:</span>{" "}
-              {sourceState.repo_name || "—"}
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-[rgb(158,183,211)]">Repo name</span>
+              <span>{sourceState.repo_name || "â€”"}</span>
             </div>
-            <div>
-              <span className="text-zinc-500">Branch:</span>{" "}
-              {sourceState.branch || "—"}
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-[rgb(158,183,211)]">Branch</span>
+              <span>{sourceState.branch || "â€”"}</span>
             </div>
           </>
-        )}
+        ) : null}
       </div>
     </Card>
   );

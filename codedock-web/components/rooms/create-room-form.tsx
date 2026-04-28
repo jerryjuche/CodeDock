@@ -2,132 +2,146 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createRoom } from "@/lib/api/rooms";
 import { useAuth } from "@/hooks/use-auth";
-import { Button } from "@/components/ui/button";
+import { createRoom } from "@/lib/api/rooms";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
+
+type SourceType = "local_workspace" | "github_repo";
 
 export default function CreateRoomForm() {
   const router = useRouter();
   const { token } = useAuth();
 
   const [name, setName] = useState("");
-  const [sourceType, setSourceType] = useState<"local_workspace" | "github_repo">(
-    "local_workspace",
-  );
+  const [sourceType, setSourceType] = useState<SourceType>("local_workspace");
   const [repoOwner, setRepoOwner] = useState("");
   const [repoName, setRepoName] = useState("");
   const [branch, setBranch] = useState("main");
-  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function onSubmit(event: React.FormEvent) {
+    event.preventDefault();
 
     if (!token) {
-      window.alert("You must be logged in.");
+      window.alert("You are not logged in.");
       return;
     }
 
-    const sourceMetadata =
-      sourceType === "github_repo"
-        ? {
-            repo_owner: repoOwner.trim(),
-            repo_name: repoName.trim(),
-            branch: branch.trim() || "main",
-          }
-        : {};
+    setSubmitting(true);
 
-    if (
-      sourceType === "github_repo" &&
-      (!sourceMetadata.repo_owner || !sourceMetadata.repo_name)
-    ) {
-      window.alert("GitHub rooms require repo owner and repo name.");
-      return;
-    }
-
-    setLoading(true);
     try {
-      const room = await createRoom(token, {
-        name: name.trim(),
-        source_type: sourceType,
-        source_metadata: sourceMetadata,
-      });
+      const payload =
+        sourceType === "github_repo"
+          ? {
+              name,
+              source_type: sourceType,
+              source_metadata: {
+                repo_owner: repoOwner,
+                repo_name: repoName,
+                branch: branch || "main",
+              },
+            }
+          : {
+              name,
+              source_type: sourceType,
+            };
+
+      const room = await createRoom(token, payload);
       router.push(`/rooms/${room.id}`);
+      router.refresh();
     } catch (error) {
-      window.alert(error instanceof Error ? error.message : "Create room failed");
+      window.alert(error instanceof Error ? error.message : "Failed to create room");
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   }
 
   return (
-    <Card>
-      <form className="space-y-4" onSubmit={onSubmit}>
+    <Card className="mx-auto max-w-2xl">
+      <div className="mb-6">
+        <h1 className="text-2xl font-semibold text-white">Create room</h1>
+        <p className="mt-2 text-sm text-[rgb(158,183,211)]">
+          Start a new collaboration room and configure its source type.
+        </p>
+      </div>
+
+      <form className="space-y-5" onSubmit={onSubmit}>
         <div>
-          <Label htmlFor="room-name">Room Name</Label>
+          <Label htmlFor="room-name">Room name</Label>
           <Input
             id="room-name"
+            placeholder="e.g. CodeDock core platform"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Frontend Revamp"
             required
           />
         </div>
 
         <div>
-          <Label htmlFor="source-type">Source Type</Label>
+          <Label htmlFor="source-type">Source type</Label>
           <select
             id="source-type"
-            className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm"
             value={sourceType}
-            onChange={(e) =>
-              setSourceType(e.target.value as "local_workspace" | "github_repo")
-            }
+            onChange={(e) => setSourceType(e.target.value as SourceType)}
+            className="flex h-11 w-full rounded-[12px] border border-white/12 bg-[rgba(255,255,255,0.04)] px-4 py-2 text-sm text-white outline-none transition-all focus:border-[rgba(36,166,242,0.55)] focus:bg-[rgba(255,255,255,0.06)] focus:ring-2 focus:ring-[rgba(36,166,242,0.16)]"
           >
-            <option value="local_workspace">Local Workspace</option>
-            <option value="github_repo">GitHub Repository</option>
+            <option value="local_workspace" className="bg-[rgb(1,26,61)]">
+              Local workspace
+            </option>
+            <option value="github_repo" className="bg-[rgb(1,26,61)]">
+              GitHub repository
+            </option>
           </select>
         </div>
 
-        {sourceType === "github_repo" && (
-          <div className="grid gap-4 md:grid-cols-2">
+        {sourceType === "github_repo" ? (
+          <div className="grid gap-5 sm:grid-cols-2">
             <div>
-              <Label htmlFor="repo-owner">Repo Owner</Label>
+              <Label htmlFor="repo-owner">Repo owner</Label>
               <Input
                 id="repo-owner"
+                placeholder="e.g. jerryjuche"
                 value={repoOwner}
                 onChange={(e) => setRepoOwner(e.target.value)}
-                placeholder="jerryjuche"
+                required
               />
             </div>
 
             <div>
-              <Label htmlFor="repo-name">Repo Name</Label>
+              <Label htmlFor="repo-name">Repo name</Label>
               <Input
                 id="repo-name"
+                placeholder="e.g. CodeDock"
                 value={repoName}
                 onChange={(e) => setRepoName(e.target.value)}
-                placeholder="CodeDock"
+                required
               />
             </div>
 
-            <div className="md:col-span-2">
-              <Label htmlFor="repo-branch">Branch</Label>
+            <div className="sm:col-span-2">
+              <Label htmlFor="branch">Branch</Label>
               <Input
-                id="repo-branch"
+                id="branch"
+                placeholder="main"
                 value={branch}
                 onChange={(e) => setBranch(e.target.value)}
-                placeholder="main"
               />
             </div>
           </div>
+        ) : (
+          <div className="rounded-[14px] border border-white/8 bg-white/[0.03] p-4 text-sm text-[rgb(158,183,211)]">
+            The host will bind a local project folder later from VS Code before guests can launch the room.
+          </div>
         )}
 
-        <Button disabled={loading} type="submit">
-          {loading ? "Creating..." : "Create Room"}
-        </Button>
+        <div className="pt-2">
+          <Button type="submit" size="lg" disabled={submitting}>
+            {submitting ? "Creating..." : "Create room"}
+          </Button>
+        </div>
       </form>
     </Card>
   );

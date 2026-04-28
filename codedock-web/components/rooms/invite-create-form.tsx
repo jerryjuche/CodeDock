@@ -12,21 +12,22 @@ export default function InviteCreateForm({
   onCreate: (payload: {
     expires_in_hours?: number;
     max_uses?: number;
-  }) => Promise<void>;
+  }) => Promise<unknown>;
 }) {
   const [expiresInHours, setExpiresInHours] = useState("");
   const [maxUses, setMaxUses] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-
+  async function onSubmit(event: React.FormEvent) {
+    event.preventDefault();
     setSubmitting(true);
+
     try {
       await onCreate({
         expires_in_hours: expiresInHours ? Number(expiresInHours) : undefined,
         max_uses: maxUses ? Number(maxUses) : undefined,
       });
+
       setExpiresInHours("");
       setMaxUses("");
     } catch (error) {
@@ -38,10 +39,11 @@ export default function InviteCreateForm({
 
   return (
     <Card>
-      <h3 className="text-lg font-semibold">Create Invite</h3>
+      <h3 className="text-lg font-semibold text-white">Create invite</h3>
+
       <form className="mt-4 space-y-4" onSubmit={onSubmit}>
         <div>
-          <Label htmlFor="expires-in-hours">Expires In Hours</Label>
+          <Label htmlFor="expires-in-hours">Expires in hours</Label>
           <Input
             id="expires-in-hours"
             type="number"
@@ -50,8 +52,9 @@ export default function InviteCreateForm({
             onChange={(e) => setExpiresInHours(e.target.value)}
           />
         </div>
+
         <div>
-          <Label htmlFor="max-uses">Max Uses</Label>
+          <Label htmlFor="max-uses">Max uses</Label>
           <Input
             id="max-uses"
             type="number"
@@ -60,8 +63,9 @@ export default function InviteCreateForm({
             onChange={(e) => setMaxUses(e.target.value)}
           />
         </div>
+
         <Button type="submit" disabled={submitting}>
-          {submitting ? "Creating..." : "Create Invite Token"}
+          {submitting ? "Creating..." : "Create invite token"}
         </Button>
       </form>
     </Card>

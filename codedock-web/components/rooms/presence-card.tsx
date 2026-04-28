@@ -12,33 +12,36 @@ export default function PresenceCard({
 }) {
   return (
     <Card>
-      <h3 className="text-lg font-semibold">Members</h3>
+      <h3 className="text-lg font-semibold text-white">Members</h3>
 
       {loading ? (
-        <p className="mt-3 text-sm text-zinc-400">Loading presence...</p>
+        <p className="mt-3 text-sm text-[rgb(158,183,211)]">Loading presence...</p>
       ) : error ? (
         <p className="mt-3 text-sm text-red-300">{error}</p>
       ) : !presence ? (
-        <p className="mt-3 text-sm text-zinc-400">No presence data available.</p>
+        <p className="mt-3 text-sm text-[rgb(158,183,211)]">
+          No presence data available.
+        </p>
       ) : (
         <>
-          <p className="mt-2 text-sm text-zinc-400">
-            {presence.connected_count} connected · {presence.total_members} total
+          <p className="mt-2 text-sm text-[rgb(158,183,211)]">
+            {presence.connected_count} connected Â· {presence.total_members} total
           </p>
 
           <div className="mt-4 space-y-3">
             {presence.members.map((member) => (
               <div
                 key={member.user_id}
-                className="flex items-center justify-between rounded-xl border border-zinc-800 bg-zinc-950 p-3"
+                className="flex items-center justify-between rounded-2xl border border-white/8 bg-white/[0.03] p-4"
               >
                 <div>
-                  <div className="text-sm font-medium text-zinc-100">{member.email}</div>
-                  <div className="text-xs text-zinc-500">{member.role}</div>
+                  <div className="text-sm font-medium text-white">{member.email}</div>
+                  <div className="text-xs text-[rgb(158,183,211)]">{member.role}</div>
                 </div>
+
                 <div
                   className={`text-xs font-medium ${
-                    member.connected ? "text-emerald-300" : "text-zinc-500"
+                    member.connected ? "text-emerald-300" : "text-[rgb(158,183,211)]"
                   }`}
                 >
                   {member.connected ? "Connected" : "Offline"}

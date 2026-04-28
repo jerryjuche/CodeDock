@@ -1,4 +1,9 @@
 import * as vscode from "vscode";
+import WebSocket, { RawData } from "ws";
+import {
+  clearTimeout as nodeClearTimeout,
+  setTimeout as nodeSetTimeout,
+} from "timers";
 
 export type ConnectionState =
   | "disconnected"
@@ -8,31 +13,22 @@ export type ConnectionState =
 
 type MessageHandler = (data: Uint8Array) => void;
 type CloseHandler = (code: number, reason: string) => void;
-private closeHandlers: Set<CloseHandler> = new Set();
 
-onClose(handler: CloseHandler): vscode.Disposable {
-  this.closeHandlers.add(handler);
-  return new vscode.Disposable(() => {
-    this.closeHandlers.delete(handler);
-  });
-}
-
-const MAX_BACKOFF_MS = 30_000;
-const BASE_BACKOFF_MS = 1_000;
-
+const BASE_BACKOFF_MS = 1000;
+const MAX_BACKOFF_MS = 30000;
 
 export class WebSocketManager {
   private socket: WebSocket | null = null;
   private state: ConnectionState = "disconnected";
   private queue: Uint8Array[] = [];
-  private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+  private reconnectTimer: ReturnType<typeof nodeSetTimeout> | undefined;
   private attemptCount = 0;
   private manualDisconnect = false;
   private token: string | null = null;
   private roomId: string | null = null;
 
-  private messageHandlers: Set<MessageHandler> = new Set();
-  private closeHandlers: Set<CloseHandler> = new Set();
+  private readonly messageHandlers = new Set<MessageHandler>();
+  private readonly closeHandlers = new Set<CloseHandler>();
 
   constructor(
     private readonly serverUrl: string,
@@ -70,7 +66,7 @@ export class WebSocketManager {
   connect(token: string, roomId: string): void {
     if (!token || !roomId) {
       vscode.window.showErrorMessage(
-        "CodeDock: Cannot connect — missing credentials.",
+        "CodeDock: Cannot connect — missing token or room ID.",
       );
       return;
     }
@@ -83,7 +79,7 @@ export class WebSocketManager {
     }
 
     if (this.reconnectTimer !== undefined) {
-      clearTimeout(this.reconnectTimer);
+      nodeClearTimeout(this.reconnectTimer);
       this.reconnectTimer = undefined;
     }
 
@@ -93,28 +89,51 @@ export class WebSocketManager {
     this.state = this.attemptCount > 0 ? "reconnecting" : "connecting";
 
     const wsUrl =
-      this.serverUrl.replace("https://", "wss://").replace("http://", "ws://") +
+      this.serverUrl
+        .replace(/^https:\/\//, "wss://")
+        .replace(/^http:\/\//, "ws://") +
       `/ws?token=${encodeURIComponent(token)}&room_id=${encodeURIComponent(roomId)}`;
 
     this.outputChannel.appendLine(
       `CodeDock[ws]: connecting (room=${roomId}, handlers=${this.messageHandlers.size})`,
     );
 
-    this.socket = new WebSocket(wsUrl);
+    try {
+      this.socket = new WebSocket(wsUrl);
+    } catch (error) {
+      this.outputChannel.appendLine(
+        `CodeDock[ws]: socket creation failed -> ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
+      this.state = "disconnected";
+      this.scheduleReconnect();
+      return;
+    }
+
     this.socket.binaryType = "arraybuffer";
 
-    this.socket.onopen = () => this.handleOpen();
-    this.socket.onclose = (event) =>
-      this.handleClose(event.code, event.reason ?? "");
-    this.socket.onerror = () => this.handleError();
-    this.socket.onmessage = (event) => this.handleMessage(event);
+    this.socket.on("open", () => this.handleOpen());
+
+    this.socket.on("message", (data: RawData) => {
+      this.handleMessage(data);
+    });
+
+    this.socket.on("error", (error: Error) => {
+      this.handleError(error);
+    });
+
+    this.socket.on("close", (code: number, reasonBuffer: Buffer) => {
+      const reason = reasonBuffer?.toString("utf8") ?? "";
+      this.handleClose(code, reason);
+    });
   }
 
   disconnect(reason: string = "user"): void {
     this.manualDisconnect = true;
 
     if (this.reconnectTimer !== undefined) {
-      clearTimeout(this.reconnectTimer);
+      nodeClearTimeout(this.reconnectTimer);
       this.reconnectTimer = undefined;
     }
 
@@ -122,9 +141,15 @@ export class WebSocketManager {
       `CodeDock[ws]: disconnect requested (reason=${reason}, room=${this.roomId ?? "none"})`,
     );
 
-    if (this.socket) {
-      this.socket.close();
-      this.socket = null;
+    const socket = this.socket;
+    this.socket = null;
+
+    if (socket) {
+      try {
+        socket.close(1000, reason);
+      } catch {
+        // no-op
+      }
     }
 
     this.state = "disconnected";
@@ -134,36 +159,25 @@ export class WebSocketManager {
     this.attemptCount = 0;
   }
 
-  send(message: Uint8Array): void {
-    const messageType = message.length > 0 ? message[0] : -1;
-
-    if (this.state === "connected" && this.socket) {
-      this.outputChannel.appendLine(
-        `CodeDock[ws]: send -> type=${messageType}, bytes=${message.length}, room=${this.roomId ?? "none"}`,
-      );
-      this.socket.send(message);
-      return;
-    }
-
-    this.queue.push(message);
-    this.outputChannel.appendLine(
-      `CodeDock[ws]: queued -> type=${messageType}, bytes=${message.length}, pending=${this.queue.length}`,
-    );
-  }
-
   dispose(): void {
     this.manualDisconnect = true;
 
     if (this.reconnectTimer !== undefined) {
-      clearTimeout(this.reconnectTimer);
+      nodeClearTimeout(this.reconnectTimer);
       this.reconnectTimer = undefined;
     }
 
     this.outputChannel.appendLine("CodeDock[ws]: dispose");
 
-    if (this.socket) {
-      this.socket.close();
-      this.socket = null;
+    const socket = this.socket;
+    this.socket = null;
+
+    if (socket) {
+      try {
+        socket.close(1000, "dispose");
+      } catch {
+        // no-op
+      }
     }
 
     this.state = "disconnected";
@@ -173,6 +187,27 @@ export class WebSocketManager {
     this.attemptCount = 0;
     this.messageHandlers.clear();
     this.closeHandlers.clear();
+  }
+
+  send(message: Uint8Array): void {
+    const messageType = message.length > 0 ? message[0] : -1;
+
+    if (
+      this.state === "connected" &&
+      this.socket &&
+      this.socket.readyState === WebSocket.OPEN
+    ) {
+      this.outputChannel.appendLine(
+        `CodeDock[ws]: send -> type=${messageType}, bytes=${message.length}, room=${this.roomId ?? "none"}`,
+      );
+      this.socket.send(Buffer.from(message));
+      return;
+    }
+
+    this.queue.push(message);
+    this.outputChannel.appendLine(
+      `CodeDock[ws]: queued -> type=${messageType}, bytes=${message.length}, pending=${this.queue.length}`,
+    );
   }
 
   getConnectionState(): ConnectionState {
@@ -189,7 +224,7 @@ export class WebSocketManager {
     this.manualDisconnect = false;
 
     if (this.reconnectTimer !== undefined) {
-      clearTimeout(this.reconnectTimer);
+      nodeClearTimeout(this.reconnectTimer);
       this.reconnectTimer = undefined;
     }
 
@@ -197,7 +232,6 @@ export class WebSocketManager {
       `CodeDock[ws]: connected (room=${this.roomId ?? "none"})`,
     );
 
-    vscode.window.showInformationMessage("CodeDock: Connected to room.");
     this.flushQueue();
   }
 
@@ -205,7 +239,7 @@ export class WebSocketManager {
     this.socket = null;
 
     if (this.reconnectTimer !== undefined) {
-      clearTimeout(this.reconnectTimer);
+      nodeClearTimeout(this.reconnectTimer);
       this.reconnectTimer = undefined;
     }
 
@@ -259,19 +293,21 @@ export class WebSocketManager {
     this.scheduleReconnect();
   }
 
-  private handleError(): void {
-    this.outputChannel.appendLine("CodeDock[ws]: socket error");
+  private handleError(error: Error): void {
+    this.outputChannel.appendLine(
+      `CodeDock[ws]: socket error -> ${error.message}`,
+    );
   }
 
-  private handleMessage(event: MessageEvent): void {
-    if (!(event.data instanceof ArrayBuffer)) {
+  private handleMessage(rawData: RawData): void {
+    const data = this.rawDataToUint8Array(rawData);
+
+    if (!data) {
       this.outputChannel.appendLine(
-        "CodeDock[ws]: inbound ignored (non-binary payload)",
+        "CodeDock[ws]: inbound ignored (unsupported payload)",
       );
       return;
     }
-
-    const data = new Uint8Array(event.data);
 
     if (data.length === 0) {
       this.outputChannel.appendLine("CodeDock[ws]: inbound ignored (empty)");
@@ -295,6 +331,23 @@ export class WebSocketManager {
     }
   }
 
+  private rawDataToUint8Array(rawData: RawData): Uint8Array | null {
+    if (Buffer.isBuffer(rawData)) {
+      return new Uint8Array(rawData);
+    }
+
+    if (rawData instanceof ArrayBuffer) {
+      return new Uint8Array(rawData);
+    }
+
+    if (Array.isArray(rawData)) {
+      const merged = Buffer.concat(rawData);
+      return new Uint8Array(merged);
+    }
+
+    return null;
+  }
+
   private scheduleReconnect(): void {
     if (!this.token || !this.roomId) {
       this.outputChannel.appendLine(
@@ -305,24 +358,36 @@ export class WebSocketManager {
     }
 
     if (this.reconnectTimer !== undefined) {
-      clearTimeout(this.reconnectTimer);
+      nodeClearTimeout(this.reconnectTimer);
     }
 
-    const base = Math.min(
+    const baseDelay = Math.min(
       BASE_BACKOFF_MS * Math.pow(2, this.attemptCount),
       MAX_BACKOFF_MS,
     );
-
-    const delay = Math.round(base + Math.random() * base);
+    const jitter = Math.floor(Math.random() * baseDelay);
+    const delay = baseDelay + jitter;
 
     this.outputChannel.appendLine(
       `CodeDock[ws]: reconnect in ${delay}ms (attempt=${this.attemptCount + 1})`,
     );
 
-    this.reconnectTimer = setTimeout(() => {
+    this.reconnectTimer = nodeSetTimeout(() => {
       this.reconnectTimer = undefined;
-      this.attemptCount++;
-      this.connect(this.token!, this.roomId!);
+      this.attemptCount += 1;
+
+      const token = this.token;
+      const roomId = this.roomId;
+
+      if (!token || !roomId) {
+        this.outputChannel.appendLine(
+          "CodeDock[ws]: reconnect cancelled (missing token or room)",
+        );
+        this.state = "disconnected";
+        return;
+      }
+
+      this.connect(token, roomId);
     }, delay);
   }
 

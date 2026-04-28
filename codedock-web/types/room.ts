@@ -2,7 +2,6 @@ export type Room = {
   id: string;
   name: string;
   slug: string;
-  created_by?: string;
   owner_user_id: string;
   source_type: "local_workspace" | "github_repo";
   source_metadata: Record<string, unknown>;
