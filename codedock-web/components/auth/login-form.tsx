@@ -1,3 +1,4 @@
+// components/auth/login-form.tsx
 "use client";
 
 import { useMemo, useState } from "react";
@@ -20,17 +21,19 @@ export default function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setError(null);
     setLoading(true);
 
     try {
       const response = await login(email.trim(), password);
       loginSession(response.token, response.email);
       router.replace(nextPath);
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : "Login failed");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Login failed. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -63,6 +66,12 @@ export default function LoginForm() {
             required
           />
         </div>
+
+        {error ? (
+          <p className="rounded-[12px] border border-[rgba(255,90,107,0.3)] bg-[rgba(255,90,107,0.08)] px-4 py-3 text-sm text-[rgb(255,160,170)]">
+            {error}
+          </p>
+        ) : null}
 
         <Button disabled={loading} type="submit">
           {loading ? "Signing in..." : "Login"}

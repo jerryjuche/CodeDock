@@ -1,5 +1,7 @@
+// components/rooms/open-in-vscode-button.tsx
 "use client";
 
+import { useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useLaunch } from "@/hooks/use-launch";
@@ -14,7 +16,17 @@ export default function OpenInVSCodeButton({
   launchReason?: string;
 }) {
   const { openRoom, loading } = useLaunch(roomId);
+  const [error, setError] = useState<string | null>(null);
   const disabled = loading || !launchAllowed;
+
+  async function handleOpen() {
+    setError(null);
+    try {
+      await openRoom();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to open in VS Code. Please try again.");
+    }
+  }
 
   return (
     <Card>
@@ -29,8 +41,14 @@ export default function OpenInVSCodeButton({
         </div>
       ) : null}
 
+      {error ? (
+        <p className="mt-4 rounded-[12px] border border-[rgba(255,90,107,0.3)] bg-[rgba(255,90,107,0.08)] px-4 py-3 text-sm text-[rgb(255,160,170)]">
+          {error}
+        </p>
+      ) : null}
+
       <div className="mt-5">
-        <Button disabled={disabled} onClick={() => void openRoom()}>
+        <Button disabled={disabled} onClick={() => void handleOpen()}>
           {loading ? "Opening..." : "Open in VS Code"}
         </Button>
       </div>

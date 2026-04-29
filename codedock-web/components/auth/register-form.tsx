@@ -1,3 +1,4 @@
+// components/auth/register-form.tsx
 "use client";
 
 import { useState } from "react";
@@ -18,12 +19,14 @@ export default function RegisterForm() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setError(null);
 
     if (password !== confirmPassword) {
-      window.alert("Passwords do not match");
+      setError("Passwords do not match.");
       return;
     }
 
@@ -33,8 +36,8 @@ export default function RegisterForm() {
       const response = await register(email.trim(), password);
       loginSession(response.token, response.email);
       router.replace("/dashboard");
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : "Registration failed");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Registration failed. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -78,6 +81,12 @@ export default function RegisterForm() {
             required
           />
         </div>
+
+        {error ? (
+          <p className="rounded-[12px] border border-[rgba(255,90,107,0.3)] bg-[rgba(255,90,107,0.08)] px-4 py-3 text-sm text-[rgb(255,160,170)]">
+            {error}
+          </p>
+        ) : null}
 
         <Button disabled={loading} type="submit">
           {loading ? "Creating account..." : "Register"}

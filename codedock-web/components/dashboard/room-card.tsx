@@ -1,7 +1,8 @@
+// components/dashboard/room-card.tsx
 import Link from "next/link";
 import type { Room } from "@/types/room";
 import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import RoomSourceBadge from "@/components/rooms/room-source-badge";
 
 export default function RoomCard({ room }: { room: Room }) {
   return (
@@ -11,7 +12,7 @@ export default function RoomCard({ room }: { room: Room }) {
           <h3 className="text-lg font-semibold">{room.name}</h3>
           <p className="mt-1 text-sm text-zinc-400">{room.slug}</p>
         </div>
-        <Badge>{room.source_type}</Badge>
+        <RoomSourceBadge sourceType={room.source_type} />
       </div>
       <p className="mt-4 text-sm text-zinc-400">Primary code: {room.primary_join_code}</p>
       <Link className="mt-4 inline-block text-sm font-medium underline" href={`/rooms/${room.id}`}>

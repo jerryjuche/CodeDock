@@ -1,3 +1,4 @@
+// components/rooms/create-room-form.tsx
 "use client";
 
 import { useState } from "react";
@@ -21,12 +22,14 @@ export default function CreateRoomForm() {
   const [repoName, setRepoName] = useState("");
   const [branch, setBranch] = useState("main");
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function onSubmit(event: React.FormEvent) {
     event.preventDefault();
+    setError(null);
 
     if (!token) {
-      window.alert("You are not logged in.");
+      setError("You are not logged in.");
       return;
     }
 
@@ -52,8 +55,8 @@ export default function CreateRoomForm() {
       const room = await createRoom(token, payload);
       router.push(`/rooms/${room.id}`);
       router.refresh();
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : "Failed to create room");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create room. Please try again.");
     } finally {
       setSubmitting(false);
     }
@@ -136,6 +139,12 @@ export default function CreateRoomForm() {
             The host will bind a local project folder later from VS Code before guests can launch the room.
           </div>
         )}
+
+        {error ? (
+          <p className="rounded-[12px] border border-[rgba(255,90,107,0.3)] bg-[rgba(255,90,107,0.08)] px-4 py-3 text-sm text-[rgb(255,160,170)]">
+            {error}
+          </p>
+        ) : null}
 
         <div className="pt-2">
           <Button type="submit" size="lg" disabled={submitting}>

@@ -1,3 +1,4 @@
+// components/rooms/source-state-card.tsx
 import { Card } from "@/components/ui/card";
 import type { RoomSourceState } from "@/types/room";
 
@@ -20,6 +21,23 @@ function readableStatus(state: RoomSourceState) {
   }
 }
 
+function BoolIndicator({ value }: { value: boolean }) {
+  return (
+    <span className="flex items-center gap-1.5">
+      <span
+        className="inline-block h-2 w-2 rounded-full"
+        style={{
+          background: value ? "rgb(42,211,139)" : "rgb(158,183,211)",
+          boxShadow: value ? "0 0 6px rgba(42,211,139,0.5)" : "none",
+        }}
+      />
+      <span className={value ? "text-[rgb(42,211,139)]" : "text-[rgb(158,183,211)]"}>
+        {value ? "Yes" : "No"}
+      </span>
+    </span>
+  );
+}
+
 export default function SourceStateCard({
   sourceState,
 }: {
@@ -40,12 +58,12 @@ export default function SourceStateCard({
 
         <div className="flex items-center justify-between gap-4">
           <span className="text-[rgb(158,183,211)]">Ready</span>
-          <span>{sourceState.ready ? "Yes" : "No"}</span>
+          <BoolIndicator value={sourceState.ready} />
         </div>
 
         <div className="flex items-center justify-between gap-4">
           <span className="text-[rgb(158,183,211)]">Launch allowed</span>
-          <span>{sourceState.launch_allowed ? "Yes" : "No"}</span>
+          <BoolIndicator value={sourceState.launch_allowed} />
         </div>
 
         {sourceState.launch_reason ? (
@@ -65,15 +83,15 @@ export default function SourceStateCard({
           <>
             <div className="flex items-center justify-between gap-4">
               <span className="text-[rgb(158,183,211)]">Repo owner</span>
-              <span>{sourceState.repo_owner || "â€”"}</span>
+              <span>{sourceState.repo_owner || "—"}</span>
             </div>
             <div className="flex items-center justify-between gap-4">
               <span className="text-[rgb(158,183,211)]">Repo name</span>
-              <span>{sourceState.repo_name || "â€”"}</span>
+              <span>{sourceState.repo_name || "—"}</span>
             </div>
             <div className="flex items-center justify-between gap-4">
               <span className="text-[rgb(158,183,211)]">Branch</span>
-              <span>{sourceState.branch || "â€”"}</span>
+              <span>{sourceState.branch || "—"}</span>
             </div>
           </>
         ) : null}

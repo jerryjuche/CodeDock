@@ -1,3 +1,4 @@
+// components/dashboard/join-code-form.tsx
 "use client";
 
 import { useState } from "react";
@@ -12,21 +13,23 @@ export default function JoinCodeForm() {
   const router = useRouter();
   const { resolveCode, loading } = useJoinCode();
   const [code, setCode] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    setError(null);
 
     const normalized = code.trim().toUpperCase();
     if (normalized.length !== 6) {
-      window.alert("Invite code must be 6 characters");
+      setError("Invite code must be exactly 6 characters.");
       return;
     }
 
     try {
       const result = await resolveCode(normalized);
       router.push(`/rooms/${result.room.id}`);
-    } catch (error) {
-      window.alert(error instanceof Error ? error.message : "Join failed");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to join room. Check the code and try again.");
     }
   }
 
@@ -41,12 +44,22 @@ export default function JoinCodeForm() {
           <Input
             id="join-code"
             value={code}
-            onChange={(e) => setCode(e.target.value.toUpperCase())}
+            onChange={(e) => {
+              setCode(e.target.value.toUpperCase());
+              if (error) setError(null);
+            }}
             maxLength={6}
             placeholder="7KQ2MP"
+            className="font-mono tracking-[0.18em]"
             required
           />
         </div>
+
+        {error ? (
+          <p className="rounded-[12px] border border-[rgba(255,90,107,0.3)] bg-[rgba(255,90,107,0.08)] px-4 py-3 text-sm text-[rgb(255,160,170)]">
+            {error}
+          </p>
+        ) : null}
 
         <Button disabled={loading} type="submit">
           {loading ? "Joining..." : "Join Room"}
