@@ -17,7 +17,7 @@ export default function AuthShell({
   footer?: ReactNode;
 }) {
   return (
-    <div className="grid min-h-[calc(100vh-64px)] items-center gap-10 py-12 lg:grid-cols-[1.1fr_0.9fr]">
+    <div className="grid items-center gap-10 pb-12 pt-8 lg:grid-cols-[1.1fr_0.9fr] lg:pt-16">
       {/* ── Left: marketing / feature copy ─────────────────────────── */}
       <section className="hidden lg:block">
         <div className="max-w-xl space-y-8">

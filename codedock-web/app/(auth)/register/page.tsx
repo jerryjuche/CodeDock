@@ -9,14 +9,6 @@ export default function RegisterPage() {
       <AuthShell
         title="Create your CodeDock account"
         description="Set up access to the collaboration control plane and start launching shared coding sessions."
-        footer={
-          <p className="text-sm text-[rgb(158,183,211)]">
-            Already have an account?{" "}
-            <Link href="/login" className="font-medium text-white underline underline-offset-4">
-              Log in
-            </Link>
-          </p>
-        }
       >
         <RegisterForm />
       </AuthShell>

@@ -9,14 +9,6 @@ export default function LoginPage() {
       <AuthShell
         title="Log in to CodeDock"
         description="Access your rooms, launch sessions, and continue collaboration from the control plane."
-        footer={
-          <p className="text-sm text-[rgb(158,183,211)]">
-            New to CodeDock?{" "}
-            <Link href="/register" className="font-medium text-white underline underline-offset-4">
-              Create an account
-            </Link>
-          </p>
-        }
       >
         <LoginForm />
       </AuthShell>

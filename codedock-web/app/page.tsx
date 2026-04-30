@@ -5,9 +5,11 @@ import TextRotate from "@/components/fancy/text/text-rotate";
 export default function HomePage() {
   return (
     <MarketingShell>
-<main className="grid min-h-[calc(100vh-120px)] items-center gap-12 py-8 lg:grid-cols-[1.1fr_0.9fr]">        <section className="max-w-4xl space-y-8">
+      <main className="grid items-center gap-12 pb-8 pt-12 lg:grid-cols-[1.1fr_0.9fr] lg:pt-20">
+        <section className="max-w-4xl space-y-8">
           <div className="space-y-4">
-<h1 className="max-w-3xl text-[40px] leading-[1.1] font-semibold tracking-tight text-white sm:text-[48px] lg:text-[56px]">              Self-hosted collaborative coding that feels{" "}
+            <h1 className="max-w-3xl text-[40px] leading-[1.1] font-semibold tracking-tight text-white sm:text-[48px] lg:text-[56px]">
+              Self-hosted collaborative coding that feels{" "}
               <TextRotate
                 texts={["owned", "stable", "fast", "focused", "professional"]}
               />
