@@ -32,6 +32,13 @@ export function useRoomDetails(roomId: string) {
   useEffect(() => {
     if (!hydrated) return;
     void load();
+
+    // Poll for updates every 3 seconds while on the room page
+    const timer = window.setInterval(() => {
+      void load();
+    }, 3000);
+
+    return () => window.clearInterval(timer);
   }, [hydrated, roomId, token]);
 
   return {

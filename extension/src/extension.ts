@@ -193,18 +193,23 @@ async function handleLaunchUri(
 
     const currentRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 
+    // PROFESSIONAL DEBUGGING: Log full context
     outputChannel.appendLine(
-      `CodeDock: launch context - role=${pending.role}, source=${pending.source_type}`,
+      `CodeDock: [DEBUG] launch context: ${JSON.stringify(launchContext)}`,
     );
 
     // Special behavior for host + local_workspace: stay in current window (even if blank) and prompt via resume
-    // We treat anyone not explicitly "editor" as a potential host setup for local workspaces
-    if (
-      pending.source_type === "local_workspace" &&
-      pending.role !== "editor"
-    ) {
+    // We treat ANY role that is not explicitly "editor" AS HOST
+    // ALSO: If it's a local_workspace and there is NO path hint, it's almost certainly a fresh host setup.
+    const isActuallyHost =
+      launchContext.role !== "editor" || !launchContext.workspace_path_hint;
+
+    if (launchContext.source_type === "local_workspace" && isActuallyHost) {
       outputChannel.appendLine(
-        "CodeDock: host launch for local_workspace detected, skipping automatic openFolder to allow manual selection",
+        "CodeDock: [LAUNCH] host + local_workspace detected. skipping automatic openFolder to allow manual selection.",
+      );
+      outputChannel.appendLine(
+        "IMPORTANT: If you don't see the 'Open Folder' prompt, please RELOAD VS Code to ensure the latest extension build is active.",
       );
       await resumePendingLaunch(context, outputChannel);
       return;
@@ -310,6 +315,30 @@ async function resumePendingLaunch(
       "CodeDock: No auth session found for this launch. Please log in again.",
     );
     return;
+  }
+
+  // Ensure backend knows we are bound if we are the host
+  if (
+    isHostLike &&
+    (pending.source_type === "local_workspace" ||
+      pending.source_type === "github_repo")
+  ) {
+    try {
+      await apiClient.bindLocalWorkspace(
+        token,
+        pending.room_id,
+        path.basename(currentRoot),
+      );
+      outputChannel.appendLine(
+        `CodeDock: ensured room ${pending.room_id} is bound to ${currentRoot}`,
+      );
+    } catch (err) {
+      outputChannel.appendLine(
+        `CodeDock: bindLocalWorkspace warning -> ${
+          err instanceof Error ? err.message : "unknown error"
+        }`,
+      );
+    }
   }
 
   outputChannel.appendLine(

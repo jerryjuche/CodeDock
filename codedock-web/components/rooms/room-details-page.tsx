@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button";
 
 export default function RoomDetailsPageClient({ roomId }: { roomId: string }) {
   const { userId } = useAuth();
-  const { details, loading, error } = useRoomDetails(roomId);
+  const { details, loading, error, reload } = useRoomDetails(roomId);
   const {
     presence,
     loading: presenceLoading,
@@ -99,7 +99,12 @@ export default function RoomDetailsPageClient({ roomId }: { roomId: string }) {
         </div>
 
         <div className="space-y-6">
-          <SourceStateCard sourceState={details.source_state} />
+          <SourceStateCard
+            sourceState={details.source_state}
+            roomId={roomId}
+            isHost={isHost}
+            onActivated={reload}
+          />
           <OpenInVSCodeButton
             roomId={roomId}
             launchAllowed={details.source_state.launch_allowed}

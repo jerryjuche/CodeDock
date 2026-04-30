@@ -52,3 +52,15 @@ export function deleteRoom(token: string, roomId: string) {
     token,
   });
 }
+
+export function bindRoomSource(
+  token: string,
+  roomId: string,
+  workspaceLabel?: string,
+) {
+  return apiRequest<RoomDetails>(`/rooms/${roomId}/source/local/bind`, {
+    method: "POST",
+    token,
+    body: { workspace_label: workspaceLabel },
+  });
+}

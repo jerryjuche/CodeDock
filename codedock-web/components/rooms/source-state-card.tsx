@@ -1,6 +1,11 @@
-// components/rooms/source-state-card.tsx
 import { Card } from "@/components/ui/card";
 import type { RoomSourceState } from "@/types/room";
+import { Button } from "@/components/ui/button";
+import { useState } from "react";
+import { bindRoomSource } from "@/lib/api/rooms";
+import { useAuth } from "@/hooks/use-auth";
+import { toast } from "sonner";
+import { Loader2, Rocket } from "lucide-react";
 
 function readableStatus(state: RoomSourceState) {
   switch (state.status) {
@@ -12,6 +17,10 @@ function readableStatus(state: RoomSourceState) {
       return "Repository not configured";
     case "host_workspace_required":
       return "Host must select a project folder in VS Code";
+    case "host_activation_required":
+      return "Host must activate room";
+    case "waiting_for_host":
+      return "Waiting for host";
     case "waiting_for_host_workspace":
       return "Waiting for host workspace";
     case "clone_not_ready":
@@ -71,9 +80,34 @@ function BoolRow({ label, value }: { label: string; value: boolean }) {
 
 export default function SourceStateCard({
   sourceState,
+  roomId,
+  isHost,
+  onActivated,
 }: {
   sourceState: RoomSourceState;
+  roomId: string;
+  isHost: boolean;
+  onActivated?: () => void;
 }) {
+  const { token } = useAuth();
+  const [loading, setLoading] = useState(false);
+
+  const handleActivate = async () => {
+    if (!token) return;
+    setLoading(true);
+    try {
+      await bindRoomSource(token, roomId);
+      toast.success("Room activated successfully!");
+      onActivated?.();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Activation failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const showActivateButton = isHost && !sourceState.ready;
+
   return (
     <Card>
       {/* Header: title + status pill */}
@@ -91,6 +125,27 @@ export default function SourceStateCard({
       <div className="mt-4 divide-y divide-white/[0.06]">
         <BoolRow label="Launch allowed" value={sourceState.launch_allowed} />
       </div>
+
+      {/* Manual Activation Button for Host */}
+      {showActivateButton && (
+        <div className="mt-4">
+          <Button
+            onClick={handleActivate}
+            disabled={loading}
+            className="w-full gap-2 bg-gradient-to-r from-emerald-600 to-teal-600 text-white hover:from-emerald-500 hover:to-teal-500 border-none shadow-lg shadow-emerald-900/20"
+          >
+            {loading ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Rocket className="h-4 w-4" />
+            )}
+            Activate Room for Guests
+          </Button>
+          <p className="mt-2 text-[11px] text-center text-[rgb(158,183,211)]">
+            Activation notifies guests that the room is ready for joining.
+          </p>
+        </div>
+      )}
 
       {/* Launch reason — shown only when blocked */}
       {!sourceState.launch_allowed && sourceState.launch_reason ? (

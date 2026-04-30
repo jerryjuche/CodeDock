@@ -323,7 +323,8 @@ func (s *RoomService) MarkLocalWorkspaceBound(roomID, userID, workspaceLabel str
 	if err != nil {
 		return nil, err
 	}
-	if room.SourceType != SourceTypeLocalWorkspace {
+	// Allow both local_workspace and github_repo to be "bound" by the host
+	if room.SourceType != SourceTypeLocalWorkspace && room.SourceType != SourceTypeGitHubRepo {
 		return nil, ErrInvalidRoomState
 	}
 
@@ -333,6 +334,7 @@ func (s *RoomService) MarkLocalWorkspaceBound(roomID, userID, workspaceLabel str
 	}
 
 	metadata["workspace_bound"] = true
+	metadata["activated"] = true
 	metadata["ready"] = true
 	metadata["status"] = "ready"
 	metadata["host_selected_at"] = time.Now().UTC().Format(time.RFC3339)
@@ -510,10 +512,27 @@ func buildRoomSourceState(room *Room, role string) RoomSourceState {
 		state.RepoName = meta.RepoName
 		state.Branch = meta.Branch
 
+		// Check if host has "activated" the room
+		var m map[string]any
+		_ = json.Unmarshal(room.SourceMetadata, &m)
+		state.HostBound = m["activated"] == true || m["ready"] == true
+
 		if meta.RepoOwner != "" && meta.RepoName != "" {
-			state.Ready = true
-			state.Status = "ready"
-			state.LaunchAllowed = true
+			if state.HostBound {
+				state.Ready = true
+				state.Status = "ready"
+				state.LaunchAllowed = true
+			} else if role == "host" {
+				state.Ready = false
+				state.Status = "host_activation_required"
+				state.LaunchAllowed = true
+				state.LaunchReason = "Click 'Activate Room' or launch VS Code to start the session."
+			} else {
+				state.Ready = false
+				state.Status = "waiting_for_host"
+				state.LaunchAllowed = false
+				state.LaunchReason = "The host has not activated this room yet."
+			}
 		} else {
 			state.Ready = false
 			state.Status = "repo_not_configured"
@@ -524,13 +543,14 @@ func buildRoomSourceState(room *Room, role string) RoomSourceState {
 	case SourceTypeLocalWorkspace:
 		var meta struct {
 			WorkspaceBound bool   `json:"workspace_bound"`
+			Activated      bool   `json:"activated"`
 			Ready          bool   `json:"ready"`
 			Status         string `json:"status"`
 			WorkspaceLabel string `json:"workspace_label"`
 		}
 		_ = json.Unmarshal(room.SourceMetadata, &meta)
 
-		state.HostBound = meta.WorkspaceBound || meta.Ready
+		state.HostBound = meta.Activated || meta.WorkspaceBound || meta.Ready
 		state.WorkspaceLabel = meta.WorkspaceLabel
 
 		if state.HostBound {
@@ -541,7 +561,7 @@ func buildRoomSourceState(room *Room, role string) RoomSourceState {
 			state.Ready = false
 			state.Status = "host_workspace_required"
 			state.LaunchAllowed = true
-			state.LaunchReason = "Select your project folder in VS Code to publish this room."
+			state.LaunchReason = "Select your project folder in VS Code or click 'Activate' to start."
 		} else {
 			state.Ready = false
 			state.Status = "waiting_for_host_workspace"

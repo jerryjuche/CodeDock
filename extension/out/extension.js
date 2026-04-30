@@ -3806,6 +3806,17 @@ var ApiClient = class {
       false
     );
   }
+  async bindLocalWorkspace(token, roomId, workspaceLabel) {
+    return this.request(
+      `/rooms/${roomId}/source/local/bind`,
+      {
+        method: "POST",
+        body: JSON.stringify({ workspace_label: workspaceLabel })
+      },
+      true,
+      token
+    );
+  }
   async request(path4, options, authenticated, token) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -12648,18 +12659,18 @@ var YjsSync = class {
   shouldIgnoreRelativePath(relativePath) {
     const normalized = relativePath.replace(/\\/g, "/");
     const segments = normalized.split("/").filter(Boolean);
-    const basename2 = segments[segments.length - 1] ?? "";
+    const basename3 = segments[segments.length - 1] ?? "";
     if (segments.some((segment) => IGNORED_DIR_NAMES.has(segment))) {
       return true;
     }
-    if (IGNORED_FILE_NAMES.has(basename2)) {
+    if (IGNORED_FILE_NAMES.has(basename3)) {
       return true;
     }
     return false;
   }
   looksLikeTextPath(relativePath) {
-    const basename2 = path.basename(relativePath);
-    if (IGNORED_FILE_NAMES.has(basename2)) {
+    const basename3 = path.basename(relativePath);
+    if (IGNORED_FILE_NAMES.has(basename3)) {
       return false;
     }
     const ext = path.extname(relativePath).toLowerCase();
@@ -12833,6 +12844,16 @@ var GitError = class extends Error {
     this.name = "GitError";
   }
 };
+function toHttpsUrl(url) {
+  const githubSshRegex = /^git@github\.com:([^/]+)\/(.+)$/;
+  const match = url.match(githubSshRegex);
+  if (match) {
+    const owner = match[1];
+    const repo = match[2];
+    return `https://github.com/${owner}/${repo}`;
+  }
+  return url;
+}
 async function runGitCommand(args2, cwd, outputChannel) {
   return new Promise((resolve2, reject) => {
     outputChannel.appendLine(`CodeDock[git]: git ${args2.join(" ")}`);
@@ -12892,6 +12913,7 @@ async function getGitRemoteOrigin(cwd, outputChannel) {
   });
 }
 async function ensureGitRepo(repoUrl, branch, targetPath, outputChannel) {
+  const safeRepoUrl = toHttpsUrl(repoUrl);
   const gitDir = path2.join(targetPath, ".git");
   let isRepo = false;
   try {
@@ -12913,10 +12935,10 @@ async function ensureGitRepo(repoUrl, branch, targetPath, outputChannel) {
       );
     }
     const normalizedExisting = originUrl.replace(/\.git$/, "").toLowerCase();
-    const normalizedTarget = repoUrl.replace(/\.git$/, "").toLowerCase();
+    const normalizedTarget = safeRepoUrl.replace(/\.git$/, "").toLowerCase();
     if (normalizedExisting !== normalizedTarget) {
       throw new GitError(
-        `Existing repository's origin (${originUrl}) does not match the room's repository (${repoUrl}). Please clear the ~/.codedock/rooms folder.`
+        `Existing repository's origin (${originUrl}) does not match the room's repository (${safeRepoUrl}). Please clear the ~/.codedock/rooms folder.`
       );
     }
     await runGitCommand(["fetch", "origin"], targetPath, outputChannel);
@@ -12924,10 +12946,10 @@ async function ensureGitRepo(repoUrl, branch, targetPath, outputChannel) {
     return;
   }
   outputChannel.appendLine(
-    `CodeDock[git]: cloning ${repoUrl} (branch: ${branch}) into ${targetPath}`
+    `CodeDock[git]: cloning ${safeRepoUrl} (branch: ${branch}) into ${targetPath}`
   );
   await runGitCommand(
-    ["clone", "--branch", branch, repoUrl, "."],
+    ["clone", "--branch", branch, safeRepoUrl, "."],
     targetPath,
     outputChannel
   );
@@ -12956,22 +12978,6 @@ async function activate(context) {
   authManager = new AuthManager(context.secrets, apiClient, emitter);
   wsManager = new WebSocketManager(serverUrl, outputChannel);
   yjsSync = new YjsSync(wsManager, outputChannel, context.globalState);
-  context.subscriptions.push(
-    wsManager.onClose((code, reason) => {
-      const sessionEnded = code === 4004 || code === 4003 || reason === "room_deleted" || reason === "room_unavailable" || reason === "forbidden";
-      if (!sessionEnded) {
-        return;
-      }
-      outputChannel.appendLine(
-        `CodeDock: room session terminated by server (code=${code}, reason=${reason || "none"})`
-      );
-      void clearPendingHydratedJoin(context);
-      void clearPendingLaunch(context);
-      yjsSync.setActiveRoomId(null);
-      yjsSync.setGuestMaterializationRoot(null);
-      yjsSync.dispose();
-    })
-  );
   context.subscriptions.push(
     wsManager.onClose((code, reason) => {
       const sessionEnded = code === 4004 || code === 4003 || reason === "room_deleted" || reason === "room_unavailable" || reason === "forbidden";
@@ -13092,6 +13098,20 @@ async function handleLaunchUri(context, uri, outputChannel) {
     };
     await context.globalState.update(PENDING_LAUNCH_CONTEXT_KEY, pending);
     const currentRoot = vscode4.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    outputChannel.appendLine(
+      `CodeDock: [DEBUG] launch context: ${JSON.stringify(launchContext)}`
+    );
+    const isActuallyHost = launchContext.role !== "editor" || !launchContext.workspace_path_hint;
+    if (launchContext.source_type === "local_workspace" && isActuallyHost) {
+      outputChannel.appendLine(
+        "CodeDock: [LAUNCH] host + local_workspace detected. skipping automatic openFolder to allow manual selection."
+      );
+      outputChannel.appendLine(
+        "IMPORTANT: If you don't see the 'Open Folder' prompt, please RELOAD VS Code to ensure the latest extension build is active."
+      );
+      await resumePendingLaunch(context, outputChannel);
+      return;
+    }
     if (currentRoot && normalizeFsPath(currentRoot) === normalizeFsPath(workspaceUri.fsPath)) {
       outputChannel.appendLine(
         "CodeDock: launch workspace already open, resuming directly"
@@ -13124,17 +13144,47 @@ async function resumePendingLaunch(context, outputChannel) {
     return;
   }
   const currentRoot = vscode4.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const isHostLike = pending.role !== "editor";
   if (!currentRoot) {
-    outputChannel.appendLine(
-      "CodeDock: pending launch found but no workspace root is open"
-    );
+    if (isHostLike && pending.source_type === "local_workspace") {
+      outputChannel.appendLine(
+        "CodeDock: host launch pending but no folder open, prompting..."
+      );
+      const selection = await vscode4.window.showInformationMessage(
+        `CodeDock: You are the host of "${pending.room_name}". Please open the project folder you want to share.`,
+        "Open Folder"
+      );
+      if (selection === "Open Folder") {
+        await vscode4.commands.executeCommand("vscode.openFolder");
+      }
+    } else {
+      outputChannel.appendLine(
+        "CodeDock: pending launch found but no workspace root is open"
+      );
+    }
     return;
   }
   if (normalizeFsPath(currentRoot) !== normalizeFsPath(pending.workspace_fs_path)) {
-    outputChannel.appendLine(
-      "CodeDock: current workspace does not match pending launch root"
-    );
-    return;
+    if (isHostLike && pending.source_type === "local_workspace") {
+      outputChannel.appendLine(
+        `CodeDock: host opened different folder (${currentRoot}), asking to bind...`
+      );
+      const selection = await vscode4.window.showInformationMessage(
+        `CodeDock: Do you want to share the current folder ("${path3.basename(currentRoot)}") with room "${pending.room_name}"?`,
+        "Yes, Share Folder",
+        "No"
+      );
+      if (selection === "Yes, Share Folder") {
+        pending.workspace_fs_path = currentRoot;
+      } else {
+        return;
+      }
+    } else {
+      outputChannel.appendLine(
+        "CodeDock: current workspace does not match pending launch root"
+      );
+      return;
+    }
   }
   const token = await authManager.getToken();
   if (!token) {
@@ -13142,6 +13192,22 @@ async function resumePendingLaunch(context, outputChannel) {
       "CodeDock: No auth session found for this launch. Please log in again."
     );
     return;
+  }
+  if (isHostLike && (pending.source_type === "local_workspace" || pending.source_type === "github_repo")) {
+    try {
+      await apiClient.bindLocalWorkspace(
+        token,
+        pending.room_id,
+        path3.basename(currentRoot)
+      );
+      outputChannel.appendLine(
+        `CodeDock: ensured room ${pending.room_id} is bound to ${currentRoot}`
+      );
+    } catch (err) {
+      outputChannel.appendLine(
+        `CodeDock: bindLocalWorkspace warning -> ${err instanceof Error ? err.message : "unknown error"}`
+      );
+    }
   }
   outputChannel.appendLine(
     `CodeDock: resuming launched room ${pending.room_id} (${pending.role})`
@@ -13156,7 +13222,7 @@ async function resumePendingLaunch(context, outputChannel) {
   }
   yjsSync.setGuestMaterializationRoot(null);
   yjsSync.setActiveRoomId(pending.room_id);
-  yjsSync.setSessionRole(pending.role === "host" ? "host" : "guest");
+  yjsSync.setSessionRole(isHostLike ? "host" : "guest");
   wsManager.connect(token, pending.room_id);
   yjsSync.activate();
   await clearPendingLaunch(context);

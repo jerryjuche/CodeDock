@@ -68,6 +68,22 @@ export class ApiClient {
     );
   }
 
+  async bindLocalWorkspace(
+    token: string,
+    roomId: string,
+    workspaceLabel: string,
+  ): Promise<void> {
+    return this.request<void>(
+      `/rooms/${roomId}/source/local/bind`,
+      {
+        method: "POST",
+        body: JSON.stringify({ workspace_label: workspaceLabel }),
+      },
+      true,
+      token,
+    );
+  }
+
   private async request<T>(
     path: string,
     options: RequestInit,
