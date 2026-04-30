@@ -1,68 +1,53 @@
-# flyctl launch added from .gitignore
-# If you prefer the allow list template instead of the deny list, see community template:
-# https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
-#
-# Binaries for programs and plugins
-**\*.exe
-**\*.exe~
-**\*.dll
-**\*.so
-**\*.dylib
+.git
+.gitignore
 
-# Test binary, built with `go test -c`
-**\*.test
+# Local env files
+.env
+.env.*
+!.env.example
 
-# Code coverage profiles and other test artifacts
-**\*.out
-**\coverage.*
-**\*.coverprofile
-**\profile.cov
+# Node / frontend build artifacts
+node_modules
+**/node_modules
+.next
+**/.next
+dist
+**/dist
+build
+**/build
+coverage
+**/coverage
 
-# Dependency directories (remove the comment below to include it)
-# vendor/
-
-# Go workspace file
-**\go.work
-**\go.work.sum
-
-# env file
-**\.env
-
-# Editor/IDE
-# .idea/
-# .vscode/
-
-**\node_modules
-
-# flyctl launch added from codedock-test-dashboard\frontend\.gitignore
 # Logs
-codedock-test-dashboard\frontend\**\logs
-codedock-test-dashboard\frontend\**\*.log
-codedock-test-dashboard\frontend\**\npm-debug.log*
-codedock-test-dashboard\frontend\**\yarn-debug.log*
-codedock-test-dashboard\frontend\**\yarn-error.log*
-codedock-test-dashboard\frontend\**\pnpm-debug.log*
-codedock-test-dashboard\frontend\**\lerna-debug.log*
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
-codedock-test-dashboard\frontend\**\node_modules
-codedock-test-dashboard\frontend\**\dist
-codedock-test-dashboard\frontend\**\dist-ssr
-codedock-test-dashboard\frontend\**\*.local
+# OS/editor files
+.DS_Store
+.vscode
+.idea
 
-# Editor directories and files
-codedock-test-dashboard\frontend\**\.vscode\*
-!codedock-test-dashboard\frontend\**\.vscode\extensions.json
-codedock-test-dashboard\frontend\**\.idea
-codedock-test-dashboard\frontend\**\.DS_Store
-codedock-test-dashboard\frontend\**\*.suo
-codedock-test-dashboard\frontend\**\*.ntvs*
-codedock-test-dashboard\frontend\**\*.njsproj
-codedock-test-dashboard\frontend\**\*.sln
-codedock-test-dashboard\frontend\**\*.sw?
+# Local/generated files
+tmp
+temp
+*.tmp
+*.bak
 
-# flyctl launch added from extension\.gitignore
-extension\**\node_modules
-extension\**\out
-extension\**\*.vsix
+# VS Code extension packaging artifacts
+extension/*.vsix
+extension/out
+extension/dist
 
-fly.toml
+# Test dashboard frontend dependencies/builds
+codedock-test-dashboard/frontend/node_modules
+codedock-test-dashboard/frontend/.next
+codedock-test-dashboard/frontend/dist
+codedock-test-dashboard/frontend/build
+
+# Web control plane dependencies/builds
+codedock-web/node_modules
+codedock-web/.next
+codedock-web/dist
+codedock-web/build
