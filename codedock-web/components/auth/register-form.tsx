@@ -1,4 +1,6 @@
 // components/auth/register-form.tsx
+// NOTE: AuthShell already provides the outer card panel.
+// This form renders INSIDE that shell — no wrapping <Card> needed.
 "use client";
 
 import { useState } from "react";
@@ -7,7 +9,6 @@ import { useRouter } from "next/navigation";
 import { register } from "@/lib/api/auth";
 import { useAuth } from "@/hooks/use-auth";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -37,68 +38,100 @@ export default function RegisterForm() {
       loginSession(response.token, response.email);
       router.replace("/dashboard");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Registration failed. Please try again.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Registration failed. Please try again.",
+      );
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <Card className="w-full">
-      <h1 className="text-2xl font-semibold">Register</h1>
-      <p className="mt-2 text-sm text-zinc-400">Create your CodeDock account.</p>
+    <form className="space-y-5" onSubmit={onSubmit}>
+      <div className="space-y-1.5">
+        <Label htmlFor="email">Email</Label>
+        <Input
+          id="email"
+          type="email"
+          placeholder="you@company.com"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          required
+          autoComplete="email"
+        />
+      </div>
 
-      <form className="mt-6 space-y-4" onSubmit={onSubmit}>
-        <div>
-          <Label htmlFor="email">Email</Label>
-          <Input
-            id="email"
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
-        </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="password">Password</Label>
+        <Input
+          id="password"
+          type="password"
+          placeholder="••••••••"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          required
+          autoComplete="new-password"
+        />
+      </div>
 
-        <div>
-          <Label htmlFor="password">Password</Label>
-          <Input
-            id="password"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
-        </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="confirm-password">Confirm password</Label>
+        <Input
+          id="confirm-password"
+          type="password"
+          placeholder="••••••••"
+          value={confirmPassword}
+          onChange={(e) => setConfirmPassword(e.target.value)}
+          required
+          autoComplete="new-password"
+        />
+      </div>
 
-        <div>
-          <Label htmlFor="confirm-password">Confirm Password</Label>
-          <Input
-            id="confirm-password"
-            type="password"
-            value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-            required
-          />
-        </div>
-
-        {error ? (
-          <p className="rounded-[12px] border border-[rgba(255,90,107,0.3)] bg-[rgba(255,90,107,0.08)] px-4 py-3 text-sm text-[rgb(255,160,170)]">
+      {error ? (
+        <div
+          role="alert"
+          className="flex items-start gap-3 rounded-[12px] border border-[rgba(255,90,107,0.25)] bg-[rgba(255,90,107,0.08)] px-4 py-3"
+        >
+          <span className="mt-0.5 h-4 w-4 flex-shrink-0 text-[rgb(255,90,107)]">
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <circle
+                cx="8"
+                cy="8"
+                r="7"
+                stroke="currentColor"
+                strokeWidth="1.5"
+              />
+              <path
+                d="M8 5v4M8 11h.01"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+              />
+            </svg>
+          </span>
+          <p className="text-sm leading-relaxed text-[rgb(255,160,170)]">
             {error}
           </p>
-        ) : null}
+        </div>
+      ) : null}
 
-        <Button disabled={loading} type="submit">
-          {loading ? "Creating account..." : "Register"}
+      <div className="pt-1">
+        <Button disabled={loading} type="submit" className="w-full">
+          {loading ? "Creating account…" : "Create account"}
         </Button>
-      </form>
+      </div>
 
-      <p className="mt-4 text-sm text-zinc-400">
+      <p className="text-center text-sm text-[rgb(158,183,211)]">
         Already have an account?{" "}
-        <Link className="text-white underline" href="/login">
-          Login
+        <Link
+          className="font-medium text-white underline-offset-2 transition-colors hover:text-[rgb(47,203,255)] hover:underline"
+          href="/login"
+        >
+          Sign in
         </Link>
       </p>
-    </Card>
+    </form>
   );
 }

@@ -29,18 +29,24 @@ export default function JoinCodeForm() {
       const result = await resolveCode(normalized);
       router.push(`/rooms/${result.room.id}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to join room. Check the code and try again.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to join room. Check the code and try again.",
+      );
     }
   }
 
   return (
     <Card>
-      <h2 className="text-xl font-semibold">Join by Code</h2>
-      <p className="mt-2 text-sm text-zinc-400">Enter a 6-character invite code.</p>
+      <h2 className="text-base font-semibold text-white">Join by code</h2>
+      <p className="mt-1 text-sm text-[rgb(158,183,211)]">
+        Enter a 6-character invite code.
+      </p>
 
-      <form className="mt-6 space-y-4" onSubmit={onSubmit}>
-        <div>
-          <Label htmlFor="join-code">Invite Code</Label>
+      <form className="mt-5 space-y-4" onSubmit={onSubmit}>
+        <div className="space-y-1.5">
+          <Label htmlFor="join-code">Invite code</Label>
           <Input
             id="join-code"
             value={code}
@@ -50,19 +56,24 @@ export default function JoinCodeForm() {
             }}
             maxLength={6}
             placeholder="7KQ2MP"
-            className="font-mono tracking-[0.18em]"
+            className="font-mono tracking-[0.22em] text-center text-base uppercase"
             required
+            autoComplete="off"
+            spellCheck={false}
           />
         </div>
 
         {error ? (
-          <p className="rounded-[12px] border border-[rgba(255,90,107,0.3)] bg-[rgba(255,90,107,0.08)] px-4 py-3 text-sm text-[rgb(255,160,170)]">
-            {error}
-          </p>
+          <div
+            role="alert"
+            className="flex items-start gap-2.5 rounded-[12px] border border-[rgba(255,90,107,0.25)] bg-[rgba(255,90,107,0.08)] px-4 py-3"
+          >
+            <p className="text-sm text-[rgb(255,160,170)]">{error}</p>
+          </div>
         ) : null}
 
-        <Button disabled={loading} type="submit">
-          {loading ? "Joining..." : "Join Room"}
+        <Button disabled={loading} type="submit" className="w-full">
+          {loading ? "Joining…" : "Join room"}
         </Button>
       </form>
     </Card>

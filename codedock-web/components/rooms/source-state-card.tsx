@@ -21,20 +21,51 @@ function readableStatus(state: RoomSourceState) {
   }
 }
 
-function BoolIndicator({ value }: { value: boolean }) {
+function StatusPill({ status }: { status: string }) {
+  const ready = status === "ready";
   return (
-    <span className="flex items-center gap-1.5">
+    <span
+      className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium"
+      style={
+        ready
+          ? { background: "rgba(42,211,139,0.10)", color: "rgb(42,211,139)" }
+          : { background: "rgba(249,145,53,0.10)", color: "rgb(249,145,53)" }
+      }
+    >
       <span
-        className="inline-block h-2 w-2 rounded-full"
+        className="h-1.5 w-1.5 rounded-full"
         style={{
-          background: value ? "rgb(42,211,139)" : "rgb(158,183,211)",
-          boxShadow: value ? "0 0 6px rgba(42,211,139,0.5)" : "none",
+          background: ready ? "rgb(42,211,139)" : "rgb(249,145,53)",
+          boxShadow: ready
+            ? "0 0 5px rgba(42,211,139,0.5)"
+            : "0 0 5px rgba(249,145,53,0.4)",
         }}
       />
-      <span className={value ? "text-[rgb(42,211,139)]" : "text-[rgb(158,183,211)]"}>
-        {value ? "Yes" : "No"}
-      </span>
+      {readableStatus({ status } as RoomSourceState)}
     </span>
+  );
+}
+
+function BoolRow({ label, value }: { label: string; value: boolean }) {
+  return (
+    <div className="flex items-center justify-between py-2.5">
+      <span className="text-sm text-[rgb(158,183,211)]">{label}</span>
+      <span className="flex items-center gap-1.5">
+        <span
+          className="h-1.5 w-1.5 rounded-full"
+          style={{
+            background: value ? "rgb(42,211,139)" : "rgb(158,183,211)",
+            boxShadow: value ? "0 0 5px rgba(42,211,139,0.45)" : "none",
+          }}
+        />
+        <span
+          className="text-sm font-medium"
+          style={{ color: value ? "rgb(42,211,139)" : "rgb(158,183,211)" }}
+        >
+          {value ? "Yes" : "No"}
+        </span>
+      </span>
+    </div>
   );
 }
 
@@ -45,57 +76,30 @@ export default function SourceStateCard({
 }) {
   return (
     <Card>
-      <h3 className="text-lg font-semibold text-white">Source readiness</h3>
-      <p className="mt-2 text-sm text-[rgb(158,183,211)]">
-        {readableStatus(sourceState)}
-      </p>
-
-      <div className="mt-5 space-y-3 text-sm text-white">
-        <div className="flex items-center justify-between gap-4">
-          <span className="text-[rgb(158,183,211)]">Type</span>
-          <span>{sourceState.type}</span>
+      {/* Header: title + status pill */}
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <h3 className="text-base font-semibold text-white">Source state</h3>
+          <p className="mt-0.5 text-sm text-[rgb(158,183,211)]">
+            Workspace and launch readiness.
+          </p>
         </div>
-
-        <div className="flex items-center justify-between gap-4">
-          <span className="text-[rgb(158,183,211)]">Ready</span>
-          <BoolIndicator value={sourceState.ready} />
-        </div>
-
-        <div className="flex items-center justify-between gap-4">
-          <span className="text-[rgb(158,183,211)]">Launch allowed</span>
-          <BoolIndicator value={sourceState.launch_allowed} />
-        </div>
-
-        {sourceState.launch_reason ? (
-          <div className="rounded-2xl border border-amber-300/15 bg-amber-300/10 p-3 text-sm text-amber-100">
-            {sourceState.launch_reason}
-          </div>
-        ) : null}
-
-        {sourceState.workspace_label ? (
-          <div className="flex items-center justify-between gap-4">
-            <span className="text-[rgb(158,183,211)]">Workspace</span>
-            <span>{sourceState.workspace_label}</span>
-          </div>
-        ) : null}
-
-        {sourceState.repo_owner || sourceState.repo_name ? (
-          <>
-            <div className="flex items-center justify-between gap-4">
-              <span className="text-[rgb(158,183,211)]">Repo owner</span>
-              <span>{sourceState.repo_owner || "—"}</span>
-            </div>
-            <div className="flex items-center justify-between gap-4">
-              <span className="text-[rgb(158,183,211)]">Repo name</span>
-              <span>{sourceState.repo_name || "—"}</span>
-            </div>
-            <div className="flex items-center justify-between gap-4">
-              <span className="text-[rgb(158,183,211)]">Branch</span>
-              <span>{sourceState.branch || "—"}</span>
-            </div>
-          </>
-        ) : null}
+        <StatusPill status={sourceState.status} />
       </div>
+
+      {/* Confirmed fields from RoomSourceState only */}
+      <div className="mt-4 divide-y divide-white/[0.06]">
+        <BoolRow label="Launch allowed" value={sourceState.launch_allowed} />
+      </div>
+
+      {/* Launch reason — shown only when blocked */}
+      {!sourceState.launch_allowed && sourceState.launch_reason ? (
+        <div className="mt-4 rounded-xl border border-[rgba(249,145,53,0.2)] bg-[rgba(249,145,53,0.07)] px-4 py-3">
+          <p className="text-sm leading-relaxed text-[rgb(249,145,53)]">
+            {sourceState.launch_reason}
+          </p>
+        </div>
+      ) : null}
     </Card>
   );
 }

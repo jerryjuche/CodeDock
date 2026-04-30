@@ -35,7 +35,11 @@ export default function DeleteRoomButton({
       router.push("/dashboard");
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete room. Please try again.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to delete room. Please try again.",
+      );
       setConfirming(false);
     } finally {
       setLoading(false);
@@ -43,31 +47,60 @@ export default function DeleteRoomButton({
   }
 
   return (
-    <Card>
-      <h3 className="text-lg font-semibold text-white">Danger zone</h3>
+    <Card className="border-[rgba(255,90,107,0.15)]">
+      {/* Header */}
+      <div className="flex items-center gap-2.5">
+        <span className="flex h-7 w-7 items-center justify-center rounded-md bg-[rgba(255,90,107,0.12)]">
+          <svg
+            viewBox="0 0 16 16"
+            fill="none"
+            className="h-3.5 w-3.5 text-[rgb(255,90,107)]"
+            aria-hidden="true"
+          >
+            <path
+              d="M2 4h12M6 4V2h4v2M7 7v5M9 7v5M3 4l1 9h8l1-9"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </span>
+        <h3 className="text-base font-semibold text-white">Danger zone</h3>
+      </div>
       <p className="mt-2 text-sm text-[rgb(158,183,211)]">
-        Deleting a room ends the session and removes future access through the control plane.
+        Permanently ends the session and removes all access through the control
+        plane.
       </p>
 
+      {/* Error */}
       {error ? (
-        <p className="mt-4 rounded-[12px] border border-[rgba(255,90,107,0.3)] bg-[rgba(255,90,107,0.08)] px-4 py-3 text-sm text-[rgb(255,160,170)]">
-          {error}
-        </p>
+        <div className="mt-4 rounded-[12px] border border-[rgba(255,90,107,0.25)] bg-[rgba(255,90,107,0.08)] px-4 py-3">
+          <p className="text-sm text-[rgb(255,160,170)]">{error}</p>
+        </div>
       ) : null}
 
       <div className="mt-5">
         {confirming ? (
           <div className="space-y-3">
-            <p className="rounded-[12px] border border-[rgba(255,90,107,0.25)] bg-[rgba(255,90,107,0.08)] px-4 py-3 text-sm text-[rgb(255,160,170)]">
-              This will permanently delete <strong className="text-white">{roomName}</strong> and end all active sessions. This cannot be undone.
-            </p>
+            {/* Confirmation warning */}
+            <div className="rounded-[12px] border border-[rgba(255,90,107,0.25)] bg-[rgba(255,90,107,0.08)] px-4 py-3">
+              <p className="text-sm leading-relaxed text-[rgb(255,160,170)]">
+                This will permanently delete{" "}
+                <strong className="font-semibold text-white">
+                  {roomName}
+                </strong>{" "}
+                and end all active sessions. This cannot be undone.
+              </p>
+            </div>
+
             <div className="flex gap-3">
               <Button
                 variant="destructive"
-                onClick={onConfirm}
+                onClick={() => void onConfirm()}
                 disabled={loading}
               >
-                {loading ? "Deleting..." : "Yes, delete room"}
+                {loading ? "Deleting…" : "Yes, delete room"}
               </Button>
               <Button
                 variant="ghost"
