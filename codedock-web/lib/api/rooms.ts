@@ -64,3 +64,10 @@ export function bindRoomSource(
     body: { workspace_label: workspaceLabel },
   });
 }
+
+export function toggleRoomActivation(token: string, roomId: string) {
+  return apiRequest<RoomDetails>(`/rooms/${roomId}/activation/toggle`, {
+    method: "POST",
+    token,
+  });
+}

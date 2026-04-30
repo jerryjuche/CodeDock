@@ -2,10 +2,10 @@ import { Card } from "@/components/ui/card";
 import type { RoomSourceState } from "@/types/room";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
-import { bindRoomSource } from "@/lib/api/rooms";
+import { toggleRoomActivation } from "@/lib/api/rooms";
 import { useAuth } from "@/hooks/use-auth";
 import { toast } from "sonner";
-import { Loader2, Rocket } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
 function readableStatus(state: RoomSourceState) {
   switch (state.status) {
@@ -34,11 +34,11 @@ function StatusPill({ status }: { status: string }) {
   const ready = status === "ready";
   return (
     <span
-      className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium"
+      className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium transition-all"
       style={
         ready
-          ? { background: "rgba(42,211,139,0.10)", color: "rgb(42,211,139)" }
-          : { background: "rgba(249,145,53,0.10)", color: "rgb(249,145,53)" }
+          ? { background: "rgba(42,211,139,0.08)", color: "rgb(42,211,139)", border: "1px solid rgba(42,211,139,0.15)" }
+          : { background: "rgba(249,145,53,0.08)", color: "rgb(249,145,53)", border: "1px solid rgba(249,145,53,0.15)" }
       }
     >
       <span
@@ -46,8 +46,8 @@ function StatusPill({ status }: { status: string }) {
         style={{
           background: ready ? "rgb(42,211,139)" : "rgb(249,145,53)",
           boxShadow: ready
-            ? "0 0 5px rgba(42,211,139,0.5)"
-            : "0 0 5px rgba(249,145,53,0.4)",
+            ? "0 0 8px rgba(42,211,139,0.6)"
+            : "0 0 8px rgba(249,145,53,0.5)",
         }}
       />
       {readableStatus({ status } as RoomSourceState)}
@@ -57,21 +57,21 @@ function StatusPill({ status }: { status: string }) {
 
 function BoolRow({ label, value }: { label: string; value: boolean }) {
   return (
-    <div className="flex items-center justify-between py-2.5">
-      <span className="text-sm text-[rgb(158,183,211)]">{label}</span>
+    <div className="flex items-center justify-between py-3">
+      <span className="text-sm font-medium text-[rgb(158,183,211)]">{label}</span>
       <span className="flex items-center gap-1.5">
         <span
-          className="h-1.5 w-1.5 rounded-full"
+          className="h-1.5 w-1.5 rounded-full transition-all duration-500"
           style={{
-            background: value ? "rgb(42,211,139)" : "rgb(158,183,211)",
-            boxShadow: value ? "0 0 5px rgba(42,211,139,0.45)" : "none",
+            background: value ? "rgb(42,211,139)" : "rgba(255,255,255,0.1)",
+            boxShadow: value ? "0 0 8px rgba(42,211,139,0.4)" : "none",
           }}
         />
         <span
-          className="text-sm font-medium"
-          style={{ color: value ? "rgb(42,211,139)" : "rgb(158,183,211)" }}
+          className="text-xs font-semibold tracking-wide uppercase transition-colors duration-300"
+          style={{ color: value ? "rgb(42,211,139)" : "rgba(255,255,255,0.3)" }}
         >
-          {value ? "Yes" : "No"}
+          {value ? "Connected" : "Disconnected"}
         </span>
       </span>
     </div>
@@ -92,69 +92,88 @@ export default function SourceStateCard({
   const { token } = useAuth();
   const [loading, setLoading] = useState(false);
 
-  const handleActivate = async () => {
+  const handleToggle = async () => {
     if (!token) return;
     setLoading(true);
     try {
-      await bindRoomSource(token, roomId);
-      toast.success("Room activated successfully!");
+      await toggleRoomActivation(token, roomId);
+      toast.success(
+        sourceState.activated
+          ? "Room deactivated."
+          : "Room activated! Guests can join now.",
+      );
       onActivated?.();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Activation failed");
+      toast.error(err instanceof Error ? err.message : "Toggle failed");
     } finally {
       setLoading(false);
     }
   };
 
-  const showActivateButton = isHost && !sourceState.ready;
+  const showToggleButton = isHost;
 
   return (
-    <Card>
-      {/* Header: title + status pill */}
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <h3 className="text-base font-semibold text-white">Source state</h3>
-          <p className="mt-0.5 text-sm text-[rgb(158,183,211)]">
-            Workspace and launch readiness.
-          </p>
+    <Card className="relative overflow-hidden border-white/[0.04] bg-white/[0.02] backdrop-blur-xl">
+      {/* Decorative gradient flare */}
+      <div className="absolute -right-20 -top-20 h-40 w-40 rounded-full bg-emerald-500/5 blur-[80px]" />
+      
+      <div className="relative p-5">
+        {/* Header: title + status pill */}
+        <div className="flex items-center justify-between gap-4">
+          <div>
+            <h3 className="text-sm font-bold uppercase tracking-wider text-white/50">Source state</h3>
+            <p className="mt-1 text-lg font-semibold text-white">
+              Launch Readiness
+            </p>
+          </div>
+          <StatusPill status={sourceState.status} />
         </div>
-        <StatusPill status={sourceState.status} />
+
+        {/* Confirmed fields from RoomSourceState only */}
+        <div className="mt-6 space-y-1 divide-y divide-white/[0.03]">
+          <BoolRow label="Host Workspace" value={sourceState.host_connected} />
+          <BoolRow label="Network Access" value={sourceState.launch_allowed} />
+        </div>
+
+        {/* Manual Activation Toggle for Host */}
+        {showToggleButton && (
+          <div className="mt-8">
+            <Button
+              onClick={handleToggle}
+              disabled={loading}
+              className={`relative w-full h-12 overflow-hidden rounded-xl border transition-all duration-300 active:scale-[0.98] ${
+                sourceState.activated
+                  ? "bg-rose-500/10 border-rose-500/30 text-rose-400 hover:bg-rose-500/20"
+                  : "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20"
+              }`}
+            >
+              {loading ? (
+                <Loader2 className="h-4.5 w-4.5 animate-spin" />
+              ) : null}
+              
+              <span className="relative z-10 text-sm font-bold tracking-tight">
+                {sourceState.activated ? "Deactivate Room" : "Activate Room for Guests"}
+              </span>
+            </Button>
+            
+            <div className="mt-3 flex items-center justify-center gap-2 text-[10px] uppercase tracking-widest font-bold opacity-40">
+              <span className="h-px w-8 bg-white/10" />
+              {sourceState.activated ? "Guests can join" : "Gated access"}
+              <span className="h-px w-8 bg-white/10" />
+            </div>
+          </div>
+        )}
+
+        {/* Launch reason — shown only when blocked */}
+        {!sourceState.launch_allowed && sourceState.launch_reason ? (
+          <div className="mt-5 rounded-xl border border-orange-500/20 bg-orange-500/5 px-4 py-3.5">
+            <p className="text-xs font-medium leading-relaxed text-orange-400/90">
+              <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-orange-500 animate-pulse" />
+              {sourceState.launch_reason}
+            </p>
+          </div>
+        ) : null}
       </div>
-
-      {/* Confirmed fields from RoomSourceState only */}
-      <div className="mt-4 divide-y divide-white/[0.06]">
-        <BoolRow label="Launch allowed" value={sourceState.launch_allowed} />
-      </div>
-
-      {/* Manual Activation Button for Host */}
-      {showActivateButton && (
-        <div className="mt-4">
-          <Button
-            onClick={handleActivate}
-            disabled={loading}
-            className="w-full gap-2 bg-gradient-to-r from-emerald-600 to-teal-600 text-white hover:from-emerald-500 hover:to-teal-500 border-none shadow-lg shadow-emerald-900/20"
-          >
-            {loading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Rocket className="h-4 w-4" />
-            )}
-            Activate Room for Guests
-          </Button>
-          <p className="mt-2 text-[11px] text-center text-[rgb(158,183,211)]">
-            Activation notifies guests that the room is ready for joining.
-          </p>
-        </div>
-      )}
-
-      {/* Launch reason — shown only when blocked */}
-      {!sourceState.launch_allowed && sourceState.launch_reason ? (
-        <div className="mt-4 rounded-xl border border-[rgba(249,145,53,0.2)] bg-[rgba(249,145,53,0.07)] px-4 py-3">
-          <p className="text-sm leading-relaxed text-[rgb(249,145,53)]">
-            {sourceState.launch_reason}
-          </p>
-        </div>
-      ) : null}
     </Card>
   );
 }

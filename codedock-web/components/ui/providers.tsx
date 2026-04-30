@@ -24,7 +24,7 @@ export default function Providers({
   return (
     <QueryClientProvider client={queryClient}>
       {children}
-      <Toaster position="top-right" theme="dark" richColors />
+      <Toaster position="top-right" theme="dark" richColors duration={3000} />
     </QueryClientProvider>
   );
 }

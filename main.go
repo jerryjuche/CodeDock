@@ -59,11 +59,12 @@ func main() {
 	// Room routes
 	mux.Handle("POST /rooms", auth.RequireAuth(http.HandlerFunc(roomHandler.CreateRoom)))
 	mux.Handle("GET /rooms", auth.RequireAuth(http.HandlerFunc(roomHandler.GetUserRooms)))
-	mux.Handle("GET /rooms/{id}", auth.RequireAuth(http.HandlerFunc(roomHandler.GetRoom)))
-	mux.Handle("GET /rooms/{id}/details", auth.RequireAuth(http.HandlerFunc(roomHandler.GetRoomDetails)))
-	mux.Handle("GET /rooms/{id}/presence", auth.RequireAuth(http.HandlerFunc(roomHandler.GetRoomPresence)))
-	mux.Handle("POST /rooms/{id}/source/local/bind", auth.RequireAuth(http.HandlerFunc(roomHandler.BindLocalWorkspace)))
-	mux.Handle("DELETE /rooms/{id}", auth.RequireAuth(http.HandlerFunc(roomHandler.DeleteRoom)))
+	mux.Handle("GET /rooms/{roomId}", auth.RequireAuth(http.HandlerFunc(roomHandler.GetRoom)))
+	mux.Handle("GET /rooms/{roomId}/details", auth.RequireAuth(http.HandlerFunc(roomHandler.GetRoomDetails)))
+	mux.Handle("GET /rooms/{roomId}/presence", auth.RequireAuth(http.HandlerFunc(roomHandler.GetRoomPresence)))
+	mux.Handle("POST /rooms/{roomId}/source/local/bind", auth.RequireAuth(http.HandlerFunc(roomHandler.BindLocalWorkspace)))
+	mux.Handle("POST /rooms/{roomId}/activation/toggle", auth.RequireAuth(http.HandlerFunc(roomHandler.ToggleRoomActivation)))
+	mux.Handle("DELETE /rooms/{roomId}", auth.RequireAuth(http.HandlerFunc(roomHandler.DeleteRoom)))
 
 	// New web control-plane routes
 	mux.Handle("POST /join-code/resolve", auth.RequireAuth(http.HandlerFunc(inviteHandler.ResolveJoinCode)))

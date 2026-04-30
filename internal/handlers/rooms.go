@@ -67,7 +67,7 @@ func (h *RoomHandler) GetRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	roomID := r.PathValue("id")
+	roomID := r.PathValue("roomId")
 	if roomID == "" {
 		http.Error(w, "room ID cannot be empty", http.StatusBadRequest)
 		return
@@ -103,13 +103,14 @@ func (h *RoomHandler) GetRoomDetails(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	roomID := r.PathValue("id")
+	roomID := r.PathValue("roomId")
 	if roomID == "" {
 		http.Error(w, "room ID cannot be empty", http.StatusBadRequest)
 		return
 	}
 
-	details, err := h.Services.GetRoomDetails(roomID, claims.UserID)
+	connectedUserIDs := h.Hub.ConnectedUserIDs(roomID)
+	details, err := h.Services.GetRoomDetails(roomID, claims.UserID, connectedUserIDs)
 	if err != nil {
 		switch {
 		case errors.Is(err, services.ErrRoomForbidden):
@@ -134,7 +135,7 @@ func (h *RoomHandler) GetRoomPresence(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	roomID := r.PathValue("id")
+	roomID := r.PathValue("roomId")
 	if roomID == "" {
 		http.Error(w, "room ID cannot be empty", http.StatusBadRequest)
 		return
@@ -170,7 +171,7 @@ func (h *RoomHandler) BindLocalWorkspace(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	roomID := r.PathValue("id")
+	roomID := r.PathValue("roomId")
 	if roomID == "" {
 		http.Error(w, "room ID cannot be empty", http.StatusBadRequest)
 		return
@@ -182,7 +183,8 @@ func (h *RoomHandler) BindLocalWorkspace(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	details, err := h.Services.MarkLocalWorkspaceBound(roomID, claims.UserID, req.WorkspaceLabel)
+	connectedUserIDs := h.Hub.ConnectedUserIDs(roomID)
+	details, err := h.Services.MarkLocalWorkspaceBound(roomID, claims.UserID, req.WorkspaceLabel, connectedUserIDs)
 	if err != nil {
 		switch {
 		case errors.Is(err, services.ErrRoomForbidden):
@@ -193,6 +195,38 @@ func (h *RoomHandler) BindLocalWorkspace(w http.ResponseWriter, r *http.Request)
 			return
 		case errors.Is(err, services.ErrInvalidRoomState):
 			http.Error(w, "room is not a local workspace room", http.StatusBadRequest)
+			return
+		default:
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusOK, details)
+}
+
+func (h *RoomHandler) ToggleRoomActivation(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.GetUserFromContext(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	roomID := r.PathValue("roomId")
+	if roomID == "" {
+		http.Error(w, "room ID cannot be empty", http.StatusBadRequest)
+		return
+	}
+
+	connectedUserIDs := h.Hub.ConnectedUserIDs(roomID)
+	details, err := h.Services.ToggleRoomActivation(roomID, claims.UserID, connectedUserIDs)
+	if err != nil {
+		switch {
+		case errors.Is(err, services.ErrRoomForbidden):
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		case errors.Is(err, services.ErrRoomNotFound):
+			http.Error(w, "room not found", http.StatusNotFound)
 			return
 		default:
 			http.Error(w, "internal server error", http.StatusInternalServerError)
@@ -226,7 +260,7 @@ func (h *RoomHandler) DeleteRoom(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	roomID := r.PathValue("id")
+	roomID := r.PathValue("roomId")
 	if roomID == "" {
 		http.Error(w, "room ID cannot be empty", http.StatusBadRequest)
 		return

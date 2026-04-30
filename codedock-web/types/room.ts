@@ -19,6 +19,8 @@ export type RoomSourceState = {
   type: "local_workspace" | "github_repo" | string;
   ready: boolean;
   host_bound: boolean;
+  activated: boolean;
+  host_connected: boolean;
   status: string;
   launch_allowed: boolean;
   launch_reason?: string;

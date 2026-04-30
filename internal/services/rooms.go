@@ -53,6 +53,8 @@ type RoomSourceState struct {
 	Type          string `json:"type"`
 	Ready         bool   `json:"ready"`
 	HostBound     bool   `json:"host_bound"`
+	Activated     bool   `json:"activated"`
+	HostConnected bool   `json:"host_connected"`
 	Status        string `json:"status"`
 	LaunchAllowed bool   `json:"launch_allowed"`
 	LaunchReason  string `json:"launch_reason,omitempty"`
@@ -237,7 +239,7 @@ func (s *RoomService) GetRoom(roomID string) (*Room, error) {
 	return &room, nil
 }
 
-func (s *RoomService) GetRoomDetails(roomID, userID string) (*RoomDetails, error) {
+func (s *RoomService) GetRoomDetails(roomID, userID string, connectedUserIDs map[string]bool) (*RoomDetails, error) {
 	role, err := s.GetUserRole(roomID, userID)
 	if err != nil {
 		return nil, err
@@ -253,7 +255,7 @@ func (s *RoomService) GetRoomDetails(roomID, userID string) (*RoomDetails, error
 		Membership: RoomMembership{
 			Role: role,
 		},
-		SourceState: buildRoomSourceState(room, role),
+		SourceState: buildRoomSourceState(room, role, connectedUserIDs),
 	}, nil
 }
 
@@ -310,7 +312,7 @@ func (s *RoomService) GetRoomPresence(roomID, userID string, connectedUserIDs ma
 	}, nil
 }
 
-func (s *RoomService) MarkLocalWorkspaceBound(roomID, userID, workspaceLabel string) (*RoomDetails, error) {
+func (s *RoomService) MarkLocalWorkspaceBound(roomID, userID, workspaceLabel string, connectedUserIDs map[string]bool) (*RoomDetails, error) {
 	role, err := s.GetUserRole(roomID, userID)
 	if err != nil {
 		return nil, err
@@ -358,7 +360,48 @@ func (s *RoomService) MarkLocalWorkspaceBound(roomID, userID, workspaceLabel str
 		return nil, err
 	}
 
-	return s.GetRoomDetails(roomID, userID)
+	return s.GetRoomDetails(roomID, userID, connectedUserIDs)
+}
+
+func (s *RoomService) ToggleRoomActivation(roomID, userID string, connectedUserIDs map[string]bool) (*RoomDetails, error) {
+	room, err := s.GetRoom(roomID)
+	if err != nil {
+		return nil, err
+	}
+
+	if room.OwnerUserID != userID {
+		return nil, ErrRoomForbidden
+	}
+
+	var metadata map[string]any
+	if err := json.Unmarshal(room.SourceMetadata, &metadata); err != nil {
+		metadata = make(map[string]any)
+	}
+
+	// Toggle activated state
+	currentlyActivated := metadata["activated"] == true
+	metadata["activated"] = !currentlyActivated
+	
+	// Also sync ready status
+	metadata["ready"] = metadata["activated"]
+	if metadata["activated"] == true {
+		metadata["status"] = "ready"
+	} else {
+		metadata["status"] = "inactive"
+	}
+
+	metadataBytes, err := json.Marshal(metadata)
+	if err != nil {
+		return nil, err
+	}
+
+	if _, err := s.DB.Exec(`
+		UPDATE rooms SET source_metadata = $1, updated_at = $2 WHERE id = $3
+	`, metadataBytes, time.Now().UTC(), roomID); err != nil {
+		return nil, err
+	}
+
+	return s.GetRoomDetails(roomID, userID, connectedUserIDs)
 }
 
 func (s *RoomService) GetUserRooms(userID string) ([]Room, error) {
@@ -491,10 +534,12 @@ func (s *RoomService) DeleteRoom(roomID, userID string) error {
 	return nil
 }
 
-func buildRoomSourceState(room *Room, role string) RoomSourceState {
+func buildRoomSourceState(room *Room, role string, connectedUserIDs map[string]bool) RoomSourceState {
 	state := RoomSourceState{
 		Type: room.SourceType,
 	}
+
+	state.HostConnected = connectedUserIDs[room.OwnerUserID]
 
 	switch room.SourceType {
 	case SourceTypeGitHubRepo:
@@ -515,23 +560,29 @@ func buildRoomSourceState(room *Room, role string) RoomSourceState {
 		// Check if host has "activated" the room
 		var m map[string]any
 		_ = json.Unmarshal(room.SourceMetadata, &m)
-		state.HostBound = m["activated"] == true || m["ready"] == true
+		state.Activated = m["activated"] == true
+		state.HostBound = meta.Ready || meta.CloneReady || (meta.RepoOwner != "" && meta.RepoName != "")
 
 		if meta.RepoOwner != "" && meta.RepoName != "" {
-			if state.HostBound {
-				state.Ready = true
+			if role == "host" {
+				state.Ready = state.HostBound
 				state.Status = "ready"
+				if !state.Activated {
+					state.Status = "host_activation_required"
+				}
 				state.LaunchAllowed = true
-			} else if role == "host" {
-				state.Ready = false
-				state.Status = "host_activation_required"
-				state.LaunchAllowed = true
-				state.LaunchReason = "Click 'Activate Room' or launch VS Code to start the session."
 			} else {
-				state.Ready = false
-				state.Status = "waiting_for_host"
-				state.LaunchAllowed = false
-				state.LaunchReason = "The host has not activated this room yet."
+				// For guests, MUST be activated
+				if state.Activated {
+					state.Ready = true
+					state.Status = "ready"
+					state.LaunchAllowed = true
+				} else {
+					state.Ready = false
+					state.Status = "waiting_for_host"
+					state.LaunchAllowed = false
+					state.LaunchReason = "The host has not activated this room for guests yet."
+				}
 			}
 		} else {
 			state.Ready = false
@@ -550,23 +601,36 @@ func buildRoomSourceState(room *Room, role string) RoomSourceState {
 		}
 		_ = json.Unmarshal(room.SourceMetadata, &meta)
 
-		state.HostBound = meta.Activated || meta.WorkspaceBound || meta.Ready
+		state.Activated = meta.Activated
+		state.HostBound = meta.WorkspaceBound || meta.Ready
 		state.WorkspaceLabel = meta.WorkspaceLabel
 
-		if state.HostBound {
-			state.Ready = true
+		if role == "host" {
+			state.Ready = state.HostBound
 			state.Status = "ready"
+			if !state.HostBound {
+				state.Status = "host_workspace_required"
+			} else if !state.Activated {
+				state.Status = "host_activation_required"
+			}
 			state.LaunchAllowed = true
-		} else if role == "host" {
-			state.Ready = false
-			state.Status = "host_workspace_required"
-			state.LaunchAllowed = true
-			state.LaunchReason = "Select your project folder in VS Code or click 'Activate' to start."
 		} else {
-			state.Ready = false
-			state.Status = "waiting_for_host_workspace"
-			state.LaunchAllowed = false
-			state.LaunchReason = "The host has not selected a project folder yet."
+			// For guests, MUST be bound AND activated
+			if state.HostBound && state.Activated {
+				state.Ready = true
+				state.Status = "ready"
+				state.LaunchAllowed = true
+			} else if !state.HostBound {
+				state.Ready = false
+				state.Status = "waiting_for_host_workspace"
+				state.LaunchAllowed = false
+				state.LaunchReason = "The host has not selected a project folder yet."
+			} else {
+				state.Ready = false
+				state.Status = "waiting_for_host"
+				state.LaunchAllowed = false
+				state.LaunchReason = "The host has not activated this room for guests yet."
+			}
 		}
 
 	default:
