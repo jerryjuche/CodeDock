@@ -18,8 +18,7 @@ export default function CreateRoomForm() {
 
   const [name, setName] = useState("");
   const [sourceType, setSourceType] = useState<SourceType>("local_workspace");
-  const [repoOwner, setRepoOwner] = useState("");
-  const [repoName, setRepoName] = useState("");
+  const [repoUrl, setRepoUrl] = useState("");
   const [branch, setBranch] = useState("main");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -36,21 +35,30 @@ export default function CreateRoomForm() {
     setSubmitting(true);
 
     try {
-      const payload =
-        sourceType === "github_repo"
-          ? {
-              name,
-              source_type: sourceType,
-              source_metadata: {
-                repo_owner: repoOwner,
-                repo_name: repoName,
-                branch: branch || "main",
-              },
-            }
-          : {
-              name,
-              source_type: sourceType,
-            };
+      let sourceMetadata = {};
+
+      if (sourceType === "github_repo") {
+        // Simple regex to extract owner and repo from various GitHub URL formats
+        // Matches: https://github.com/owner/repo, git@github.com:owner/repo.git, etc.
+        const githubRegex = /(?:github\.com[:/])([^/]+)\/([^/.]+)(?:\.git)?$/i;
+        const match = repoUrl.trim().match(githubRegex);
+
+        if (!match) {
+          throw new Error("Invalid GitHub repository URL. Please use the format: https://github.com/owner/repo");
+        }
+
+        sourceMetadata = {
+          repo_owner: match[1],
+          repo_name: match[2],
+          branch: branch || "main",
+        };
+      }
+
+      const payload = {
+        name,
+        source_type: sourceType,
+        source_metadata: sourceType === "github_repo" ? sourceMetadata : undefined,
+      };
 
       const room = await createRoom(token, payload);
       router.push(`/rooms/${room.id}`);
@@ -101,30 +109,19 @@ export default function CreateRoomForm() {
         </div>
 
         {sourceType === "github_repo" ? (
-          <div className="grid gap-5 sm:grid-cols-2">
+          <div className="space-y-5">
             <div>
-              <Label htmlFor="repo-owner">Repo owner</Label>
+              <Label htmlFor="repo-url">GitHub Repository URL</Label>
               <Input
-                id="repo-owner"
-                placeholder="e.g. jerryjuche"
-                value={repoOwner}
-                onChange={(e) => setRepoOwner(e.target.value)}
+                id="repo-url"
+                placeholder="https://github.com/jerryjuche/CodeDock"
+                value={repoUrl}
+                onChange={(e) => setRepoUrl(e.target.value)}
                 required
               />
             </div>
 
             <div>
-              <Label htmlFor="repo-name">Repo name</Label>
-              <Input
-                id="repo-name"
-                placeholder="e.g. CodeDock"
-                value={repoName}
-                onChange={(e) => setRepoName(e.target.value)}
-                required
-              />
-            </div>
-
-            <div className="sm:col-span-2">
               <Label htmlFor="branch">Branch</Label>
               <Input
                 id="branch"

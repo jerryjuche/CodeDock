@@ -3653,9 +3653,9 @@ __export(extension_exports, {
   deactivate: () => deactivate
 });
 module.exports = __toCommonJS(extension_exports);
-var fs2 = __toESM(require("fs/promises"));
+var fs3 = __toESM(require("fs/promises"));
 var os = __toESM(require("os"));
-var path2 = __toESM(require("path"));
+var path3 = __toESM(require("path"));
 var vscode4 = __toESM(require("vscode"));
 var import_events = require("events");
 
@@ -3806,7 +3806,7 @@ var ApiClient = class {
       false
     );
   }
-  async request(path3, options, authenticated, token) {
+  async request(path4, options, authenticated, token) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     const headers = {
@@ -3817,7 +3817,7 @@ var ApiClient = class {
       headers.Authorization = `Bearer ${token}`;
     }
     try {
-      const response = await fetch(`${this.baseUrl}${path3}`, {
+      const response = await fetch(`${this.baseUrl}${path4}`, {
         ...options,
         headers,
         signal: controller.signal
@@ -5032,14 +5032,14 @@ var deepFreeze = (o) => {
 };
 
 // node_modules/lib0/function.js
-var callAll = (fs3, args2, i = 0) => {
+var callAll = (fs4, args2, i = 0) => {
   try {
-    for (; i < fs3.length; i++) {
-      fs3[i](...args2);
+    for (; i < fs4.length; i++) {
+      fs4[i](...args2);
     }
   } finally {
-    if (i < fs3.length) {
-      callAll(fs3, args2, i + 1);
+    if (i < fs4.length) {
+      callAll(fs4, args2, i + 1);
     }
   }
 };
@@ -6769,15 +6769,15 @@ var cleanupTransactions = (transactionCleanups, i) => {
       sortAndMergeDeleteSet(ds);
       transaction.afterState = getStateVector(transaction.doc.store);
       doc.emit("beforeObserverCalls", [transaction, doc]);
-      const fs3 = [];
+      const fs4 = [];
       transaction.changed.forEach(
-        (subs, itemtype) => fs3.push(() => {
+        (subs, itemtype) => fs4.push(() => {
           if (itemtype._item === null || !itemtype._item.deleted) {
             itemtype._callObserver(transaction, subs);
           }
         })
       );
-      fs3.push(() => {
+      fs4.push(() => {
         transaction.changedParentTypes.forEach((events, type) => {
           if (type._dEH.l.length > 0 && (type._item === null || !type._item.deleted)) {
             events = events.filter(
@@ -6788,19 +6788,19 @@ var cleanupTransactions = (transactionCleanups, i) => {
               event._path = null;
             });
             events.sort((event1, event2) => event1.path.length - event2.path.length);
-            fs3.push(() => {
+            fs4.push(() => {
               callEventHandlerListeners(type._dEH, events, transaction);
             });
           }
         });
-        fs3.push(() => doc.emit("afterTransaction", [transaction, doc]));
-        fs3.push(() => {
+        fs4.push(() => doc.emit("afterTransaction", [transaction, doc]));
+        fs4.push(() => {
           if (transaction._needFormattingCleanup) {
             cleanupYTextAfterTransaction(transaction);
           }
         });
       });
-      callAll(fs3, []);
+      callAll(fs4, []);
     } finally {
       if (doc.gc) {
         tryGcDeleteSet(ds, store, doc.gcFilter);
@@ -7383,10 +7383,10 @@ var YEvent = class {
   }
 };
 var getPathTo = (parent, child) => {
-  const path3 = [];
+  const path4 = [];
   while (child._item !== null && child !== parent) {
     if (child._item.parentSub !== null) {
-      path3.unshift(child._item.parentSub);
+      path4.unshift(child._item.parentSub);
     } else {
       let i = 0;
       let c = (
@@ -7399,12 +7399,12 @@ var getPathTo = (parent, child) => {
         }
         c = c.right;
       }
-      path3.unshift(i);
+      path4.unshift(i);
     }
     child = /** @type {AbstractType<any>} */
     child._item.parent;
   }
-  return path3;
+  return path4;
 };
 var warnPrematureAccess = () => {
   warn("Invalid access: Add Yjs type to a document before reading data.");
@@ -12576,13 +12576,13 @@ var YjsSync = class {
       if (!dirent.isFile()) {
         continue;
       }
-      const stat2 = await fs.stat(absolutePath);
+      const stat3 = await fs.stat(absolutePath);
       const isText = this.looksLikeTextPath(relativePath);
       entries.push({
         path: relativePath,
         kind: "file",
         isText,
-        size: stat2.size
+        size: stat3.size
       });
     }
   }
@@ -12822,6 +12822,117 @@ var YjsSync = class {
   }
 };
 
+// src/git.ts
+var import_child_process = require("child_process");
+var fs2 = __toESM(require("fs/promises"));
+var path2 = __toESM(require("path"));
+var GitError = class extends Error {
+  constructor(message, code) {
+    super(message);
+    this.code = code;
+    this.name = "GitError";
+  }
+};
+async function runGitCommand(args2, cwd, outputChannel) {
+  return new Promise((resolve2, reject) => {
+    outputChannel.appendLine(`CodeDock[git]: git ${args2.join(" ")}`);
+    const child = (0, import_child_process.spawn)("git", args2, {
+      cwd,
+      env: {
+        ...process.env,
+        GIT_TERMINAL_PROMPT: "0",
+        GIT_SSH_COMMAND: "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new"
+      }
+    });
+    let stderr = "";
+    child.stderr.on("data", (data) => {
+      const msg = data.toString();
+      stderr += msg;
+      outputChannel.append(msg);
+    });
+    child.stdout.on("data", (data) => {
+      outputChannel.append(data.toString());
+    });
+    child.on("error", (error) => {
+      reject(new GitError(`Failed to start git process: ${error.message}`));
+    });
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve2();
+      } else {
+        reject(new GitError(`git ${args2[0]} failed: ${stderr}`, code ?? void 0));
+      }
+    });
+  });
+}
+async function getGitRemoteOrigin(cwd, outputChannel) {
+  return new Promise((resolve2, reject) => {
+    outputChannel.appendLine(`CodeDock[git]: git remote get-url origin`);
+    const child = (0, import_child_process.spawn)("git", ["remote", "get-url", "origin"], {
+      cwd
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (data) => {
+      stdout += data.toString();
+    });
+    child.stderr.on("data", (data) => {
+      stderr += data.toString();
+    });
+    child.on("error", (error) => {
+      reject(new GitError(`Failed to start git process: ${error.message}`));
+    });
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve2(stdout.trim());
+      } else {
+        reject(new GitError(`git remote get-url failed: ${stderr}`, code ?? void 0));
+      }
+    });
+  });
+}
+async function ensureGitRepo(repoUrl, branch, targetPath, outputChannel) {
+  const gitDir = path2.join(targetPath, ".git");
+  let isRepo = false;
+  try {
+    const stat3 = await fs2.stat(gitDir);
+    isRepo = stat3.isDirectory();
+  } catch {
+    isRepo = false;
+  }
+  if (isRepo) {
+    outputChannel.appendLine(
+      `CodeDock[git]: found existing repository at ${targetPath}`
+    );
+    let originUrl = "";
+    try {
+      originUrl = await getGitRemoteOrigin(targetPath, outputChannel);
+    } catch (e) {
+      throw new GitError(
+        `Failed to read git remote 'origin' in existing repository. Is this a valid clone?`
+      );
+    }
+    const normalizedExisting = originUrl.replace(/\.git$/, "").toLowerCase();
+    const normalizedTarget = repoUrl.replace(/\.git$/, "").toLowerCase();
+    if (normalizedExisting !== normalizedTarget) {
+      throw new GitError(
+        `Existing repository's origin (${originUrl}) does not match the room's repository (${repoUrl}). Please clear the ~/.codedock/rooms folder.`
+      );
+    }
+    await runGitCommand(["fetch", "origin"], targetPath, outputChannel);
+    await runGitCommand(["checkout", branch], targetPath, outputChannel);
+    return;
+  }
+  outputChannel.appendLine(
+    `CodeDock[git]: cloning ${repoUrl} (branch: ${branch}) into ${targetPath}`
+  );
+  await runGitCommand(
+    ["clone", "--branch", branch, repoUrl, "."],
+    targetPath,
+    outputChannel
+  );
+}
+
 // src/extension.ts
 var PENDING_HYDRATED_ROOM_ID_KEY2 = "codedock.pendingHydrated.roomId";
 var PENDING_HYDRATED_ROOT_KEY2 = "codedock.pendingHydrated.rootPath";
@@ -13035,6 +13146,14 @@ async function resumePendingLaunch(context, outputChannel) {
   outputChannel.appendLine(
     `CodeDock: resuming launched room ${pending.room_id} (${pending.role})`
   );
+  try {
+    await ensureManagedWorkspace(pending, outputChannel);
+  } catch (err) {
+    vscode4.window.showErrorMessage(
+      `CodeDock: Resume failed \u2014 ${err instanceof Error ? err.message : "unknown error"}`
+    );
+    return;
+  }
   yjsSync.setGuestMaterializationRoot(null);
   yjsSync.setActiveRoomId(pending.room_id);
   yjsSync.setSessionRole(pending.role === "host" ? "host" : "guest");
@@ -13046,10 +13165,31 @@ async function resumePendingLaunch(context, outputChannel) {
   );
 }
 async function ensureManagedWorkspace(launchContext, outputChannel) {
-  const baseDir = path2.join(os.homedir(), ".codedock", "rooms");
-  const roomDir = path2.join(baseDir, launchContext.room_slug);
-  await fs2.mkdir(roomDir, { recursive: true });
-  const metadataPath = path2.join(roomDir, ".codedock-room.json");
+  const baseDir = path3.join(os.homedir(), ".codedock", "rooms");
+  const roomDir = path3.join(baseDir, launchContext.room_slug);
+  await fs3.mkdir(roomDir, { recursive: true });
+  outputChannel.appendLine(
+    `CodeDock: ensuring workspace ${roomDir} (source=${launchContext.source_type})`
+  );
+  if (launchContext.source_type === "github_repo") {
+    const meta = launchContext.source_metadata;
+    if (meta.repo_owner && meta.repo_name) {
+      const repoUrl = `https://github.com/${meta.repo_owner}/${meta.repo_name}.git`;
+      const branch = meta.branch || "main";
+      try {
+        await ensureGitRepo(repoUrl, branch, roomDir, outputChannel);
+      } catch (err) {
+        throw new Error(
+          `Failed to clone GitHub repository: ${err instanceof Error ? err.message : "unknown error"}`
+        );
+      }
+    } else {
+      outputChannel.appendLine(
+        "CodeDock[git]: skipping clone, missing repo_owner or repo_name in metadata"
+      );
+    }
+  }
+  const metadataPath = path3.join(roomDir, ".codedock-room.json");
   const metadata = {
     roomId: launchContext.room_id,
     roomName: launchContext.room_name,
@@ -13057,7 +13197,7 @@ async function ensureManagedWorkspace(launchContext, outputChannel) {
     sourceType: launchContext.source_type,
     createdAt: (/* @__PURE__ */ new Date()).toISOString()
   };
-  await fs2.writeFile(metadataPath, JSON.stringify(metadata, null, 2), "utf8");
+  await fs3.writeFile(metadataPath, JSON.stringify(metadata, null, 2), "utf8");
   outputChannel.appendLine(`CodeDock: ensured managed workspace ${roomDir}`);
   return vscode4.Uri.file(roomDir);
 }
@@ -13173,7 +13313,7 @@ function hasWorkspaceRoot() {
   return Array.isArray(folders) && folders.length > 0;
 }
 function normalizeFsPath(fsPath) {
-  return path2.resolve(fsPath);
+  return path3.resolve(fsPath);
 }
 function deactivate() {
   wsManager?.disconnect("extension_deactivated");

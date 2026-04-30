@@ -3,7 +3,6 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
-	"log"
 	"net/http"
 
 	"github.com/jerryjuche/CodeDock/internal/auth"
@@ -253,14 +252,6 @@ func (h *RoomHandler) DeleteRoom(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
-
-	log.Printf("codedock: delete room requested room_id=%s by user_id=%s", roomID, claims.UserID)
-	if h.Hub != nil {
-		log.Printf("codedock: closing live room room_id=%s", roomID)
-		h.Hub.CloseRoom(roomID, 4004, "room_deleted")
-	} else {
-		log.Printf("codedock: hub is nil during room delete room_id=%s", roomID)
-	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

@@ -85,7 +85,7 @@ export default function InviteCreateForm({
         </div>
 
         <div className="pt-1">
-          <Button type="submit" disabled={submitting} variant="cyan">
+          <Button type="submit" disabled={submitting} variant="secondary">
             {submitting ? "Creating…" : "Create invite token"}
           </Button>
         </div>

@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"strings"
 )
@@ -31,6 +32,7 @@ func RequireAuth(next http.Handler) http.Handler {
 		//verifying tokens using jwt.verifytokens function
 		claims, err := VerifyToken(tokenString)
 		if err != nil {
+			log.Printf("codedock: auth failed invalid or expired token")
 			http.Error(w, "invalid or expired token", http.StatusUnauthorized)
 			return
 		}

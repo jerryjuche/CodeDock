@@ -7,6 +7,7 @@ import { AuthManager } from "./auth";
 import { ApiClient, LaunchContext } from "./api";
 import { WebSocketManager } from "./websocket";
 import { YjsSync } from "./yjs-sync";
+import { ensureGitRepo } from "./git";
 
 const PENDING_HYDRATED_ROOM_ID_KEY = "codedock.pendingHydrated.roomId";
 const PENDING_HYDRATED_ROOT_KEY = "codedock.pendingHydrated.rootPath";
@@ -291,6 +292,18 @@ async function resumePendingLaunch(
     `CodeDock: resuming launched room ${pending.room_id} (${pending.role})`,
   );
 
+  // Re-verify workspace state (cloning, metadata) during resume
+  try {
+    await ensureManagedWorkspace(pending, outputChannel);
+  } catch (err) {
+    vscode.window.showErrorMessage(
+      `CodeDock: Resume failed — ${
+        err instanceof Error ? err.message : "unknown error"
+      }`,
+    );
+    return;
+  }
+
   yjsSync.setGuestMaterializationRoot(null);
   yjsSync.setActiveRoomId(pending.room_id);
   yjsSync.setSessionRole(pending.role === "host" ? "host" : "guest");
@@ -313,6 +326,36 @@ async function ensureManagedWorkspace(
   const roomDir = path.join(baseDir, launchContext.room_slug);
 
   await fs.mkdir(roomDir, { recursive: true });
+
+  outputChannel.appendLine(
+    `CodeDock: ensuring workspace ${roomDir} (source=${launchContext.source_type})`,
+  );
+
+  if (launchContext.source_type === "github_repo") {
+    const meta = launchContext.source_metadata as {
+      repo_owner?: string;
+      repo_name?: string;
+      branch?: string;
+    };
+
+    if (meta.repo_owner && meta.repo_name) {
+      const repoUrl = `https://github.com/${meta.repo_owner}/${meta.repo_name}.git`;
+      const branch = meta.branch || "main";
+      try {
+        await ensureGitRepo(repoUrl, branch, roomDir, outputChannel);
+      } catch (err) {
+        throw new Error(
+          `Failed to clone GitHub repository: ${
+            err instanceof Error ? err.message : "unknown error"
+          }`,
+        );
+      }
+    } else {
+      outputChannel.appendLine(
+        "CodeDock[git]: skipping clone, missing repo_owner or repo_name in metadata",
+      );
+    }
+  }
 
   const metadataPath = path.join(roomDir, ".codedock-room.json");
   const metadata = {
