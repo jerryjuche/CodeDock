@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import MarketingShell from "@/components/marketing/marketing-shell";
 import AuthShell from "@/components/auth/auth-shell";
@@ -10,7 +11,9 @@ export default function LoginPage() {
         title="Log in to CodeDock"
         description="Access your rooms, launch sessions, and continue collaboration from the control plane."
       >
-        <LoginForm />
+        <Suspense fallback={<div>Loading login...</div>}>
+          <LoginForm />
+        </Suspense>
       </AuthShell>
     </MarketingShell>
   );

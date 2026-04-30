@@ -10,6 +10,23 @@ export class GitError extends Error {
   }
 }
 
+/**
+ * Transforms a GitHub SSH URL to an HTTPS URL to avoid SSH auth issues.
+ * Examples:
+ *   git@github.com:owner/repo.git -> https://github.com/owner/repo.git
+ *   git@github.com:owner/repo     -> https://github.com/owner/repo
+ */
+function toHttpsUrl(url: string): string {
+  const githubSshRegex = /^git@github\.com:([^/]+)\/(.+)$/;
+  const match = url.match(githubSshRegex);
+  if (match) {
+    const owner = match[1];
+    const repo = match[2];
+    return `https://github.com/${owner}/${repo}`;
+  }
+  return url;
+}
+
 async function runGitCommand(
   args: string[],
   cwd: string,
@@ -96,6 +113,7 @@ export async function ensureGitRepo(
   targetPath: string,
   outputChannel: vscode.OutputChannel,
 ): Promise<void> {
+  const safeRepoUrl = toHttpsUrl(repoUrl);
   const gitDir = path.join(targetPath, ".git");
 
   let isRepo = false;
@@ -122,11 +140,11 @@ export async function ensureGitRepo(
 
     // A loose normalization for matching https://github.com/foo/bar and https://github.com/foo/bar.git
     const normalizedExisting = originUrl.replace(/\.git$/, "").toLowerCase();
-    const normalizedTarget = repoUrl.replace(/\.git$/, "").toLowerCase();
+    const normalizedTarget = safeRepoUrl.replace(/\.git$/, "").toLowerCase();
 
     if (normalizedExisting !== normalizedTarget) {
       throw new GitError(
-        `Existing repository's origin (${originUrl}) does not match the room's repository (${repoUrl}). Please clear the ~/.codedock/rooms folder.`,
+        `Existing repository's origin (${originUrl}) does not match the room's repository (${safeRepoUrl}). Please clear the ~/.codedock/rooms folder.`,
       );
     }
 
@@ -136,13 +154,13 @@ export async function ensureGitRepo(
   }
 
   outputChannel.appendLine(
-    `CodeDock[git]: cloning ${repoUrl} (branch: ${branch}) into ${targetPath}`,
+    `CodeDock[git]: cloning ${safeRepoUrl} (branch: ${branch}) into ${targetPath}`,
   );
 
   // We must clone into the targetPath. Since ensureManagedWorkspace creates the empty dir,
   // we can clone into it, as long as it's perfectly empty.
   await runGitCommand(
-    ["clone", "--branch", branch, repoUrl, "."],
+    ["clone", "--branch", branch, safeRepoUrl, "."],
     targetPath,
     outputChannel,
   );

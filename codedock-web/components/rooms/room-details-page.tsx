@@ -5,6 +5,7 @@ import { Card } from "@/components/ui/card";
 import { useRoomDetails } from "@/hooks/use-room-details";
 import { useRoomPresence } from "@/hooks/use-room-presence";
 import { useInvites } from "@/hooks/use-invites";
+import { useAuth } from "@/hooks/use-auth";
 import RoomHeader from "@/components/rooms/room-header";
 import PresenceCard from "@/components/rooms/presence-card";
 import SourceStateCard from "@/components/rooms/source-state-card";
@@ -15,6 +16,7 @@ import DeleteRoomButton from "@/components/rooms/delete-room-button";
 import { Button } from "@/components/ui/button";
 
 export default function RoomDetailsPageClient({ roomId }: { roomId: string }) {
+  const { userId } = useAuth();
   const { details, loading, error } = useRoomDetails(roomId);
   const {
     presence,
@@ -61,7 +63,8 @@ export default function RoomDetailsPageClient({ roomId }: { roomId: string }) {
     );
   }
 
-  const isHost = details.membership.role === "host";
+  const isHost =
+    details.membership.role === "host" || details.room.owner_user_id === userId;
 
   return (
     <main className="mx-auto max-w-7xl space-y-8 px-6 py-8 sm:px-8 lg:px-10">
@@ -101,6 +104,7 @@ export default function RoomDetailsPageClient({ roomId }: { roomId: string }) {
             roomId={roomId}
             launchAllowed={details.source_state.launch_allowed}
             launchReason={details.source_state.launch_reason}
+            isHost={isHost}
           />
           {isHost ? (
             <DeleteRoomButton roomId={roomId} roomName={details.room.name} />

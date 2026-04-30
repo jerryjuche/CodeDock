@@ -12,6 +12,7 @@ import {
 export function useAuth() {
   const [token, setToken] = useState<string | null>(null);
   const [email, setEmail] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
@@ -32,10 +33,12 @@ export function useAuth() {
       try {
         const me = await getCurrentUser(storedToken);
         setEmail(me.email);
+        setUserId(me.id);
       } catch {
         clearAuthSession();
         setToken(null);
         setEmail(null);
+        setUserId(null);
       } finally {
         setHydrated(true);
       }
@@ -59,6 +62,7 @@ export function useAuth() {
   return {
     token,
     email,
+    userId,
     hydrated,
     isAuthenticated,
     loginSession,

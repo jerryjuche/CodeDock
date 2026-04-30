@@ -69,31 +69,6 @@ export async function activate(
     }),
   );
 
-  context.subscriptions.push(
-    wsManager.onClose((code, reason) => {
-      const sessionEnded =
-        code === 4004 ||
-        code === 4003 ||
-        reason === "room_deleted" ||
-        reason === "room_unavailable" ||
-        reason === "forbidden";
-
-      if (!sessionEnded) {
-        return;
-      }
-
-      outputChannel.appendLine(
-        `CodeDock: room session terminated by server (code=${code}, reason=${reason || "none"})`,
-      );
-
-      void clearPendingHydratedJoin(context);
-      void clearPendingLaunch(context);
-      yjsSync.setActiveRoomId(null);
-      yjsSync.setGuestMaterializationRoot(null);
-      yjsSync.dispose();
-    }),
-  );
-
   emitter.on("login", () => {
     outputChannel.appendLine("CodeDock: login event received (sync-only mode)");
   });
@@ -217,6 +192,24 @@ async function handleLaunchUri(
     await context.globalState.update(PENDING_LAUNCH_CONTEXT_KEY, pending);
 
     const currentRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+    outputChannel.appendLine(
+      `CodeDock: launch context - role=${pending.role}, source=${pending.source_type}`,
+    );
+
+    // Special behavior for host + local_workspace: stay in current window (even if blank) and prompt via resume
+    // We treat anyone not explicitly "editor" as a potential host setup for local workspaces
+    if (
+      pending.source_type === "local_workspace" &&
+      pending.role !== "editor"
+    ) {
+      outputChannel.appendLine(
+        "CodeDock: host launch for local_workspace detected, skipping automatic openFolder to allow manual selection",
+      );
+      await resumePendingLaunch(context, outputChannel);
+      return;
+    }
+
     if (
       currentRoot &&
       normalizeFsPath(currentRoot) === normalizeFsPath(workspaceUri.fsPath)
@@ -264,20 +257,51 @@ async function resumePendingLaunch(
   }
 
   const currentRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const isHostLike = pending.role !== "editor";
+
   if (!currentRoot) {
-    outputChannel.appendLine(
-      "CodeDock: pending launch found but no workspace root is open",
-    );
+    if (isHostLike && pending.source_type === "local_workspace") {
+      outputChannel.appendLine(
+        "CodeDock: host launch pending but no folder open, prompting...",
+      );
+      const selection = await vscode.window.showInformationMessage(
+        `CodeDock: You are the host of "${pending.room_name}". Please open the project folder you want to share.`,
+        "Open Folder",
+      );
+      if (selection === "Open Folder") {
+        await vscode.commands.executeCommand("vscode.openFolder");
+      }
+    } else {
+      outputChannel.appendLine(
+        "CodeDock: pending launch found but no workspace root is open",
+      );
+    }
     return;
   }
 
   if (
     normalizeFsPath(currentRoot) !== normalizeFsPath(pending.workspace_fs_path)
   ) {
-    outputChannel.appendLine(
-      "CodeDock: current workspace does not match pending launch root",
-    );
-    return;
+    if (isHostLike && pending.source_type === "local_workspace") {
+      outputChannel.appendLine(
+        `CodeDock: host opened different folder (${currentRoot}), asking to bind...`,
+      );
+      const selection = await vscode.window.showInformationMessage(
+        `CodeDock: Do you want to share the current folder ("${path.basename(currentRoot)}") with room "${pending.room_name}"?`,
+        "Yes, Share Folder",
+        "No",
+      );
+      if (selection === "Yes, Share Folder") {
+        pending.workspace_fs_path = currentRoot;
+      } else {
+        return;
+      }
+    } else {
+      outputChannel.appendLine(
+        "CodeDock: current workspace does not match pending launch root",
+      );
+      return;
+    }
   }
 
   const token = await authManager.getToken();
@@ -306,7 +330,7 @@ async function resumePendingLaunch(
 
   yjsSync.setGuestMaterializationRoot(null);
   yjsSync.setActiveRoomId(pending.room_id);
-  yjsSync.setSessionRole(pending.role === "host" ? "host" : "guest");
+  yjsSync.setSessionRole(isHostLike ? "host" : "guest");
 
   wsManager.connect(token, pending.room_id);
   yjsSync.activate();

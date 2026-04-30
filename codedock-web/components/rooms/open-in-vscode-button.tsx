@@ -10,14 +10,16 @@ export default function OpenInVSCodeButton({
   roomId,
   launchAllowed,
   launchReason,
+  isHost,
 }: {
   roomId: string;
   launchAllowed: boolean;
   launchReason?: string;
+  isHost?: boolean;
 }) {
   const { openRoom, loading } = useLaunch(roomId);
   const [error, setError] = useState<string | null>(null);
-  const disabled = loading || !launchAllowed;
+  const disabled = loading || (!isHost && !launchAllowed);
 
   async function handleOpen() {
     setError(null);
@@ -65,7 +67,8 @@ export default function OpenInVSCodeButton({
       </div>
 
       {/* Readiness warning */}
-      {!launchAllowed && launchReason ? (
+      {/* Readiness warning (Only show for guests, or if host really can't launch) */}
+      {!launchAllowed && launchReason && !isHost ? (
         <div className="mt-5 flex items-start gap-3 rounded-xl border border-[rgba(249,145,53,0.2)] bg-[rgba(249,145,53,0.07)] px-4 py-3.5">
           <svg
             viewBox="0 0 16 16"
@@ -91,6 +94,14 @@ export default function OpenInVSCodeButton({
           </p>
         </div>
       ) : null}
+
+      {isHost && !launchAllowed && (
+        <div className="mt-5 flex items-start gap-3 rounded-xl border border-[rgba(36,166,242,0.2)] bg-[rgba(36,166,242,0.05)] px-4 py-3.5">
+          <p className="text-sm leading-relaxed text-[rgb(36,166,242)]">
+            <strong>Host Note:</strong> You can launch now to set up the workspace. Guests will be able to join once you have opened the project in VS Code.
+          </p>
+        </div>
+      )}
 
       {/* Launch error */}
       {error ? (
