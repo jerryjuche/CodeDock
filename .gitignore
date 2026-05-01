@@ -39,3 +39,6 @@ codedock-web/.next/
 codedock-web/node_modules/
 codedock-web/.env.local
 codedock-web/.env.*.local
+
+# Local debug exports
+debug-dumps/

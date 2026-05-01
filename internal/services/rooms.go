@@ -536,10 +536,12 @@ func (s *RoomService) DeleteRoom(roomID, userID string) error {
 
 func buildRoomSourceState(room *Room, role string, connectedUserIDs map[string]bool) RoomSourceState {
 	state := RoomSourceState{
-		Type: room.SourceType,
+		Type:          room.SourceType,
+		Status:        "unknown",
+		Ready:         false,
+		HostBound:     false,
+		LaunchAllowed: false,
 	}
-
-	state.HostConnected = connectedUserIDs[room.OwnerUserID]
 
 	switch room.SourceType {
 	case SourceTypeGitHubRepo:
@@ -549,97 +551,104 @@ func buildRoomSourceState(room *Room, role string, connectedUserIDs map[string]b
 			Branch     string `json:"branch"`
 			CloneReady bool   `json:"clone_ready"`
 			Ready      bool   `json:"ready"`
-			Status     string `json:"status"`
+			Activated  *bool  `json:"activated"`
 		}
-		_ = json.Unmarshal(room.SourceMetadata, &meta)
+
+		if len(room.SourceMetadata) > 0 {
+			_ = json.Unmarshal(room.SourceMetadata, &meta)
+		}
+
+		if meta.Branch == "" {
+			meta.Branch = "main"
+		}
 
 		state.RepoOwner = meta.RepoOwner
 		state.RepoName = meta.RepoName
 		state.Branch = meta.Branch
 
-		// Check if host has "activated" the room
-		var m map[string]any
-		_ = json.Unmarshal(room.SourceMetadata, &m)
-		state.Activated = m["activated"] == true
-		state.HostBound = meta.Ready || meta.CloneReady || (meta.RepoOwner != "" && meta.RepoName != "")
+		// For GitHub rooms, valid repo metadata is enough to allow launch.
+		//
+		// The actual clone happens later in the VS Code extension, but the
+		// control plane can safely mark the source as ready because the room has
+		// all information required for the extension to clone deterministically.
+		hasRepoMetadata := meta.RepoOwner != "" && meta.RepoName != ""
 
-		if meta.RepoOwner != "" && meta.RepoName != "" {
-			if role == "host" {
-				state.Ready = state.HostBound
-				state.Status = "ready"
-				if !state.Activated {
-					state.Status = "host_activation_required"
-				}
-				state.LaunchAllowed = true
-			} else {
-				// For guests, MUST be activated
-				if state.Activated {
-					state.Ready = true
-					state.Status = "ready"
-					state.LaunchAllowed = true
-				} else {
-					state.Ready = false
-					state.Status = "waiting_for_host"
-					state.LaunchAllowed = false
-					state.LaunchReason = "The host has not activated this room for guests yet."
-				}
-			}
+		state.HostBound = meta.Ready || meta.CloneReady || hasRepoMetadata
+		state.Ready = state.HostBound
+		state.LaunchAllowed = state.Ready
+
+		if meta.Activated != nil {
+			state.Activated = *meta.Activated
 		} else {
-			state.Ready = false
-			state.Status = "repo_not_configured"
-			state.LaunchAllowed = false
-			state.LaunchReason = "Repository metadata is incomplete."
+			state.Activated = true
 		}
+
+		if !hasRepoMetadata {
+			state.Status = "missing_repo_metadata"
+			state.Ready = false
+			state.HostBound = false
+			state.LaunchAllowed = false
+			return state
+		}
+
+		if !state.Activated {
+			state.Status = "paused"
+			state.Ready = false
+			state.LaunchAllowed = false
+			return state
+		}
+
+		state.Status = "ready"
+		return state
 
 	case SourceTypeLocalWorkspace:
 		var meta struct {
-			WorkspaceBound bool   `json:"workspace_bound"`
-			Activated      bool   `json:"activated"`
-			Ready          bool   `json:"ready"`
-			Status         string `json:"status"`
 			WorkspaceLabel string `json:"workspace_label"`
+			WorkspaceBound bool   `json:"workspace_bound"`
+			HostBound      bool   `json:"host_bound"`
+			Ready          bool   `json:"ready"`
+			Activated      *bool  `json:"activated"`
 		}
-		_ = json.Unmarshal(room.SourceMetadata, &meta)
 
-		state.Activated = meta.Activated
-		state.HostBound = meta.WorkspaceBound || meta.Ready
+		if len(room.SourceMetadata) > 0 {
+			_ = json.Unmarshal(room.SourceMetadata, &meta)
+		}
+
 		state.WorkspaceLabel = meta.WorkspaceLabel
+		state.HostBound = meta.WorkspaceBound || meta.HostBound || meta.Ready
 
-		if role == "host" {
-			state.Ready = state.HostBound
-			state.Status = "ready"
-			if !state.HostBound {
-				state.Status = "host_workspace_required"
-			} else if !state.Activated {
-				state.Status = "host_activation_required"
-			}
-			state.LaunchAllowed = true
+		if meta.Activated != nil {
+			state.Activated = *meta.Activated
 		} else {
-			// For guests, MUST be bound AND activated
-			if state.HostBound && state.Activated {
-				state.Ready = true
-				state.Status = "ready"
-				state.LaunchAllowed = true
-			} else if !state.HostBound {
-				state.Ready = false
-				state.Status = "waiting_for_host_workspace"
-				state.LaunchAllowed = false
-				state.LaunchReason = "The host has not selected a project folder yet."
-			} else {
-				state.Ready = false
-				state.Status = "waiting_for_host"
-				state.LaunchAllowed = false
-				state.LaunchReason = "The host has not activated this room for guests yet."
-			}
+			state.Activated = room.IsActive
 		}
+
+		if !state.HostBound {
+			state.Status = "waiting_for_host_workspace"
+			state.Ready = false
+			state.LaunchAllowed = false
+			return state
+		}
+
+		if !state.Activated {
+			state.Status = "paused"
+			state.Ready = false
+			state.LaunchAllowed = false
+			return state
+		}
+
+		state.Status = "ready"
+		state.Ready = true
+		state.LaunchAllowed = true
+		return state
 
 	default:
-		state.Status = "unknown"
+		state.Status = "unsupported_source"
+		state.Ready = false
+		state.HostBound = false
 		state.LaunchAllowed = false
-		state.LaunchReason = "Unknown room source type."
+		return state
 	}
-
-	return state
 }
 
 func normalizeSourceType(sourceType string) (string, error) {

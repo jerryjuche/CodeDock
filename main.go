@@ -48,6 +48,9 @@ func main() {
 
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("/health", handlers.Health)
+	mux.HandleFunc("/ready", handlers.Ready(db))
+
 	// Auth routes
 	mux.HandleFunc("POST /auth/register", authHandler.Register)
 	mux.HandleFunc("POST /auth/login", authHandler.Login)

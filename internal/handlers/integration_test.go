@@ -518,11 +518,11 @@ func setupTestApp(t *testing.T) *testApp {
 
 	mux.Handle("POST /rooms", auth.RequireAuth(http.HandlerFunc(app.roomHandler.CreateRoom)))
 	mux.Handle("GET /rooms", auth.RequireAuth(http.HandlerFunc(app.roomHandler.GetUserRooms)))
-	mux.Handle("GET /rooms/{id}", auth.RequireAuth(http.HandlerFunc(app.roomHandler.GetRoom)))
-	mux.Handle("GET /rooms/{id}/details", auth.RequireAuth(http.HandlerFunc(app.roomHandler.GetRoomDetails)))
-	mux.Handle("GET /rooms/{id}/presence", auth.RequireAuth(http.HandlerFunc(app.roomHandler.GetRoomPresence)))
-	mux.Handle("POST /rooms/{id}/source/local/bind", auth.RequireAuth(http.HandlerFunc(app.roomHandler.BindLocalWorkspace)))
-	mux.Handle("DELETE /rooms/{id}", auth.RequireAuth(http.HandlerFunc(app.roomHandler.DeleteRoom)))
+	mux.Handle("GET /rooms/{roomId}", auth.RequireAuth(http.HandlerFunc(app.roomHandler.GetRoom)))
+	mux.Handle("GET /rooms/{roomId}/details", auth.RequireAuth(http.HandlerFunc(app.roomHandler.GetRoomDetails)))
+	mux.Handle("GET /rooms/{roomId}/presence", auth.RequireAuth(http.HandlerFunc(app.roomHandler.GetRoomPresence)))
+	mux.Handle("POST /rooms/{roomId}/source/local/bind", auth.RequireAuth(http.HandlerFunc(app.roomHandler.BindLocalWorkspace)))
+	mux.Handle("DELETE /rooms/{roomId}", auth.RequireAuth(http.HandlerFunc(app.roomHandler.DeleteRoom)))
 
 	mux.Handle("GET /auth/me", auth.RequireAuth(http.HandlerFunc(app.authHandler.Me)))
 
