@@ -42,3 +42,7 @@ codedock-web/.env.*.local
 
 # Local debug exports
 debug-dumps/
+.vercel
+
+# Vercel local project metadata
+.vercel/
