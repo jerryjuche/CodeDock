@@ -46,3 +46,6 @@ debug-dumps/
 
 # Vercel local project metadata
 .vercel/
+
+.vercel
+.env*.local
