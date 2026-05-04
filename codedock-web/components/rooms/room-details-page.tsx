@@ -11,7 +11,7 @@ import PresenceCard from "@/components/rooms/presence-card";
 import SourceStateCard from "@/components/rooms/source-state-card";
 import InviteList from "@/components/rooms/invite-list";
 import InviteCreateForm from "@/components/rooms/invite-create-form";
-import OpenInVSCodeButton from "@/components/rooms/open-in-vscode-button";
+import OpenIDEButton from "@/components/rooms/open-ide-button";
 import DeleteRoomButton from "@/components/rooms/delete-room-button";
 import { Button } from "@/components/ui/button";
 
@@ -105,7 +105,7 @@ export default function RoomDetailsPageClient({ roomId }: { roomId: string }) {
             isHost={isHost}
             onActivated={reload}
           />
-          <OpenInVSCodeButton
+          <OpenIDEButton
             roomId={roomId}
             launchAllowed={details.source_state.launch_allowed}
             launchReason={details.source_state.launch_reason}

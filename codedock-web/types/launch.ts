@@ -1,6 +1,14 @@
+export type CodeDockEditorTarget = "vscode" | "antigravity";
+
 export type LaunchTokenResponse = {
   launch_token: string;
+  editor?: CodeDockEditorTarget;
   deep_link: string;
+  deep_links?: {
+    vscode: string;
+    antigravity: string;
+  };
+  expires_at?: string;
 };
 
 export type LaunchContext = {

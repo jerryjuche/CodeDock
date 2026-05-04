@@ -489,6 +489,139 @@ func TestRoomJoinInviteAndLaunchControlPlane(t *testing.T) {
 	assertStatus(t, expiredLaunchResp, http.StatusGone)
 }
 
+func TestOpenIDEMultiEditorSupport(t *testing.T) {
+	app := setupTestApp(t)
+
+	// Register and create room as host
+	hostEmail, hostPassword := "host@test.local", "password123"
+	hostRegisterResp := performJSONRequest(t, app.mux, http.MethodPost, "/auth/register", map[string]any{
+		"email":    hostEmail,
+		"password": hostPassword,
+	}, "")
+	assertStatus(t, hostRegisterResp, http.StatusCreated)
+
+	var hostAuth authJSON
+	decodeJSON(t, hostRegisterResp, &hostAuth)
+	hostToken := hostAuth.Token
+
+	createRoomResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms", map[string]any{
+		"name": "Test IDE Picker Room",
+	}, hostToken)
+	assertStatus(t, createRoomResp, http.StatusCreated)
+
+	var roomData roomJSON
+	decodeJSON(t, createRoomResp, &roomData)
+	room := roomData
+
+	// Test OpenIDE with vscode
+	vsCodeLaunchResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms/"+room.ID+"/open-ide", map[string]any{
+		"editor": "vscode",
+	}, hostToken)
+	assertStatus(t, vsCodeLaunchResp, http.StatusOK)
+
+	var vsCodeLaunch struct {
+		LaunchToken string            `json:"launch_token"`
+		Editor      string            `json:"editor"`
+		DeepLink    string            `json:"deep_link"`
+		DeepLinks   map[string]string `json:"deep_links"`
+	}
+	decodeJSON(t, vsCodeLaunchResp, &vsCodeLaunch)
+
+	if vsCodeLaunch.LaunchToken == "" {
+		t.Fatal("expected vscode launch token to be non-empty")
+	}
+	if vsCodeLaunch.Editor != "vscode" {
+		t.Fatalf("expected editor=vscode, got %q", vsCodeLaunch.Editor)
+	}
+	if !strings.HasPrefix(vsCodeLaunch.DeepLink, "vscode://jerryjuche.codedock/launch?token=") {
+		t.Fatalf("unexpected vscode deep link: %q", vsCodeLaunch.DeepLink)
+	}
+	if vsCodeLaunch.DeepLinks["vscode"] != vsCodeLaunch.DeepLink {
+		t.Fatalf("expected deep_links[vscode] to match deep_link")
+	}
+	if !strings.HasPrefix(vsCodeLaunch.DeepLinks["antigravity"], "antigravity://jerryjuche.codedock/launch?token=") {
+		t.Fatalf("unexpected antigravity deep link: %q", vsCodeLaunch.DeepLinks["antigravity"])
+	}
+
+	// Test OpenIDE with antigravity
+	antigravityLaunchResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms/"+room.ID+"/open-ide", map[string]any{
+		"editor": "antigravity",
+	}, hostToken)
+	assertStatus(t, antigravityLaunchResp, http.StatusOK)
+
+	var antigravityLaunch struct {
+		LaunchToken string            `json:"launch_token"`
+		Editor      string            `json:"editor"`
+		DeepLink    string            `json:"deep_link"`
+		DeepLinks   map[string]string `json:"deep_links"`
+	}
+	decodeJSON(t, antigravityLaunchResp, &antigravityLaunch)
+
+	if antigravityLaunch.LaunchToken == "" {
+		t.Fatal("expected antigravity launch token to be non-empty")
+	}
+	if antigravityLaunch.Editor != "antigravity" {
+		t.Fatalf("expected editor=antigravity, got %q", antigravityLaunch.Editor)
+	}
+	if !strings.HasPrefix(antigravityLaunch.DeepLink, "antigravity://jerryjuche.codedock/launch?token=") {
+		t.Fatalf("unexpected antigravity deep link: %q", antigravityLaunch.DeepLink)
+	}
+	if antigravityLaunch.DeepLinks["antigravity"] != antigravityLaunch.DeepLink {
+		t.Fatalf("expected deep_links[antigravity] to match deep_link")
+	}
+
+	// Test invalid editor
+	invalidEditorResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms/"+room.ID+"/open-ide", map[string]any{
+		"editor": "invalid-editor",
+	}, hostToken)
+	assertStatus(t, invalidEditorResp, http.StatusBadRequest)
+
+	// Test missing editor field
+	missingEditorResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms/"+room.ID+"/open-ide", map[string]any{}, hostToken)
+	assertStatus(t, missingEditorResp, http.StatusBadRequest)
+
+	// Test that vscode and antigravity tokens work with the same exchange endpoint
+	exchangeVSCodeResp := performJSONRequest(t, app.mux, http.MethodPost, "/vscode/launch/exchange", map[string]any{
+		"launch_token": vsCodeLaunch.LaunchToken,
+	}, "")
+	assertStatus(t, exchangeVSCodeResp, http.StatusOK)
+
+	var vsCodeCtx launchContextJSON
+	decodeJSON(t, exchangeVSCodeResp, &vsCodeCtx)
+	if vsCodeCtx.RoomID != room.ID {
+		t.Fatalf("expected room id %q, got %q", room.ID, vsCodeCtx.RoomID)
+	}
+
+	// Antigravity token should also work with the same exchange endpoint
+	exchangeAntigravityResp := performJSONRequest(t, app.mux, http.MethodPost, "/vscode/launch/exchange", map[string]any{
+		"launch_token": antigravityLaunch.LaunchToken,
+	}, "")
+	assertStatus(t, exchangeAntigravityResp, http.StatusOK)
+
+	var antigravityCtx launchContextJSON
+	decodeJSON(t, exchangeAntigravityResp, &antigravityCtx)
+	if antigravityCtx.RoomID != room.ID {
+		t.Fatalf("expected room id %q, got %q", room.ID, antigravityCtx.RoomID)
+	}
+
+	// Test backward compatibility: old OpenInVSCode route still works
+	oldVSCodeResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms/"+room.ID+"/open-in-vscode", nil, hostToken)
+	assertStatus(t, oldVSCodeResp, http.StatusOK)
+
+	var oldVSCode struct {
+		LaunchToken string `json:"launch_token"`
+		DeepLink    string `json:"deep_link"`
+	}
+	decodeJSON(t, oldVSCodeResp, &oldVSCode)
+
+	if oldVSCode.LaunchToken == "" {
+		t.Fatal("expected old vscode launch token to be non-empty")
+	}
+	if !strings.HasPrefix(oldVSCode.DeepLink, "vscode://jerryjuche.codedock/launch?token=") {
+		t.Fatalf("unexpected old vscode deep link: %q", oldVSCode.DeepLink)
+	}
+}
+
 func setupTestApp(t *testing.T) *testApp {
 	t.Helper()
 
@@ -532,6 +665,7 @@ func setupTestApp(t *testing.T) *testApp {
 	mux.Handle("POST /rooms/{roomId}/invites/{inviteId}/revoke", auth.RequireAuth(http.HandlerFunc(app.inviteHandler.RevokeRoomInvite)))
 
 	mux.Handle("POST /rooms/{roomId}/open-in-vscode", auth.RequireAuth(http.HandlerFunc(app.launchHandler.OpenInVSCode)))
+	mux.Handle("POST /rooms/{roomId}/open-ide", auth.RequireAuth(http.HandlerFunc(app.launchHandler.OpenIDE)))
 	mux.HandleFunc("POST /vscode/launch/exchange", app.launchHandler.ExchangeLaunchToken)
 
 	app.mux = mux
@@ -894,7 +1028,7 @@ func TestGetRoomPresence_ReturnsConnectedMembers(t *testing.T) {
 	assertStatus(t, presenceResp, http.StatusOK)
 
 	var presence struct {
-		Members        []struct {
+		Members []struct {
 			UserID    string `json:"user_id"`
 			Email     string `json:"email"`
 			Role      string `json:"role"`
