@@ -1,50 +1,26 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { getRoomDetails } from "@/lib/api/rooms";
 import { useAuth } from "@/hooks/use-auth";
 import type { RoomDetails } from "@/types/room";
 
 export function useRoomDetails(roomId: string) {
-  const { token, hydrated } = useAuth();
-  const [details, setDetails] = useState<RoomDetails | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { token } = useAuth();
 
-  async function load() {
-    if (!token) {
-      setLoading(false);
-      setError("You are not logged in.");
-      return;
-    }
-
-    try {
-      const response = await getRoomDetails(token, roomId);
-      setDetails(response);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load room details");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    if (!hydrated) return;
-    void load();
-
-    // Poll for updates every 3 seconds while on the room page
-    const timer = window.setInterval(() => {
-      void load();
-    }, 3000);
-
-    return () => window.clearInterval(timer);
-  }, [hydrated, roomId, token]);
+  const query = useQuery({
+    queryKey: ["room-details", roomId],
+    queryFn: () => getRoomDetails(token!, roomId),
+    enabled: !!token,
+    staleTime: 30000, // Consider data fresh for 30 seconds
+    refetchInterval: 30000, // Refetch every 30 seconds instead of 3
+    refetchIntervalInBackground: false, // Don't refetch when tab is not active
+  });
 
   return {
-    details,
-    loading,
-    error,
-    reload: load,
+    details: query.data ?? null,
+    loading: query.isLoading,
+    error: query.error?.message || null,
+    reload: query.refetch,
   };
 }

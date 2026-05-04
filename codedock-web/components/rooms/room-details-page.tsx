@@ -1,19 +1,57 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { Card } from "@/components/ui/card";
 import { useRoomDetails } from "@/hooks/use-room-details";
 import { useRoomPresence } from "@/hooks/use-room-presence";
 import { useInvites } from "@/hooks/use-invites";
 import { useAuth } from "@/hooks/use-auth";
-import RoomHeader from "@/components/rooms/room-header";
-import PresenceCard from "@/components/rooms/presence-card";
-import SourceStateCard from "@/components/rooms/source-state-card";
-import InviteList from "@/components/rooms/invite-list";
-import InviteCreateForm from "@/components/rooms/invite-create-form";
-import OpenIDEButton from "@/components/rooms/open-ide-button";
-import DeleteRoomButton from "@/components/rooms/delete-room-button";
-import { Button } from "@/components/ui/button";
+import RoomDetailsSkeleton from "@/components/rooms/room-details-skeleton";
+
+// Dynamically import heavy components
+const RoomHeader = dynamic(() => import("@/components/rooms/room-header"), {
+  loading: () => <div className="h-16 bg-white/5 rounded-lg animate-pulse" />,
+});
+
+const PresenceCard = dynamic(() => import("@/components/rooms/presence-card"), {
+  loading: () => <div className="h-32 bg-white/5 rounded-lg animate-pulse" />,
+});
+
+const SourceStateCard = dynamic(
+  () => import("@/components/rooms/source-state-card"),
+  {
+    loading: () => <div className="h-48 bg-white/5 rounded-lg animate-pulse" />,
+  },
+);
+
+const InviteList = dynamic(() => import("@/components/rooms/invite-list"), {
+  loading: () => <div className="h-24 bg-white/5 rounded-lg animate-pulse" />,
+});
+
+const InviteCreateForm = dynamic(
+  () => import("@/components/rooms/invite-create-form"),
+  {
+    loading: () => <div className="h-16 bg-white/5 rounded-lg animate-pulse" />,
+  },
+);
+
+const OpenIDEButton = dynamic(
+  () => import("@/components/rooms/open-ide-button"),
+  {
+    loading: () => <div className="h-32 bg-white/5 rounded-lg animate-pulse" />,
+  },
+);
+
+const Button = dynamic(
+  () =>
+    import("@/components/ui/button").then((mod) => ({ default: mod.Button })),
+  {
+    loading: () => (
+      <div className="h-10 w-32 bg-white/5 rounded-lg animate-pulse" />
+    ),
+  },
+);
 
 export default function RoomDetailsPageClient({ roomId }: { roomId: string }) {
   const { userId } = useAuth();
@@ -33,20 +71,15 @@ export default function RoomDetailsPageClient({ roomId }: { roomId: string }) {
   } = useInvites(roomId);
 
   if (loading) {
-    return (
-      <main className="mx-auto max-w-7xl px-6 py-8 sm:px-8 lg:px-10">
-        <Card>Loading room details...</Card>
-      </main>
-    );
+    return <RoomDetailsSkeleton />;
   }
 
   if (error || !details) {
-    const friendly =
-      error?.toLowerCase().includes("forbidden")
-        ? "You no longer have access to this room."
-        : error?.toLowerCase().includes("not found")
-          ? "This session has ended or the room no longer exists."
-          : error ?? "Room not found.";
+    const friendly = error?.toLowerCase().includes("forbidden")
+      ? "You no longer have access to this room."
+      : error?.toLowerCase().includes("not found")
+        ? "This session has ended or the room no longer exists."
+        : (error ?? "Room not found.");
 
     return (
       <main className="mx-auto max-w-4xl px-6 py-10 sm:px-8">
@@ -92,7 +125,8 @@ export default function RoomDetailsPageClient({ roomId }: { roomId: string }) {
             <Card>
               <h3 className="text-lg font-semibold text-white">Access</h3>
               <p className="mt-2 text-sm text-[rgb(158,183,211)]">
-                You joined this room as an editor. Invite management is available only to the host.
+                You joined this room as an editor. Invite management is
+                available only to the host.
               </p>
             </Card>
           )}
