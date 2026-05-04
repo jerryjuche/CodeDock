@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://code-dock-beige.vercel.app/brand/codedock-logo.png" alt="CodeDock" width="160" />
+<img src="https://raw.githubusercontent.com/jerryjuche/CodeDock/staging/extension/images/codedock.jpg" alt="CodeDock" width="160" />
 
 # CodeDock
 
