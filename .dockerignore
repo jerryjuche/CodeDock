@@ -1,53 +1,126 @@
-.git
-.gitignore
+# =============================================================================
+# CodeDock — .dockerignore
+# Scope: Go backend container image only (Dockerfile at repo root)
+# Goal: Keep the build context lean — only Go source, go.mod, and migrations
+# =============================================================================
 
-# Local env files
+
+# =============================================================================
+# VERSION CONTROL
+# =============================================================================
+.git/
+.gitignore
+.gitattributes
+.github/
+
+
+# =============================================================================
+# SECRETS & ENVIRONMENT
+# =============================================================================
 .env
 .env.*
 !.env.example
 
-# Node / frontend build artifacts
-node_modules
-**/node_modules
-.next
-**/.next
-dist
-**/dist
-build
-**/build
-coverage
-**/coverage
 
-# Logs
-*.log
+# =============================================================================
+# NEXT.JS FRONTEND (not needed in the backend image)
+# =============================================================================
+codedock-web/
+!codedock-web/.env.example
+
+
+# =============================================================================
+# VS CODE EXTENSION (not needed in the backend image)
+# =============================================================================
+extension/
+
+
+# =============================================================================
+# TEST DASHBOARD (internal tooling)
+# =============================================================================
+codedock-test-dashboard/
+
+
+# =============================================================================
+# NODE / JAVASCRIPT BUILD ARTIFACTS
+# =============================================================================
+node_modules/
+**/node_modules/
+.next/
+**/.next/
+dist/
+**/dist/
+build/
+**/build/
+coverage/
+**/coverage/
 npm-debug.log*
 yarn-debug.log*
-yarn-error.log*
+*.log
 
-# OS/editor files
+
+# =============================================================================
+# GO TEST & BUILD ARTIFACTS
+# =============================================================================
+*.test
+*.out
+coverage.*
+*.coverprofile
+profile.cov
+codedock-server
+codedock_test_bin
+go.work
+go.work.sum
+
+
+# =============================================================================
+# VS CODE EXTENSION PACKAGING
+# =============================================================================
+*.vsix
+
+
+# =============================================================================
+# EDITOR & OS ARTIFACTS
+# =============================================================================
+.vscode/
+.idea/
+*.swp
+*.swo
 .DS_Store
-.vscode
-.idea
+Thumbs.db
 
-# Local/generated files
-tmp
-temp
+
+# =============================================================================
+# TEMP / BACKUP / DEBUG
+# =============================================================================
+tmp/
+temp/
 *.tmp
 *.bak
+*.bak.*
+debug-dumps/
+scripts/
 
-# VS Code extension packaging artifacts
-extension/*.vsix
-extension/out
-extension/dist
 
-# Test dashboard frontend dependencies/builds
-codedock-test-dashboard/frontend/node_modules
-codedock-test-dashboard/frontend/.next
-codedock-test-dashboard/frontend/dist
-codedock-test-dashboard/frontend/build
+# =============================================================================
+# CI / DEPLOYMENT METADATA (not needed inside the image)
+# =============================================================================
+fly.toml
+.vercel/
+.dockerignore.bak
 
-# Web control plane dependencies/builds
-codedock-web/node_modules
-codedock-web/.next
-codedock-web/dist
-codedock-web/build
+
+# =============================================================================
+# DOCUMENTATION
+# =============================================================================
+*.md
+!README.md
+walkthrough.md
+implementation_plan.md
+
+
+# =============================================================================
+# LOCAL DB DATA
+# =============================================================================
+pgdata/
+postgres-data/
