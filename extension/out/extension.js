@@ -12965,7 +12965,7 @@ var yjsSync;
 var apiClient;
 async function activate(context) {
   const config = vscode4.workspace.getConfiguration("codedock");
-  const serverUrl = config.get("serverUrl", "http://localhost:8080");
+  const serverUrl = config.get("serverUrl", "https://codedock.fly.dev");
   const outputChannel = vscode4.window.createOutputChannel("CodeDock");
   context.subscriptions.push(outputChannel);
   outputChannel.show(true);

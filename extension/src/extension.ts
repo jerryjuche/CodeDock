@@ -26,7 +26,7 @@ export async function activate(
   context: vscode.ExtensionContext,
 ): Promise<void> {
   const config = vscode.workspace.getConfiguration("codedock");
-  const serverUrl = config.get<string>("serverUrl", "http://localhost:8080");
+  const serverUrl = config.get<string>("serverUrl", "https://codedock.fly.dev");
 
   const outputChannel = vscode.window.createOutputChannel("CodeDock");
   context.subscriptions.push(outputChannel);
