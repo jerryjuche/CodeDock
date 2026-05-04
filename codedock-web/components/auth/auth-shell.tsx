@@ -70,6 +70,7 @@ export default function AuthShell({
           </div>
         </div>
       </section>
+      
 
       {/* ── Right: form card ─────────────────────────────────────────── */}
       <section className="mx-auto flex w-full max-w-lg items-center">
