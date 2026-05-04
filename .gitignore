@@ -183,3 +183,72 @@ codedock-test-dashboard/frontend/node_modules/
 codedock-test-dashboard/frontend/.next/
 codedock-test-dashboard/frontend/dist/
 codedock-test-dashboard/frontend/build/
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Frontend build/cache
+.next/
+**/.next/
+dist/
+**/dist/
+build/
+**/build/
+coverage/
+**/coverage/
+*.tsbuildinfo
+
+# VS Code extension build/package output
+extension/out/
+extension/dist/
+extension/*.vsix
+*.vsix
+
+# Local deployment/config
+.env
+.env.*
+!.env.example
+.vercel/
+debug-dumps/
+
+# Go build artifacts
+codedock_test_bin
+codedock-server
+*.test
+*.out
+*.coverprofile
+
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Frontend build/cache
+.next/
+**/.next/
+dist/
+**/dist/
+build/
+**/build/
+coverage/
+**/coverage/
+*.tsbuildinfo
+
+# VS Code extension build/package output
+extension/out/
+extension/dist/
+extension/*.vsix
+*.vsix
+
+# Local deployment/config
+.env
+.env.*
+!.env.example
+.vercel/
+debug-dumps/
+
+# Go build artifacts
+codedock_test_bin
+codedock-server
+*.test
+*.out
+*.coverprofile
