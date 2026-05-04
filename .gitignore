@@ -100,6 +100,43 @@ extension/tsconfig.tsbuildinfo
 
 
 # =============================================================================
+# DEBUG & DEVELOPMENT ARTIFACTS
+# =============================================================================
+
+# Debug dumps and analysis files
+debug-dumps/
+**/debug-dumps/
+
+# Temporary files and backups
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/settings.json
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Docker
+.dockerignore.bak
+
+
+# =============================================================================
 # VERCEL
 # =============================================================================
 .vercel/
