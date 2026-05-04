@@ -2,7 +2,7 @@
   "name": "codedock",
   "displayName": "CodeDock",
   "description": "Self-hosted real-time collaborative coding for VS Code",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "publisher": "jerryjuche",
   "license": "MIT",
   "icon": "images/codedock.jpg",
@@ -85,11 +85,14 @@
     "lint": "eslint src --ext ts"
   },
   "dependencies": {
+    "ws": "^8.20.0",
     "yjs": "^13.6.30"
   },
   "devDependencies": {
-    "@types/node": "^20.0.0",
+    "@types/node": "^20.19.39",
     "@types/vscode": "^1.85.0",
+    "@types/ws": "^8.18.1",
+    "@vscode/vsce": "^3.9.1",
     "esbuild": "^0.28.0",
     "typescript": "^5.9.3"
   }

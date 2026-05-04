@@ -1,39 +1,126 @@
-# Binaries
-**/*.exe
-**/*.exe~
-**/*.dll
-**/*.so
-**/*.dylib
+# =============================================================================
+# CodeDock — .dockerignore
+# Scope: Go backend container image only (Dockerfile at repo root)
+# Goal: Keep the build context lean — only Go source, go.mod, and migrations
+# =============================================================================
 
-# Test binaries
-**/*.test
 
-# Coverage
-**/*.out
-**/*.coverprofile
-**/coverage.*
-**/profile.cov
+# =============================================================================
+# VERSION CONTROL
+# =============================================================================
+.git/
+.gitignore
+.gitattributes
+.github/
 
-# Dependencies
-**/node_modules
 
-# Go workspace
-**/go.work
-**/go.work.sum
+# =============================================================================
+# SECRETS & ENVIRONMENT
+# =============================================================================
+.env
+.env.*
+!.env.example
 
-# Environment
-**/.env
 
-# Extension build artifacts
-extension/**/out
-extension/**/*.vsix
+# =============================================================================
+# NEXT.JS FRONTEND (not needed in the backend image)
+# =============================================================================
+codedock-web/
+!codedock-web/.env.example
 
-# Test dashboard
-codedock-test-dashboard/**/node_modules
-codedock-test-dashboard/**/dist
-codedock-test-dashboard/**/dist-ssr
-codedock-test-dashboard/**/*.log
-codedock-test-dashboard/**/*.local
 
-# Fly config — do not exclude, needed for deploy
-# fly.toml is intentionally kept
+# =============================================================================
+# VS CODE EXTENSION (not needed in the backend image)
+# =============================================================================
+extension/
+
+
+# =============================================================================
+# TEST DASHBOARD (internal tooling)
+# =============================================================================
+codedock-test-dashboard/
+
+
+# =============================================================================
+# NODE / JAVASCRIPT BUILD ARTIFACTS
+# =============================================================================
+node_modules/
+**/node_modules/
+.next/
+**/.next/
+dist/
+**/dist/
+build/
+**/build/
+coverage/
+**/coverage/
+npm-debug.log*
+yarn-debug.log*
+*.log
+
+
+# =============================================================================
+# GO TEST & BUILD ARTIFACTS
+# =============================================================================
+*.test
+*.out
+coverage.*
+*.coverprofile
+profile.cov
+codedock-server
+codedock_test_bin
+go.work
+go.work.sum
+
+
+# =============================================================================
+# VS CODE EXTENSION PACKAGING
+# =============================================================================
+*.vsix
+
+
+# =============================================================================
+# EDITOR & OS ARTIFACTS
+# =============================================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+
+# =============================================================================
+# TEMP / BACKUP / DEBUG
+# =============================================================================
+tmp/
+temp/
+*.tmp
+*.bak
+*.bak.*
+debug-dumps/
+scripts/
+
+
+# =============================================================================
+# CI / DEPLOYMENT METADATA (not needed inside the image)
+# =============================================================================
+fly.toml
+.vercel/
+.dockerignore.bak
+
+
+# =============================================================================
+# DOCUMENTATION
+# =============================================================================
+*.md
+!README.md
+walkthrough.md
+implementation_plan.md
+
+
+# =============================================================================
+# LOCAL DB DATA
+# =============================================================================
+pgdata/
+postgres-data/

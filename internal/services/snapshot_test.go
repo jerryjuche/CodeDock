@@ -2,31 +2,24 @@ package services
 
 import (
 	"database/sql"
+	"encoding/json"
 	"testing"
 )
 
-func createTestRoom(t *testing.T, db *sql.DB, userID, name string) string {
+func createSnapshotTestRoom(t *testing.T, db *sql.DB, userID, name string) string {
 	t.Helper()
 
-	var roomID string
-	err := db.QueryRow(`
-		INSERT INTO rooms (name, created_by)
-		VALUES ($1, $2)
-		RETURNING id
-	`, name, userID).Scan(&roomID)
+	roomService := &RoomService{DB: db}
+	room, err := roomService.CreateRoomWithOptions(userID, CreateRoomInput{
+		Name:           name,
+		SourceType:     SourceTypeLocalWorkspace,
+		SourceMetadata: json.RawMessage(`{}`),
+	})
 	if err != nil {
 		t.Fatalf("failed to create test room: %v", err)
 	}
 
-	_, err = db.Exec(`
-		INSERT INTO room_members (user_id, room_id, role)
-		VALUES ($1, $2, 'host')
-	`, userID, roomID)
-	if err != nil {
-		t.Fatalf("failed to create room membership: %v", err)
-	}
-
-	return roomID
+	return room.ID
 }
 
 func TestSaveSnapshot_ThenGetSnapshot(t *testing.T) {
@@ -35,7 +28,7 @@ func TestSaveSnapshot_ThenGetSnapshot(t *testing.T) {
 	cleanTestDB(t, db)
 
 	userID := createTestUser(t, db, "snapshot-readwrite@codedock.com")
-	roomID := createTestRoom(t, db, userID, "Snapshot Room")
+	roomID := createSnapshotTestRoom(t, db, userID, "Snapshot Room")
 
 	filePath := "frontend/src/App.jsx"
 	original := []byte("initial yjs state")
@@ -64,7 +57,7 @@ func TestSaveSnapshot_UpsertUpdatesExistingState(t *testing.T) {
 	cleanTestDB(t, db)
 
 	userID := createTestUser(t, db, "snapshot-upsert@codedock.com")
-	roomID := createTestRoom(t, db, userID, "Upsert Room")
+	roomID := createSnapshotTestRoom(t, db, userID, "Upsert Room")
 
 	filePath := "backend/main.go"
 	firstState := []byte("first state")
@@ -98,7 +91,7 @@ func TestGetSnapshot_NotFoundReturnsNilNil(t *testing.T) {
 	cleanTestDB(t, db)
 
 	userID := createTestUser(t, db, "snapshot-missing@codedock.com")
-	roomID := createTestRoom(t, db, userID, "Missing Snapshot Room")
+	roomID := createSnapshotTestRoom(t, db, userID, "Missing Snapshot Room")
 
 	got, err := GetSnapshot(db, roomID, "missing/file.go")
 	if err != nil {
@@ -117,7 +110,7 @@ func TestDBSnapshotStore_SaveAndGet(t *testing.T) {
 
 	store := &DBSnapshotStore{DB: db}
 	userID := createTestUser(t, db, "snapshot-store@codedock.com")
-	roomID := createTestRoom(t, db, userID, "Store Room")
+	roomID := createSnapshotTestRoom(t, db, userID, "Store Room")
 
 	filePath := "internal/services/snapshot.go"
 	state := []byte("store state")

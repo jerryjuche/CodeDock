@@ -28,6 +28,10 @@ type WSHandler struct {
 	}
 }
 
+type RoomAccessChecker interface {
+	CanConnectToRoom(roomID, userID string) error
+}
+
 // ServeWS handles incoming WebSocket connection requests.
 // Flow:
 //  1. Validate JWT from query param
@@ -35,11 +39,9 @@ type WSHandler struct {
 //  3. Upgrade HTTP → WebSocket
 //  4. Register client with Hub
 //  5. Launch readPump and writePump goroutines
-func ServeWS(h *hub.Hub) http.HandlerFunc {
+
+func ServeWS(h *hub.Hub, access RoomAccessChecker) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// Step 1 — validate JWT from query param
-		// WebSocket connections cannot send headers after the handshake,
-		// so the token travels as a query parameter instead
 		tokenStr := r.URL.Query().Get("token")
 		if tokenStr == "" {
 			http.Error(w, "missing token", http.StatusUnauthorized)
@@ -52,21 +54,22 @@ func ServeWS(h *hub.Hub) http.HandlerFunc {
 			return
 		}
 
-		// Step 2 — validate room_id
 		roomID := r.URL.Query().Get("room_id")
 		if roomID == "" {
 			http.Error(w, "missing room_id", http.StatusBadRequest)
 			return
 		}
 
-		// Step 3 — upgrade HTTP connection to WebSocket
-		conn, err := upgrader.Upgrade(w, r, nil)
-		if err != nil {
-			// Upgrade writes its own error response on failure
+		if err := access.CanConnectToRoom(roomID, claims.UserID); err != nil {
+			http.Error(w, "room unavailable", http.StatusForbidden)
 			return
 		}
 
-		// Step 4 — create client and register with Hub
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+
 		client := &hub.Client{
 			Conn:   conn,
 			Send:   make(chan []byte, 256),
@@ -75,9 +78,6 @@ func ServeWS(h *hub.Hub) http.HandlerFunc {
 		}
 		h.Register(client)
 
-		// Step 5 — launch goroutines
-		// writePump runs in a goroutine — it blocks on the send channel
-		// readPump runs in the current goroutine — it blocks on the connection
 		go client.WritePump()
 		client.ReadPump(h)
 	}

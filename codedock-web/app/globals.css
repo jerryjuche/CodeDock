@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --cd-bg: 1 26 61;
+  --cd-bg-elevated: 9 34 72;
+  --cd-panel: 8 30 63;
+  --cd-panel-2: 13 40 81;
+  --cd-border: 255 255 255;
+  --cd-text: 234 244 255;
+  --cd-text-muted: 158 183 211;
+  --cd-cyan: 36 166 242;
+  --cd-cyan-soft: 47 203 255;
+  --cd-orange: 239 102 46;
+  --cd-amber: 249 145 53;
+  --cd-success: 42 211 139;
+  --cd-danger: 255 90 107;
+}
+
+html,
+body {
+  min-height: 100%;
+  background:
+    radial-gradient(circle at top left, rgba(var(--cd-cyan), 0.12), transparent 24%),
+    radial-gradient(circle at top right, rgba(var(--cd-orange), 0.10), transparent 18%),
+    linear-gradient(180deg, rgba(4, 22, 49, 1) 0%, rgba(1, 26, 61, 1) 100%);
+  color: rgb(var(--cd-text));
+}
+
+body {
+  @apply antialiased;
+}
+
+* {
+  border-color: rgba(var(--cd-border), 0.08);
+}
+
+a {
+  @apply transition-colors;
+}
+
+::selection {
+  background: rgba(var(--cd-cyan), 0.25);
+  color: rgb(var(--cd-text));
+}

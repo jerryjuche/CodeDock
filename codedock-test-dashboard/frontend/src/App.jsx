@@ -9,7 +9,7 @@ function App() {
 
   const fetchSuite = async () => {
     setLoading(true)
-    setError('')
+    setError('')``
 
     try {
       const response = await fetch(API_URL)

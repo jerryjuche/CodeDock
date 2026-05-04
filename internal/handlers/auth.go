@@ -25,6 +25,11 @@ type authResponse struct {
 	Email string `json:"email"`
 }
 
+type meResponse struct {
+	ID    string `json:"id"`
+	Email string `json:"email"`
+}
+
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	var req registerRequest
 
@@ -44,7 +49,6 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Delegate to service layer — business logic lives there, not here
 	userID, err := services.CreateUser(h.DB, req.Email, string(hashedPassword))
 	if err != nil {
 		if errors.Is(err, services.ErrDuplicateEmail) {
@@ -63,7 +67,8 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(authResponse{
+
+	_ = json.NewEncoder(w).Encode(authResponse{
 		Token: token,
 		Email: req.Email,
 	})
@@ -77,16 +82,17 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	//check for empty mail and password
 	if req.Email == "" || req.Password == "" {
 		http.Error(w, "email and password are required", http.StatusBadRequest)
 		return
 	}
 
-	// fetch users from db by email
 	var userID, passwordHash string
 
-	err := h.DB.QueryRow(`SELECT id, password_hash FROM users WHERE email = $1`, req.Email).Scan(&userID, &passwordHash)
+	err := h.DB.QueryRow(
+		`SELECT id, password_hash FROM users WHERE email = $1`,
+		req.Email,
+	).Scan(&userID, &passwordHash)
 
 	if err == sql.ErrNoRows {
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
@@ -98,13 +104,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// compare hashed password
 	if err = bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(req.Password)); err != nil {
 		http.Error(w, "invalid credentials", http.StatusUnauthorized)
 		return
 	}
 
-	// generate token
 	token, err := auth.GenerateToken(userID, req.Email)
 	if err != nil {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
@@ -113,50 +117,34 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(authResponse{
+
+	_ = json.NewEncoder(w).Encode(authResponse{
 		Token: token,
 		Email: req.Email,
 	})
 }
 
-func (h *AuthHandler) ExchangeCode(w http.ResponseWriter, r *http.Request) {
-
-	var Det struct {
-		Code string `json:"code"`
-	}
-
-	if err := json.NewDecoder(r.Body).Decode(&Det); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	details, err := services.ExchangeInviteCode(h.DB, Det.Code)
-	if err != nil {
-		if errors.Is(err, services.ErrInviteExpired) || errors.Is(err, services.ErrInviteNotFound) {
-			http.Error(w, "invalid or expired invite code", http.StatusGone)
-			return
-		}
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
-	}
-	token, err := auth.GenerateToken(details.UserID, details.Email)
-	if err != nil {
-		http.Error(w, "could not generate token", http.StatusInternalServerError)
+func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.GetUserFromContext(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(struct {
-		Token    string `json:"token"`
-		Email    string `json:"email"`
-		RoomID   string `json:"room_id"`
-		RoomName string `json:"room_name"`
-	}{
-		Token:    token,
-		Email:    details.Email,
-		RoomID:   details.RoomID,
-		RoomName: details.RoomName,
-	})
 
+	_ = json.NewEncoder(w).Encode(meResponse{
+		ID:    claims.UserID,
+		Email: claims.Email,
+	})
+}
+
+// ExchangeCode is deprecated.
+func (h *AuthHandler) ExchangeCode(w http.ResponseWriter, r *http.Request) {
+	http.Error(
+		w,
+		"legacy invite exchange is deprecated; use /join-code/resolve from the web app",
+		http.StatusGone,
+	)
 }

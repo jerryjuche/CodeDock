@@ -2,14 +2,20 @@ package handlers
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/jerryjuche/CodeDock/internal/hub"
 
 	"github.com/jerryjuche/CodeDock/internal/auth"
 	"github.com/jerryjuche/CodeDock/internal/services"
@@ -19,26 +25,82 @@ import (
 
 var testDB *sql.DB
 
+const testDBAdvisoryLockKey int64 = 704797424
+
+type testApp struct {
+	db            *sql.DB
+	mux           *http.ServeMux
+	authHandler   *AuthHandler
+	roomHandler   *RoomHandler
+	inviteHandler *InviteHandler
+	launchHandler *LaunchHandler
+	realtimeHub   *hub.Hub
+}
+
+type authJSON struct {
+	Token string `json:"token"`
+	Email string `json:"email"`
+}
+
+type roomJSON struct {
+	ID              string          `json:"id"`
+	Name            string          `json:"name"`
+	Slug            string          `json:"slug"`
+	CreatedBy       string          `json:"created_by"`
+	OwnerUserID     string          `json:"owner_user_id"`
+	SourceType      string          `json:"source_type"`
+	SourceMetadata  json.RawMessage `json:"source_metadata"`
+	PrimaryJoinCode string          `json:"primary_join_code"`
+	IsActive        bool            `json:"is_active"`
+}
+
+type membershipJSON struct {
+	Role   string `json:"role"`
+	Joined bool   `json:"joined"`
+}
+
+type joinCodeResponseJSON struct {
+	Room       roomJSON       `json:"room"`
+	Membership membershipJSON `json:"membership"`
+}
+
+type inviteJSON struct {
+	ID              string     `json:"id"`
+	RoomID          string     `json:"room_id"`
+	Code            string     `json:"code"`
+	CreatedByUserID string     `json:"created_by_user_id"`
+	ExpiresAt       *time.Time `json:"expires_at"`
+	MaxUses         *int       `json:"max_uses"`
+	UsesCount       int        `json:"uses_count"`
+	IsRevoked       bool       `json:"is_revoked"`
+}
+
+type launchTokenJSON struct {
+	LaunchToken string `json:"launch_token"`
+	DeepLink    string `json:"deep_link"`
+}
+
+type launchContextJSON struct {
+	RoomID            string          `json:"room_id"`
+	RoomName          string          `json:"room_name"`
+	RoomSlug          string          `json:"room_slug"`
+	Role              string          `json:"role"`
+	SourceType        string          `json:"source_type"`
+	SourceMetadata    json.RawMessage `json:"source_metadata"`
+	WorkspacePathHint string          `json:"workspace_path_hint"`
+}
+
 func TestMain(m *testing.M) {
-	candidates := []string{
-		".env",
-		filepath.Join("..", "..", ".env"),
-		filepath.Join("..", "..", "..", ".env"),
-	}
-	for _, candidate := range candidates {
-		if _, err := os.Stat(candidate); err == nil {
-			godotenv.Overload(candidate)
-			break
-		}
-	}
+	loadEnv()
 
 	connStr := fmt.Sprintf(
-		"host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
 		os.Getenv("DB_HOST"),
 		os.Getenv("DB_PORT"),
 		os.Getenv("DB_USER"),
 		os.Getenv("DB_PASSWORD"),
 		os.Getenv("TEST_DB_NAME"),
+		getEnvOrDefault("DB_SSLMODE", "disable"),
 	)
 
 	var err error
@@ -53,513 +115,874 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
+	if _, err := testDB.Exec(`SELECT pg_advisory_lock($1)`, testDBAdvisoryLockKey); err != nil {
+		fmt.Printf("could not acquire test db advisory lock: %v\n", err)
+		os.Exit(1)
+	}
+
+	if err := applyPhase1Migration(testDB); err != nil {
+		fmt.Printf("could not apply phase1 migration to test database: %v\n", err)
+		_, _ = testDB.Exec(`SELECT pg_advisory_unlock($1)`, testDBAdvisoryLockKey)
+		os.Exit(1)
+	}
+
 	code := m.Run()
-	testDB.Close()
+
+	_, _ = testDB.Exec(`SELECT pg_advisory_unlock($1)`, testDBAdvisoryLockKey)
+	_ = testDB.Close()
 	os.Exit(code)
 }
 
-type testApp struct {
-	db          *sql.DB
-	mux         *http.ServeMux
-	authHandler *AuthHandler
-	roomHandler *RoomHandler
+func TestAuthRegisterLoginAndDuplicateRegister(t *testing.T) {
+	app := setupTestApp(t)
+	resetTestDB(t, app.db)
+
+	email := uniqueEmail("auth-register")
+	password := "strong-password-123"
+
+	registerResp := performJSONRequest(t, app.mux, http.MethodPost, "/auth/register", map[string]any{
+		"email":    email,
+		"password": password,
+	}, "")
+	assertStatus(t, registerResp, http.StatusCreated)
+
+	var registered authJSON
+	decodeJSON(t, registerResp, &registered)
+
+	if registered.Email != email {
+		t.Fatalf("expected registered email %q, got %q", email, registered.Email)
+	}
+	if registered.Token == "" {
+		t.Fatalf("expected register token to be non-empty")
+	}
+
+	loginResp := performJSONRequest(t, app.mux, http.MethodPost, "/auth/login", map[string]any{
+		"email":    email,
+		"password": password,
+	}, "")
+	assertStatus(t, loginResp, http.StatusOK)
+
+	var loggedIn authJSON
+	decodeJSON(t, loginResp, &loggedIn)
+
+	if loggedIn.Email != email {
+		t.Fatalf("expected login email %q, got %q", email, loggedIn.Email)
+	}
+	if loggedIn.Token == "" {
+		t.Fatalf("expected login token to be non-empty")
+	}
+
+	dupResp := performJSONRequest(t, app.mux, http.MethodPost, "/auth/register", map[string]any{
+		"email":    email,
+		"password": password,
+	}, "")
+	assertStatus(t, dupResp, http.StatusConflict)
+}
+
+func TestCreateRoomValidationAndGitHubRoomFlow(t *testing.T) {
+	app := setupTestApp(t)
+	resetTestDB(t, app.db)
+
+	host := mustRegisterUser(t, app, "host-github")
+	hostToken := host.Token
+
+	invalidResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms", map[string]any{
+		"name":        "Invalid Source Room",
+		"source_type": "bad_source",
+	}, hostToken)
+	assertStatus(t, invalidResp, http.StatusBadRequest)
+
+	roomCreateResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms", map[string]any{
+		"name":        "Frontend Revamp",
+		"source_type": "github_repo",
+		"source_metadata": map[string]any{
+			"repo_owner": "jerryjuche",
+			"repo_name":  "CodeDock",
+			"branch":     "staging",
+		},
+	}, hostToken)
+	assertStatus(t, roomCreateResp, http.StatusCreated)
+
+	var room roomJSON
+	decodeJSON(t, roomCreateResp, &room)
+
+	if room.ID == "" {
+		t.Fatalf("expected room id to be non-empty")
+	}
+	if room.Name != "Frontend Revamp" {
+		t.Fatalf("expected room name to match, got %q", room.Name)
+	}
+	if room.Slug == "" {
+		t.Fatalf("expected slug to be non-empty")
+	}
+	if room.PrimaryJoinCode == "" || len(room.PrimaryJoinCode) != 6 {
+		t.Fatalf("expected 6-char primary join code, got %q", room.PrimaryJoinCode)
+	}
+	if room.SourceType != services.SourceTypeGitHubRepo {
+		t.Fatalf("expected source type %q, got %q", services.SourceTypeGitHubRepo, room.SourceType)
+	}
+
+	var sourceMeta map[string]any
+	if err := json.Unmarshal(room.SourceMetadata, &sourceMeta); err != nil {
+		t.Fatalf("could not decode source metadata: %v", err)
+	}
+	if sourceMeta["branch"] != "staging" {
+		t.Fatalf("expected branch staging, got %#v", sourceMeta["branch"])
+	}
+
+	listResp := performJSONRequest(t, app.mux, http.MethodGet, "/rooms", nil, hostToken)
+	assertStatus(t, listResp, http.StatusOK)
+
+	var rooms []roomJSON
+	decodeJSON(t, listResp, &rooms)
+
+	if len(rooms) != 1 {
+		t.Fatalf("expected exactly 1 room, got %d", len(rooms))
+	}
+	if rooms[0].ID != room.ID {
+		t.Fatalf("expected listed room id %q, got %q", room.ID, rooms[0].ID)
+	}
+
+	getResp := performJSONRequest(t, app.mux, http.MethodGet, "/rooms/"+room.ID, nil, hostToken)
+	assertStatus(t, getResp, http.StatusOK)
+
+	var fetched roomJSON
+	decodeJSON(t, getResp, &fetched)
+
+	if fetched.ID != room.ID {
+		t.Fatalf("expected fetched room id %q, got %q", room.ID, fetched.ID)
+	}
+}
+
+func TestRoomJoinInviteAndLaunchControlPlane(t *testing.T) {
+	app := setupTestApp(t)
+	resetTestDB(t, app.db)
+
+	host := mustRegisterUser(t, app, "host-local")
+	guestA := mustRegisterUser(t, app, "guest-a")
+	guestB := mustRegisterUser(t, app, "guest-b")
+	guestC := mustRegisterUser(t, app, "guest-c")
+	guestD := mustRegisterUser(t, app, "guest-d")
+
+	hostToken := host.Token
+	guestAToken := guestA.Token
+	guestBToken := guestB.Token
+	guestCToken := guestC.Token
+	guestDToken := guestD.Token
+
+	createRoomResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms", map[string]any{
+		"name":        "Local Workspace Demo",
+		"source_type": "local_workspace",
+		"source_metadata": map[string]any{
+			"kind": "local",
+		},
+	}, hostToken)
+	assertStatus(t, createRoomResp, http.StatusCreated)
+
+	var room roomJSON
+	decodeJSON(t, createRoomResp, &room)
+
+	forbiddenBeforeJoin := performJSONRequest(t, app.mux, http.MethodGet, "/rooms/"+room.ID, nil, guestAToken)
+	assertStatus(t, forbiddenBeforeJoin, http.StatusForbidden)
+
+	joinPrimaryResp := performJSONRequest(t, app.mux, http.MethodPost, "/join-code/resolve", map[string]any{
+		"code": room.PrimaryJoinCode,
+	}, guestAToken)
+	assertStatus(t, joinPrimaryResp, http.StatusOK)
+
+	var joinPrimary joinCodeResponseJSON
+	decodeJSON(t, joinPrimaryResp, &joinPrimary)
+
+	if joinPrimary.Room.ID != room.ID {
+		t.Fatalf("expected joined room id %q, got %q", room.ID, joinPrimary.Room.ID)
+	}
+	if joinPrimary.Membership.Role != "editor" {
+		t.Fatalf("expected editor role, got %q", joinPrimary.Membership.Role)
+	}
+	if !joinPrimary.Membership.Joined {
+		t.Fatalf("expected first join by primary code to report joined=true")
+	}
+
+	rejoinPrimaryResp := performJSONRequest(t, app.mux, http.MethodPost, "/join-code/resolve", map[string]any{
+		"code": room.PrimaryJoinCode,
+	}, guestAToken)
+	assertStatus(t, rejoinPrimaryResp, http.StatusOK)
+
+	var rejoinPrimary joinCodeResponseJSON
+	decodeJSON(t, rejoinPrimaryResp, &rejoinPrimary)
+
+	if rejoinPrimary.Membership.Joined {
+		t.Fatalf("expected second join by primary code to report joined=false")
+	}
+
+	getAfterJoinResp := performJSONRequest(t, app.mux, http.MethodGet, "/rooms/"+room.ID, nil, guestAToken)
+	assertStatus(t, getAfterJoinResp, http.StatusOK)
+
+	nonHostListInvitesResp := performJSONRequest(t, app.mux, http.MethodGet, "/rooms/"+room.ID+"/invites", nil, guestAToken)
+	assertStatus(t, nonHostListInvitesResp, http.StatusForbidden)
+
+	createInviteResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms/"+room.ID+"/invites", map[string]any{
+		"expires_in_hours": 24,
+		"max_uses":         1,
+	}, hostToken)
+	assertStatus(t, createInviteResp, http.StatusCreated)
+
+	var invite inviteJSON
+	decodeJSON(t, createInviteResp, &invite)
+
+	if invite.ID == "" || invite.Code == "" {
+		t.Fatalf("expected invite id and code to be non-empty")
+	}
+	if invite.MaxUses == nil || *invite.MaxUses != 1 {
+		t.Fatalf("expected invite max_uses=1")
+	}
+
+	listInvitesResp := performJSONRequest(t, app.mux, http.MethodGet, "/rooms/"+room.ID+"/invites", nil, hostToken)
+	assertStatus(t, listInvitesResp, http.StatusOK)
+
+	var invites []inviteJSON
+	decodeJSON(t, listInvitesResp, &invites)
+
+	if len(invites) != 1 {
+		t.Fatalf("expected 1 invite, got %d", len(invites))
+	}
+	if invites[0].Code != invite.Code {
+		t.Fatalf("expected invite code %q, got %q", invite.Code, invites[0].Code)
+	}
+
+	guestBJoinInviteResp := performJSONRequest(t, app.mux, http.MethodPost, "/join-code/resolve", map[string]any{
+		"code": invite.Code,
+	}, guestBToken)
+	assertStatus(t, guestBJoinInviteResp, http.StatusOK)
+
+	var joinInvite joinCodeResponseJSON
+	decodeJSON(t, guestBJoinInviteResp, &joinInvite)
+
+	if !joinInvite.Membership.Joined {
+		t.Fatalf("expected invite join to report joined=true")
+	}
+	if joinInvite.Membership.Role != "editor" {
+		t.Fatalf("expected invite join role editor, got %q", joinInvite.Membership.Role)
+	}
+
+	listInvitesAfterUseResp := performJSONRequest(t, app.mux, http.MethodGet, "/rooms/"+room.ID+"/invites", nil, hostToken)
+	assertStatus(t, listInvitesAfterUseResp, http.StatusOK)
+
+	var invitesAfterUse []inviteJSON
+	decodeJSON(t, listInvitesAfterUseResp, &invitesAfterUse)
+
+	if len(invitesAfterUse) != 1 {
+		t.Fatalf("expected 1 invite after use, got %d", len(invitesAfterUse))
+	}
+	if invitesAfterUse[0].UsesCount != 1 {
+		t.Fatalf("expected uses_count=1, got %d", invitesAfterUse[0].UsesCount)
+	}
+
+	guestCJoinInviteResp := performJSONRequest(t, app.mux, http.MethodPost, "/join-code/resolve", map[string]any{
+		"code": invite.Code,
+	}, guestCToken)
+	assertStatus(t, guestCJoinInviteResp, http.StatusGone)
+
+	revokeInviteResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms/"+room.ID+"/invites/"+invite.ID+"/revoke", nil, hostToken)
+	assertStatus(t, revokeInviteResp, http.StatusOK)
+
+	createRevokableInviteResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms/"+room.ID+"/invites", map[string]any{
+		"expires_in_hours": 24,
+	}, hostToken)
+	assertStatus(t, createRevokableInviteResp, http.StatusCreated)
+
+	var revokableInvite inviteJSON
+	decodeJSON(t, createRevokableInviteResp, &revokableInvite)
+
+	revokeSecondInviteResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms/"+room.ID+"/invites/"+revokableInvite.ID+"/revoke", nil, hostToken)
+	assertStatus(t, revokeSecondInviteResp, http.StatusOK)
+
+	guestDJoinRevokedResp := performJSONRequest(t, app.mux, http.MethodPost, "/join-code/resolve", map[string]any{
+		"code": revokableInvite.Code,
+	}, guestDToken)
+	assertStatus(t, guestDJoinRevokedResp, http.StatusGone)
+
+	invalidInviteConfigResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms/"+room.ID+"/invites", map[string]any{
+		"expires_in_hours": 0,
+	}, hostToken)
+	assertStatus(t, invalidInviteConfigResp, http.StatusBadRequest)
+
+	hostLaunchResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms/"+room.ID+"/open-in-vscode", nil, hostToken)
+	assertStatus(t, hostLaunchResp, http.StatusOK)
+
+	var hostLaunch launchTokenJSON
+	decodeJSON(t, hostLaunchResp, &hostLaunch)
+
+	if hostLaunch.LaunchToken == "" {
+		t.Fatalf("expected host launch token to be non-empty")
+	}
+	if !strings.HasPrefix(hostLaunch.DeepLink, "vscode://jerryjuche.codedock/launch?token=") {
+		t.Fatalf("unexpected deep link: %q", hostLaunch.DeepLink)
+	}
+
+	exchangeHostResp := performJSONRequest(t, app.mux, http.MethodPost, "/vscode/launch/exchange", map[string]any{
+		"launch_token": hostLaunch.LaunchToken,
+	}, "")
+	assertStatus(t, exchangeHostResp, http.StatusOK)
+
+	var hostLaunchCtx launchContextJSON
+	decodeJSON(t, exchangeHostResp, &hostLaunchCtx)
+
+	if hostLaunchCtx.RoomID != room.ID {
+		t.Fatalf("expected exchanged room id %q, got %q", room.ID, hostLaunchCtx.RoomID)
+	}
+	if hostLaunchCtx.Role != "host" {
+		t.Fatalf("expected host launch role host, got %q", hostLaunchCtx.Role)
+	}
+	if !strings.Contains(hostLaunchCtx.WorkspacePathHint, room.Slug) {
+		t.Fatalf("expected workspace path hint to contain slug %q, got %q", room.Slug, hostLaunchCtx.WorkspacePathHint)
+	}
+
+	reuseHostLaunchResp := performJSONRequest(t, app.mux, http.MethodPost, "/vscode/launch/exchange", map[string]any{
+		"launch_token": hostLaunch.LaunchToken,
+	}, "")
+	assertStatus(t, reuseHostLaunchResp, http.StatusUnauthorized)
+
+	guestLaunchResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms/"+room.ID+"/open-in-vscode", nil, guestAToken)
+	assertStatus(t, guestLaunchResp, http.StatusOK)
+
+	var guestLaunch launchTokenJSON
+	decodeJSON(t, guestLaunchResp, &guestLaunch)
+
+	exchangeGuestResp := performJSONRequest(t, app.mux, http.MethodPost, "/vscode/launch/exchange", map[string]any{
+		"launch_token": guestLaunch.LaunchToken,
+	}, "")
+	assertStatus(t, exchangeGuestResp, http.StatusOK)
+
+	var guestLaunchCtx launchContextJSON
+	decodeJSON(t, exchangeGuestResp, &guestLaunchCtx)
+
+	if guestLaunchCtx.Role != "editor" {
+		t.Fatalf("expected guest launch role editor, got %q", guestLaunchCtx.Role)
+	}
+
+	invalidLaunchResp := performJSONRequest(t, app.mux, http.MethodPost, "/vscode/launch/exchange", map[string]any{
+		"launch_token": "not-a-real-token",
+	}, "")
+	assertStatus(t, invalidLaunchResp, http.StatusUnauthorized)
+
+	expiredToken := "expired-launch-token"
+	expiredHash := hashLaunchTokenForTest(expiredToken)
+
+	_, err := app.db.Exec(`
+		INSERT INTO room_launch_tokens (
+			room_id,
+			user_id,
+			intended_role,
+			token_hash,
+			expires_at
+		)
+		VALUES ($1, $2, $3, $4, $5)
+	`, room.ID, guestAUserIDFromToken(t, guestAToken), "editor", expiredHash, time.Now().Add(-1*time.Minute))
+	if err != nil {
+		t.Fatalf("could not insert expired launch token: %v", err)
+	}
+
+	expiredLaunchResp := performJSONRequest(t, app.mux, http.MethodPost, "/vscode/launch/exchange", map[string]any{
+		"launch_token": expiredToken,
+	}, "")
+	assertStatus(t, expiredLaunchResp, http.StatusGone)
 }
 
 func setupTestApp(t *testing.T) *testApp {
 	t.Helper()
 
+	realtimeHub := hub.New(nil)
+
 	app := &testApp{
 		db:          testDB,
-		mux:         http.NewServeMux(),
+		realtimeHub: realtimeHub,
 		authHandler: &AuthHandler{DB: testDB},
 		roomHandler: &RoomHandler{
 			Services: &services.RoomService{DB: testDB},
+			Hub:      realtimeHub,
+		},
+		inviteHandler: &InviteHandler{
+			Service: &services.InviteService{DB: testDB},
+		},
+		launchHandler: &LaunchHandler{
+			Service: &services.LaunchService{DB: testDB},
 		},
 	}
 
-	app.mux.HandleFunc("POST /auth/register", app.authHandler.Register)
-	app.mux.HandleFunc("POST /auth/login", app.authHandler.Login)
-	app.mux.HandleFunc("POST /auth/exchange", app.authHandler.ExchangeCode)
-	app.mux.Handle("POST /rooms", auth.RequireAuth(http.HandlerFunc(app.roomHandler.CreateRoom)))
-	app.mux.Handle("GET /rooms", auth.RequireAuth(http.HandlerFunc(app.roomHandler.GetUserRooms)))
-	app.mux.Handle("GET /rooms/{id}", auth.RequireAuth(http.HandlerFunc(app.roomHandler.GetRoom)))
+	mux := http.NewServeMux()
 
+	mux.HandleFunc("POST /auth/register", app.authHandler.Register)
+	mux.HandleFunc("POST /auth/login", app.authHandler.Login)
+	mux.HandleFunc("POST /auth/exchange", app.authHandler.ExchangeCode)
+
+	mux.Handle("POST /rooms", auth.RequireAuth(http.HandlerFunc(app.roomHandler.CreateRoom)))
+	mux.Handle("GET /rooms", auth.RequireAuth(http.HandlerFunc(app.roomHandler.GetUserRooms)))
+	mux.Handle("GET /rooms/{roomId}", auth.RequireAuth(http.HandlerFunc(app.roomHandler.GetRoom)))
+	mux.Handle("GET /rooms/{roomId}/details", auth.RequireAuth(http.HandlerFunc(app.roomHandler.GetRoomDetails)))
+	mux.Handle("GET /rooms/{roomId}/presence", auth.RequireAuth(http.HandlerFunc(app.roomHandler.GetRoomPresence)))
+	mux.Handle("POST /rooms/{roomId}/source/local/bind", auth.RequireAuth(http.HandlerFunc(app.roomHandler.BindLocalWorkspace)))
+	mux.Handle("DELETE /rooms/{roomId}", auth.RequireAuth(http.HandlerFunc(app.roomHandler.DeleteRoom)))
+
+	mux.Handle("GET /auth/me", auth.RequireAuth(http.HandlerFunc(app.authHandler.Me)))
+
+	mux.Handle("POST /join-code/resolve", auth.RequireAuth(http.HandlerFunc(app.inviteHandler.ResolveJoinCode)))
+	mux.Handle("GET /rooms/{roomId}/invites", auth.RequireAuth(http.HandlerFunc(app.inviteHandler.ListRoomInvites)))
+	mux.Handle("POST /rooms/{roomId}/invites", auth.RequireAuth(http.HandlerFunc(app.inviteHandler.CreateRoomInvite)))
+	mux.Handle("POST /rooms/{roomId}/invites/{inviteId}/revoke", auth.RequireAuth(http.HandlerFunc(app.inviteHandler.RevokeRoomInvite)))
+
+	mux.Handle("POST /rooms/{roomId}/open-in-vscode", auth.RequireAuth(http.HandlerFunc(app.launchHandler.OpenInVSCode)))
+	mux.HandleFunc("POST /vscode/launch/exchange", app.launchHandler.ExchangeLaunchToken)
+
+	app.mux = mux
 	return app
 }
 
-func cleanTestDB(t *testing.T, db *sql.DB) {
+func performJSONRequest(
+	t *testing.T,
+	mux *http.ServeMux,
+	method string,
+	path string,
+	body any,
+	token string,
+) *httptest.ResponseRecorder {
 	t.Helper()
-	tables := []string{
+
+	var reqBody []byte
+	var err error
+
+	if body != nil {
+		reqBody, err = json.Marshal(body)
+		if err != nil {
+			t.Fatalf("could not marshal request body: %v", err)
+		}
+	} else {
+		reqBody = []byte{}
+	}
+
+	req := httptest.NewRequest(method, path, bytes.NewReader(reqBody))
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+	return rr
+}
+
+func decodeJSON[T any](t *testing.T, rr *httptest.ResponseRecorder, out *T) {
+	t.Helper()
+
+	if err := json.NewDecoder(rr.Body).Decode(out); err != nil {
+		t.Fatalf("could not decode response JSON: %v\nbody=%s", err, rr.Body.String())
+	}
+}
+
+func assertStatus(t *testing.T, rr *httptest.ResponseRecorder, expected int) {
+	t.Helper()
+	if rr.Code != expected {
+		t.Fatalf("expected status %d, got %d, body=%s", expected, rr.Code, rr.Body.String())
+	}
+}
+
+func mustRegisterUser(t *testing.T, app *testApp, prefix string) authJSON {
+	t.Helper()
+
+	email := uniqueEmail(prefix)
+	password := "strong-password-123"
+
+	rr := performJSONRequest(t, app.mux, http.MethodPost, "/auth/register", map[string]any{
+		"email":    email,
+		"password": password,
+	}, "")
+	assertStatus(t, rr, http.StatusCreated)
+
+	var response authJSON
+	decodeJSON(t, rr, &response)
+
+	if response.Token == "" {
+		t.Fatalf("expected token for registered user %q", email)
+	}
+	return response
+}
+
+func guestAUserIDFromToken(t *testing.T, token string) string {
+	t.Helper()
+
+	claims, err := auth.VerifyToken(token)
+	if err != nil {
+		t.Fatalf("could not verify token for test: %v", err)
+	}
+	return claims.UserID
+}
+
+func uniqueEmail(prefix string) string {
+	return fmt.Sprintf("%s-%d@example.com", prefix, time.Now().UnixNano())
+}
+
+func hashLaunchTokenForTest(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+func loadEnv() {
+	candidates := []string{
+		".env",
+		filepath.Join("..", "..", ".env"),
+		filepath.Join("..", "..", "..", ".env"),
+	}
+
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			_ = godotenv.Overload(candidate)
+			return
+		}
+	}
+}
+
+func getEnvOrDefault(key, fallback string) string {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func applyPhase1Migration(db *sql.DB) error {
+	candidates := []string{
+		filepath.Join("..", "..", "migration", "0002_phase1_control_plane.sql"),
+		filepath.Join("migration", "0002_phase1_control_plane.sql"),
+	}
+
+	var migrationPath string
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			migrationPath = candidate
+			break
+		}
+	}
+	if migrationPath == "" {
+		return fmt.Errorf("phase1 migration file not found")
+	}
+
+	sqlBytes, err := os.ReadFile(migrationPath)
+	if err != nil {
+		return err
+	}
+
+	if strings.TrimSpace(string(sqlBytes)) == "" {
+		return fmt.Errorf("phase1 migration file is empty")
+	}
+
+	_, err = db.Exec(string(sqlBytes))
+	return err
+}
+
+func resetTestDB(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	tableCandidates := []string{
+		"room_launch_tokens",
+		"room_invite_tokens",
 		"invite_tokens",
 		"room_members",
 		"snapshots",
 		"rooms",
 		"users",
 	}
-	for _, table := range tables {
-		if _, err := db.Exec("DELETE FROM " + table); err != nil {
-			t.Fatalf("failed to clean table %s: %v", table, err)
+
+	existingTables := make([]string, 0, len(tableCandidates))
+	for _, tableName := range tableCandidates {
+		var exists bool
+		if err := db.QueryRow(`
+			SELECT EXISTS (
+				SELECT 1
+				FROM information_schema.tables
+				WHERE table_schema = 'public'
+				  AND table_name = $1
+			)
+		`, tableName).Scan(&exists); err != nil {
+			t.Fatalf("could not determine if table %q exists: %v", tableName, err)
+		}
+		if exists {
+			existingTables = append(existingTables, tableName)
 		}
 	}
+
+	if len(existingTables) == 0 {
+		t.Fatalf("no tables found to reset")
+	}
+
+	query := "TRUNCATE TABLE " + strings.Join(existingTables, ", ") + " RESTART IDENTITY CASCADE"
+	if _, err := db.Exec(query); err != nil {
+		t.Fatalf("could not reset test database: %v", err)
+	}
 }
 
-func (app *testApp) postJSON(t *testing.T, path string, body interface{}, token string) *httptest.ResponseRecorder {
-	t.Helper()
-	b, err := json.Marshal(body)
-	if err != nil {
-		t.Fatalf("could not marshal request body: %v", err)
-	}
-	req := httptest.NewRequest("POST", path, bytes.NewReader(b))
-	req.Header.Set("Content-Type", "application/json")
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	rr := httptest.NewRecorder()
-	app.mux.ServeHTTP(rr, req)
-	return rr
-}
-
-func (app *testApp) getJSON(t *testing.T, path string, token string) *httptest.ResponseRecorder {
-	t.Helper()
-	req := httptest.NewRequest("GET", path, nil)
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-	rr := httptest.NewRecorder()
-	app.mux.ServeHTTP(rr, req)
-	return rr
-}
-
-func (app *testApp) registerAndLogin(t *testing.T, email, password string) string {
-	t.Helper()
-	rr := app.postJSON(t, "/auth/register", map[string]string{
-		"email":    email,
-		"password": password,
-	}, "")
-	if rr.Code != http.StatusCreated {
-		t.Fatalf("registerAndLogin: expected 201, got %d — body: %s", rr.Code, rr.Body.String())
-	}
-	var resp map[string]string
-	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
-		t.Fatalf("registerAndLogin: could not decode response: %v", err)
-	}
-	return resp["token"]
-}
-
-func TestRegister_Success(t *testing.T) {
+func TestAuthMe_ReturnsCurrentUser(t *testing.T) {
 	app := setupTestApp(t)
-	cleanTestDB(t, app.db)
+	resetTestDB(t, app.db)
 
-	rr := app.postJSON(t, "/auth/register", map[string]string{
-		"email":    "alice@codedock.com",
-		"password": "strongpassword",
-	}, "")
+	user := mustRegisterUser(t, app, "auth-me")
+	token := user.Token
 
-	if rr.Code != http.StatusCreated {
-		t.Fatalf("expected 201 Created, got %d — body: %s", rr.Code, rr.Body.String())
+	rr := performJSONRequest(t, app.mux, http.MethodGet, "/auth/me", nil, token)
+	assertStatus(t, rr, http.StatusOK)
+
+	var me struct {
+		ID    string `json:"id"`
+		Email string `json:"email"`
 	}
+	decodeJSON(t, rr, &me)
 
-	var resp map[string]string
-	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
-		t.Fatalf("could not decode register response: %v", err)
+	if me.ID == "" {
+		t.Fatal("expected auth/me id to be non-empty")
 	}
-	if resp["token"] == "" {
-		t.Error("expected token in response, got empty string")
-	}
-	if resp["email"] != "alice@codedock.com" {
-		t.Errorf("expected email alice@codedock.com, got %s", resp["email"])
-	}
-}
-
-func TestRegister_DuplicateEmail(t *testing.T) {
-	app := setupTestApp(t)
-	cleanTestDB(t, app.db)
-
-	body := map[string]string{
-		"email":    "dup@codedock.com",
-		"password": "password",
-	}
-
-	first := app.postJSON(t, "/auth/register", body, "")
-	if first.Code != http.StatusCreated {
-		t.Fatalf("expected first registration to succeed, got %d — body: %s", first.Code, first.Body.String())
-	}
-
-	rr := app.postJSON(t, "/auth/register", body, "")
-	if rr.Code != http.StatusConflict {
-		t.Fatalf("expected 409 for duplicate email, got %d — body: %s", rr.Code, rr.Body.String())
+	if me.Email == "" {
+		t.Fatal("expected auth/me email to be non-empty")
 	}
 }
 
-func TestRegister_MissingFields(t *testing.T) {
+func TestGetRoomDetails_ReturnsMembershipAndSourceState(t *testing.T) {
 	app := setupTestApp(t)
-	cleanTestDB(t, app.db)
+	resetTestDB(t, app.db)
 
-	rr := app.postJSON(t, "/auth/register", map[string]string{
-		"email": "nopw@codedock.com",
-	}, "")
+	host := mustRegisterUser(t, app, "room-details-host")
+	guest := mustRegisterUser(t, app, "room-details-guest")
 
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for missing password, got %d — body: %s", rr.Code, rr.Body.String())
+	createResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms", map[string]any{
+		"name":        "Frontend Revamp",
+		"source_type": "github_repo",
+		"source_metadata": map[string]any{
+			"repo_owner": "jerryjuche",
+			"repo_name":  "CodeDock",
+			"branch":     "staging",
+		},
+	}, host.Token)
+	assertStatus(t, createResp, http.StatusCreated)
+
+	var room roomJSON
+	decodeJSON(t, createResp, &room)
+
+	joinResp := performJSONRequest(t, app.mux, http.MethodPost, "/join-code/resolve", map[string]any{
+		"code": room.PrimaryJoinCode,
+	}, guest.Token)
+	assertStatus(t, joinResp, http.StatusOK)
+
+	detailsResp := performJSONRequest(t, app.mux, http.MethodGet, "/rooms/"+room.ID+"/details", nil, guest.Token)
+	assertStatus(t, detailsResp, http.StatusOK)
+
+	var details struct {
+		Room struct {
+			ID         string `json:"id"`
+			SourceType string `json:"source_type"`
+		} `json:"room"`
+		Membership struct {
+			Role string `json:"role"`
+		} `json:"membership"`
+		SourceState struct {
+			Type      string `json:"type"`
+			Ready     bool   `json:"ready"`
+			Status    string `json:"status"`
+			RepoOwner string `json:"repo_owner"`
+			RepoName  string `json:"repo_name"`
+			Branch    string `json:"branch"`
+		} `json:"source_state"`
+	}
+	decodeJSON(t, detailsResp, &details)
+
+	if details.Room.ID != room.ID {
+		t.Fatalf("expected room id %q, got %q", room.ID, details.Room.ID)
+	}
+	if details.Membership.Role != "editor" {
+		t.Fatalf("expected membership role editor, got %q", details.Membership.Role)
+	}
+	if details.SourceState.Type != services.SourceTypeGitHubRepo {
+		t.Fatalf("expected source_state type %q, got %q", services.SourceTypeGitHubRepo, details.SourceState.Type)
+	}
+	if !details.SourceState.Ready {
+		t.Fatal("expected github source_state ready=true")
+	}
+	if details.SourceState.RepoOwner != "jerryjuche" {
+		t.Fatalf("expected repo_owner jerryjuche, got %q", details.SourceState.RepoOwner)
+	}
+	if details.SourceState.RepoName != "CodeDock" {
+		t.Fatalf("expected repo_name CodeDock, got %q", details.SourceState.RepoName)
+	}
+	if details.SourceState.Branch != "staging" {
+		t.Fatalf("expected branch staging, got %q", details.SourceState.Branch)
 	}
 }
 
-func TestLogin_Success(t *testing.T) {
+func TestDeleteRoom_HostOnlySoftDelete(t *testing.T) {
 	app := setupTestApp(t)
-	cleanTestDB(t, app.db)
+	resetTestDB(t, app.db)
 
-	app.postJSON(t, "/auth/register", map[string]string{
-		"email":    "bob@codedock.com",
-		"password": "mypassword",
-	}, "")
+	host := mustRegisterUser(t, app, "delete-room-host")
+	guest := mustRegisterUser(t, app, "delete-room-guest")
 
-	rr := app.postJSON(t, "/auth/login", map[string]string{
-		"email":    "bob@codedock.com",
-		"password": "mypassword",
-	}, "")
+	createResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms", map[string]any{
+		"name":        "Delete Me",
+		"source_type": "local_workspace",
+	}, host.Token)
+	assertStatus(t, createResp, http.StatusCreated)
 
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200 OK, got %d — body: %s", rr.Code, rr.Body.String())
-	}
+	var room roomJSON
+	decodeJSON(t, createResp, &room)
 
-	var resp map[string]string
-	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
-		t.Fatalf("could not decode login response: %v", err)
-	}
-	if resp["token"] == "" {
-		t.Error("expected token in login response")
-	}
-}
+	joinResp := performJSONRequest(t, app.mux, http.MethodPost, "/join-code/resolve", map[string]any{
+		"code": room.PrimaryJoinCode,
+	}, guest.Token)
+	assertStatus(t, joinResp, http.StatusOK)
 
-func TestLogin_WrongPassword(t *testing.T) {
-	app := setupTestApp(t)
-	cleanTestDB(t, app.db)
+	guestDeleteResp := performJSONRequest(t, app.mux, http.MethodDelete, "/rooms/"+room.ID, nil, guest.Token)
+	assertStatus(t, guestDeleteResp, http.StatusForbidden)
 
-	app.postJSON(t, "/auth/register", map[string]string{
-		"email":    "carol@codedock.com",
-		"password": "correctpassword",
-	}, "")
+	hostDeleteResp := performJSONRequest(t, app.mux, http.MethodDelete, "/rooms/"+room.ID, nil, host.Token)
+	assertStatus(t, hostDeleteResp, http.StatusOK)
 
-	rr := app.postJSON(t, "/auth/login", map[string]string{
-		"email":    "carol@codedock.com",
-		"password": "wrongpassword",
-	}, "")
+	listResp := performJSONRequest(t, app.mux, http.MethodGet, "/rooms", nil, host.Token)
+	assertStatus(t, listResp, http.StatusOK)
 
-	if rr.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401 for wrong password, got %d — body: %s", rr.Code, rr.Body.String())
-	}
-}
+	var rooms []roomJSON
+	decodeJSON(t, listResp, &rooms)
 
-func TestLogin_UnknownEmail(t *testing.T) {
-	app := setupTestApp(t)
-	cleanTestDB(t, app.db)
-
-	rr := app.postJSON(t, "/auth/login", map[string]string{
-		"email":    "ghost@codedock.com",
-		"password": "anything",
-	}, "")
-
-	if rr.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401 for unknown email, got %d — body: %s", rr.Code, rr.Body.String())
-	}
-}
-
-func TestProtectedRoute_NoToken(t *testing.T) {
-	app := setupTestApp(t)
-	cleanTestDB(t, app.db)
-
-	rr := app.getJSON(t, "/rooms", "")
-	if rr.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401 for missing token, got %d — body: %s", rr.Code, rr.Body.String())
-	}
-}
-
-func TestProtectedRoute_InvalidToken(t *testing.T) {
-	app := setupTestApp(t)
-	cleanTestDB(t, app.db)
-
-	rr := app.getJSON(t, "/rooms", "this.is.not.a.valid.jwt")
-	if rr.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401 for invalid token, got %d — body: %s", rr.Code, rr.Body.String())
-	}
-}
-
-func TestCreateRoom_Success(t *testing.T) {
-	app := setupTestApp(t)
-	cleanTestDB(t, app.db)
-
-	token := app.registerAndLogin(t, "dave@codedock.com", "password123")
-
-	rr := app.postJSON(t, "/rooms", map[string]string{
-		"name": "Backend Sprint",
-	}, token)
-
-	if rr.Code != http.StatusCreated {
-		t.Fatalf("expected 201 Created, got %d — body: %s", rr.Code, rr.Body.String())
-	}
-
-	var room map[string]interface{}
-	if err := json.NewDecoder(rr.Body).Decode(&room); err != nil {
-		t.Fatalf("could not decode room response: %v", err)
-	}
-	if room["id"] == nil || room["id"] == "" {
-		t.Error("expected room ID in response")
-	}
-	if room["name"] != "Backend Sprint" {
-		t.Errorf("expected room name 'Backend Sprint', got %v", room["name"])
-	}
-}
-
-func TestCreateRoom_EmptyName(t *testing.T) {
-	app := setupTestApp(t)
-	cleanTestDB(t, app.db)
-
-	token := app.registerAndLogin(t, "eve@codedock.com", "password123")
-
-	rr := app.postJSON(t, "/rooms", map[string]string{
-		"name": "",
-	}, token)
-
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for empty room name, got %d — body: %s", rr.Code, rr.Body.String())
-	}
-}
-
-func TestCreateRoom_NoAuth(t *testing.T) {
-	app := setupTestApp(t)
-	cleanTestDB(t, app.db)
-
-	rr := app.postJSON(t, "/rooms", map[string]string{
-		"name": "Secret Room",
-	}, "")
-
-	if rr.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401 for unauthenticated room creation, got %d — body: %s", rr.Code, rr.Body.String())
-	}
-}
-
-func TestGetRoom_Success(t *testing.T) {
-	app := setupTestApp(t)
-	cleanTestDB(t, app.db)
-
-	token := app.registerAndLogin(t, "frank@codedock.com", "password123")
-
-	createRR := app.postJSON(t, "/rooms", map[string]string{
-		"name": "Design Review",
-	}, token)
-	if createRR.Code != http.StatusCreated {
-		t.Fatalf("expected room creation to succeed, got %d — body: %s", createRR.Code, createRR.Body.String())
-	}
-
-	var created map[string]interface{}
-	if err := json.NewDecoder(createRR.Body).Decode(&created); err != nil {
-		t.Fatalf("could not decode created room: %v", err)
-	}
-	roomID := created["id"].(string)
-
-	rr := app.getJSON(t, "/rooms/"+roomID, token)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200 OK, got %d — body: %s", rr.Code, rr.Body.String())
-	}
-
-	var room map[string]interface{}
-	if err := json.NewDecoder(rr.Body).Decode(&room); err != nil {
-		t.Fatalf("could not decode room response: %v", err)
-	}
-	if room["id"] != roomID {
-		t.Errorf("expected room ID %s, got %v", roomID, room["id"])
-	}
-}
-
-func TestGetRoom_NotFound(t *testing.T) {
-	app := setupTestApp(t)
-	cleanTestDB(t, app.db)
-
-	token := app.registerAndLogin(t, "grace@codedock.com", "password123")
-
-	rr := app.getJSON(t, "/rooms/00000000-0000-0000-0000-000000000000", token)
-	if rr.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 for non-existent room, got %d — body: %s", rr.Code, rr.Body.String())
-	}
-}
-
-func TestGetUserRooms_Success(t *testing.T) {
-	app := setupTestApp(t)
-	cleanTestDB(t, app.db)
-
-	token := app.registerAndLogin(t, "henry@codedock.com", "password123")
-
-	first := app.postJSON(t, "/rooms", map[string]string{"name": "Room One"}, token)
-	if first.Code != http.StatusCreated {
-		t.Fatalf("expected first room creation to succeed, got %d — body: %s", first.Code, first.Body.String())
-	}
-
-	second := app.postJSON(t, "/rooms", map[string]string{"name": "Room Two"}, token)
-	if second.Code != http.StatusCreated {
-		t.Fatalf("expected second room creation to succeed, got %d — body: %s", second.Code, second.Body.String())
-	}
-
-	rr := app.getJSON(t, "/rooms", token)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200 OK, got %d — body: %s", rr.Code, rr.Body.String())
-	}
-
-	var rooms []map[string]interface{}
-	if err := json.NewDecoder(rr.Body).Decode(&rooms); err != nil {
-		t.Fatalf("could not decode rooms response: %v", err)
-	}
-	if len(rooms) != 2 {
-		t.Errorf("expected 2 rooms, got %d", len(rooms))
-	}
-}
-
-func TestGetUserRooms_Empty(t *testing.T) {
-	app := setupTestApp(t)
-	cleanTestDB(t, app.db)
-
-	token := app.registerAndLogin(t, "iris@codedock.com", "password123")
-
-	rr := app.getJSON(t, "/rooms", token)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("expected 200 OK even with no rooms, got %d — body: %s", rr.Code, rr.Body.String())
-	}
-
-	var rooms []map[string]interface{}
-	if err := json.NewDecoder(rr.Body).Decode(&rooms); err != nil {
-		t.Fatalf("could not decode rooms response: %v", err)
-	}
-	if rooms == nil {
-		t.Error("expected empty array [], got null")
-	}
 	if len(rooms) != 0 {
-		t.Errorf("expected 0 rooms, got %d", len(rooms))
+		t.Fatalf("expected 0 active rooms after delete, got %d", len(rooms))
 	}
 }
 
-func TestExchangeCode_InvalidCode(t *testing.T) {
+func TestGetRoomPresence_ReturnsConnectedMembers(t *testing.T) {
 	app := setupTestApp(t)
-	cleanTestDB(t, app.db)
+	resetTestDB(t, app.db)
 
-	rr := app.postJSON(t, "/auth/exchange", map[string]string{
-		"code": "nonexistent-code",
-	}, "")
+	host := mustRegisterUser(t, app, "presence-host")
+	guest := mustRegisterUser(t, app, "presence-guest")
 
-	if rr.Code != http.StatusGone {
-		t.Fatalf("expected 410 Gone for invalid code, got %d — body: %s", rr.Code, rr.Body.String())
+	createResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms", map[string]any{
+		"name":        "Presence Room",
+		"source_type": "local_workspace",
+	}, host.Token)
+	assertStatus(t, createResp, http.StatusCreated)
+
+	var room roomJSON
+	decodeJSON(t, createResp, &room)
+
+	joinResp := performJSONRequest(t, app.mux, http.MethodPost, "/join-code/resolve", map[string]any{
+		"code": room.PrimaryJoinCode,
+	}, guest.Token)
+	assertStatus(t, joinResp, http.StatusOK)
+
+	hostUserID := guestAUserIDFromToken(t, host.Token)
+	guestUserID := guestAUserIDFromToken(t, guest.Token)
+
+	app.realtimeHub.Register(&hub.Client{
+		Send:   make(chan []byte, 1),
+		RoomID: room.ID,
+		UserID: hostUserID,
+	})
+	app.realtimeHub.Register(&hub.Client{
+		Send:   make(chan []byte, 1),
+		RoomID: room.ID,
+		UserID: guestUserID,
+	})
+
+	presenceResp := performJSONRequest(t, app.mux, http.MethodGet, "/rooms/"+room.ID+"/presence", nil, host.Token)
+	assertStatus(t, presenceResp, http.StatusOK)
+
+	var presence struct {
+		Members        []struct {
+			UserID    string `json:"user_id"`
+			Email     string `json:"email"`
+			Role      string `json:"role"`
+			Connected bool   `json:"connected"`
+		} `json:"members"`
+		ConnectedCount int `json:"connected_count"`
+		TotalMembers   int `json:"total_members"`
+	}
+	decodeJSON(t, presenceResp, &presence)
+
+	if presence.TotalMembers != 2 {
+		t.Fatalf("expected total_members=2, got %d", presence.TotalMembers)
+	}
+	if presence.ConnectedCount != 2 {
+		t.Fatalf("expected connected_count=2, got %d", presence.ConnectedCount)
 	}
 }
 
-func TestExchangeCode_EmptyCode(t *testing.T) {
+func TestBindLocalWorkspace_UpdatesSourceState(t *testing.T) {
 	app := setupTestApp(t)
-	cleanTestDB(t, app.db)
+	resetTestDB(t, app.db)
 
-	rr := app.postJSON(t, "/auth/exchange", map[string]string{
-		"code": "",
-	}, "")
+	host := mustRegisterUser(t, app, "bind-host")
+	guest := mustRegisterUser(t, app, "bind-guest")
 
-	if rr.Code != http.StatusGone {
-		t.Fatalf("expected 410 Gone for empty code, got %d — body: %s", rr.Code, rr.Body.String())
+	createResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms", map[string]any{
+		"name":        "Local Room",
+		"source_type": "local_workspace",
+	}, host.Token)
+	assertStatus(t, createResp, http.StatusCreated)
+
+	var room roomJSON
+	decodeJSON(t, createResp, &room)
+
+	joinResp := performJSONRequest(t, app.mux, http.MethodPost, "/join-code/resolve", map[string]any{
+		"code": room.PrimaryJoinCode,
+	}, guest.Token)
+	assertStatus(t, joinResp, http.StatusOK)
+
+	beforeResp := performJSONRequest(t, app.mux, http.MethodGet, "/rooms/"+room.ID+"/details", nil, guest.Token)
+	assertStatus(t, beforeResp, http.StatusOK)
+
+	var beforeDetails struct {
+		SourceState struct {
+			Ready         bool   `json:"ready"`
+			HostBound     bool   `json:"host_bound"`
+			Status        string `json:"status"`
+			LaunchAllowed bool   `json:"launch_allowed"`
+		} `json:"source_state"`
 	}
-}
-func TestExchangeCode_MalformedJSON(t *testing.T) {
-	app := setupTestApp(t)
-	cleanTestDB(t, app.db)
+	decodeJSON(t, beforeResp, &beforeDetails)
 
-	req := httptest.NewRequest("POST", "/auth/exchange", bytes.NewBufferString("not valid json{{{"))
-	req.Header.Set("Content-Type", "application/json")
-	rr := httptest.NewRecorder()
-	app.mux.ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("expected 400 for malformed JSON, got %d — body: %s", rr.Code, rr.Body.String())
+	if beforeDetails.SourceState.Ready {
+		t.Fatal("expected room not ready before host binds workspace")
 	}
-}
-
-func TestExchangeCode_MissingCodeField(t *testing.T) {
-	app := setupTestApp(t)
-	cleanTestDB(t, app.db)
-
-	// valid JSON but no code field
-	rr := app.postJSON(t, "/auth/exchange", map[string]string{
-		"wrong_field": "somevalue",
-	}, "")
-
-	if rr.Code != http.StatusGone {
-		t.Errorf("expected 410 for missing code field, got %d — body: %s", rr.Code, rr.Body.String())
-	}
-}
-
-func TestExchangeCode_ValidCode(t *testing.T) {
-	app := setupTestApp(t)
-	cleanTestDB(t, app.db)
-
-	// step 1 — register a user to act as room creator
-	rr := app.postJSON(t, "/auth/register", map[string]string{
-		"email":    "inviter@codedock.com",
-		"password": "strongpassword",
-	}, "")
-	if rr.Code != http.StatusCreated {
-		t.Fatalf("expected 201 for register, got %d", rr.Code)
+	if beforeDetails.SourceState.LaunchAllowed {
+		t.Fatal("expected guest launch_allowed=false before host binds workspace")
 	}
 
-	var authResp map[string]string
-	if err := json.NewDecoder(rr.Body).Decode(&authResp); err != nil {
-		t.Fatalf("could not decode register response: %v", err)
-	}
-	token := authResp["token"]
+	bindResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms/"+room.ID+"/source/local/bind", map[string]any{
+		"workspace_label": "my-project",
+	}, host.Token)
+	assertStatus(t, bindResp, http.StatusOK)
 
-	// step 2 — create a room
-	roomRR := app.postJSON(t, "/rooms", map[string]string{
-		"name": "invite-test-room",
-	}, token)
-	if roomRR.Code != http.StatusCreated {
-		t.Fatalf("expected 201 for room creation, got %d — body: %s", roomRR.Code, roomRR.Body.String())
+	var boundDetails struct {
+		SourceState struct {
+			Ready          bool   `json:"ready"`
+			HostBound      bool   `json:"host_bound"`
+			Status         string `json:"status"`
+			LaunchAllowed  bool   `json:"launch_allowed"`
+			WorkspaceLabel string `json:"workspace_label"`
+		} `json:"source_state"`
 	}
+	decodeJSON(t, bindResp, &boundDetails)
 
-	var roomResp map[string]interface{}
-	if err := json.NewDecoder(roomRR.Body).Decode(&roomResp); err != nil {
-		t.Fatalf("could not decode room response: %v", err)
+	if !boundDetails.SourceState.Ready {
+		t.Fatal("expected room ready after bind")
 	}
-	roomID, ok := roomResp["id"].(string)
-	if !ok || roomID == "" {
-		t.Fatalf("expected room id in response, got %v", roomResp["id"])
+	if !boundDetails.SourceState.HostBound {
+		t.Fatal("expected host_bound=true after bind")
 	}
-
-	// step 3 — get the creator's user ID from the token
-	
-	claims, err := auth.VerifyToken(token)
-	
-	if err != nil {
-		t.Fatal("could not verify token to extract user ID")
+	if boundDetails.SourceState.Status != "ready" {
+		t.Fatalf("expected status=ready, got %q", boundDetails.SourceState.Status)
 	}
-
-	// step 4 — insert invite token directly into database
-	inviteCode := "test-valid-invite-code-001"
-	_, err = app.db.Exec(`
-		INSERT INTO invite_tokens (token, room_id, created_by, expires_at)
-		VALUES ($1, $2, $3, NOW() + INTERVAL '1 hour')
-	`, inviteCode, roomID, claims.UserID)
-	if err != nil {
-		t.Fatalf("failed to insert invite token: %v", err)
+	if !boundDetails.SourceState.LaunchAllowed {
+		t.Fatal("expected launch_allowed=true after bind")
 	}
-
-	// step 5 — exchange the code
-	exchangeRR := app.postJSON(t, "/auth/exchange", map[string]string{
-		"code": inviteCode,
-	}, "")
-
-	if exchangeRR.Code != http.StatusOK {
-		t.Fatalf("expected 200 for valid code exchange, got %d — body: %s", exchangeRR.Code, exchangeRR.Body.String())
-	}
-
-	var exchangeResp map[string]string
-	if err := json.NewDecoder(exchangeRR.Body).Decode(&exchangeResp); err != nil {
-		t.Fatalf("could not decode exchange response: %v", err)
-	}
-	if exchangeResp["token"] == "" {
-		t.Error("expected token in exchange response, got empty string")
-	}
-	if exchangeResp["room_id"] != roomID {
-		t.Errorf("expected room_id %s, got %s", roomID, exchangeResp["room_id"])
+	if boundDetails.SourceState.WorkspaceLabel != "my-project" {
+		t.Fatalf("expected workspace_label=my-project, got %q", boundDetails.SourceState.WorkspaceLabel)
 	}
 }

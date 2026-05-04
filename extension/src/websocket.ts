@@ -1,4 +1,9 @@
 import * as vscode from "vscode";
+import WebSocket, { RawData } from "ws";
+import {
+  clearTimeout as nodeClearTimeout,
+  setTimeout as nodeSetTimeout,
+} from "timers";
 
 export type ConnectionState =
   | "disconnected"
@@ -7,207 +12,410 @@ export type ConnectionState =
   | "reconnecting";
 
 type MessageHandler = (data: Uint8Array) => void;
+type CloseHandler = (code: number, reason: string) => void;
 
-const MAX_BACKOFF_MS = 30_000;
-const BASE_BACKOFF_MS = 1_000;
+const BASE_BACKOFF_MS = 1000;
+const MAX_BACKOFF_MS = 30000;
 
 export class WebSocketManager {
   private socket: WebSocket | null = null;
   private state: ConnectionState = "disconnected";
   private queue: Uint8Array[] = [];
-  private reconnectTimer: NodeJS.Timeout | null = null;
-  private attemptCount: number = 0;
-  private manualDisconnect: boolean = false;
+  private reconnectTimer: ReturnType<typeof nodeSetTimeout> | undefined;
+  private attemptCount = 0;
+  private manualDisconnect = false;
   private token: string | null = null;
   private roomId: string | null = null;
-  private messageHandler: MessageHandler | null = null;
+
+  private readonly messageHandlers = new Set<MessageHandler>();
+  private readonly closeHandlers = new Set<CloseHandler>();
 
   constructor(
     private readonly serverUrl: string,
     private readonly outputChannel: vscode.OutputChannel,
   ) {}
 
-  // --- Public API ---
+  onMessage(handler: MessageHandler): vscode.Disposable {
+    this.messageHandlers.add(handler);
+    this.outputChannel.appendLine(
+      `CodeDock[ws]: registered message handler (total=${this.messageHandlers.size})`,
+    );
 
-  onMessage(handler: MessageHandler): void {
-    this.messageHandler = handler;
+    return new vscode.Disposable(() => {
+      this.messageHandlers.delete(handler);
+      this.outputChannel.appendLine(
+        `CodeDock[ws]: removed message handler (total=${this.messageHandlers.size})`,
+      );
+    });
+  }
+
+  onClose(handler: CloseHandler): vscode.Disposable {
+    this.closeHandlers.add(handler);
+    this.outputChannel.appendLine(
+      `CodeDock[ws]: registered close handler (total=${this.closeHandlers.size})`,
+    );
+
+    return new vscode.Disposable(() => {
+      this.closeHandlers.delete(handler);
+      this.outputChannel.appendLine(
+        `CodeDock[ws]: removed close handler (total=${this.closeHandlers.size})`,
+      );
+    });
   }
 
   connect(token: string, roomId: string): void {
     if (!token || !roomId) {
       vscode.window.showErrorMessage(
-        "CodeDock: Cannot connect — missing credentials.",
+        "CodeDock: Cannot connect — missing token or room ID.",
       );
       return;
     }
 
     if (this.state === "connecting" || this.state === "connected") {
+      this.outputChannel.appendLine(
+        `CodeDock[ws]: connect skipped (state=${this.state}, room=${this.roomId ?? "none"})`,
+      );
       return;
+    }
+
+    if (this.reconnectTimer !== undefined) {
+      nodeClearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
     }
 
     this.token = token;
     this.roomId = roomId;
-    this.state = "connecting";
+    this.manualDisconnect = false;
+    this.state = this.attemptCount > 0 ? "reconnecting" : "connecting";
 
     const wsUrl =
       this.serverUrl
-        .replace("https://", "wss://")
-        .replace("http://", "ws://") +
-      `/ws?token=${token}&room_id=${roomId}`;
+        .replace(/^https:\/\//, "wss://")
+        .replace(/^http:\/\//, "ws://") +
+      `/ws?token=${encodeURIComponent(token)}&room_id=${encodeURIComponent(roomId)}`;
 
-    this.socket = new WebSocket(wsUrl);
+    this.outputChannel.appendLine(
+      `CodeDock[ws]: connecting (room=${roomId}, handlers=${this.messageHandlers.size})`,
+    );
+
+    try {
+      this.socket = new WebSocket(wsUrl);
+    } catch (error) {
+      this.outputChannel.appendLine(
+        `CodeDock[ws]: socket creation failed -> ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
+      this.state = "disconnected";
+      this.scheduleReconnect();
+      return;
+    }
+
     this.socket.binaryType = "arraybuffer";
 
-    this.socket.onopen    = () => this.handleOpen();
-    this.socket.onclose   = () => this.handleClose();
-    this.socket.onerror   = () => this.handleError();
-    this.socket.onmessage = (event) => this.handleMessage(event);
+    this.socket.on("open", () => this.handleOpen());
+
+    this.socket.on("message", (data: RawData) => {
+      this.handleMessage(data);
+    });
+
+    this.socket.on("error", (error: Error) => {
+      this.handleError(error);
+    });
+
+    this.socket.on("close", (code: number, reasonBuffer: Buffer) => {
+      const reason = reasonBuffer?.toString("utf8") ?? "";
+      this.handleClose(code, reason);
+    });
   }
 
   disconnect(reason: string = "user"): void {
-    // intentional — do not reconnect
     this.manualDisconnect = true;
-    if (this.reconnectTimer) {
-    clearTimeout(this.reconnectTimer)
-    this.reconnectTimer = null
-}
-    this.reconnectTimer = null;
-    this.socket?.close();
-    this.socket = null;
-    this.state = "disconnected";
-    this.outputChannel.appendLine(`CodeDock: Disconnected — ${reason}`);
-  }
 
-  send(message: Uint8Array): void {
-    if (this.state === "connected" && this.socket) {
-      this.socket.send(message);
-    } else {
-      // queue the message — flush on reconnect
-      this.queue.push(message);
-      this.outputChannel.appendLine(
-        `CodeDock: Queued message — ${this.queue.length} pending`,
-      );
+    if (this.reconnectTimer !== undefined) {
+      nodeClearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
     }
+
+    this.outputChannel.appendLine(
+      `CodeDock[ws]: disconnect requested (reason=${reason}, room=${this.roomId ?? "none"})`,
+    );
+
+    const socket = this.socket;
+    this.socket = null;
+
+    if (socket) {
+      try {
+        socket.close(1000, reason);
+      } catch {
+        // no-op
+      }
+    }
+
+    this.state = "disconnected";
+    this.queue = [];
+    this.token = null;
+    this.roomId = null;
+    this.attemptCount = 0;
   }
 
   dispose(): void {
     this.manualDisconnect = true;
-    if (this.reconnectTimer) {
-    clearTimeout(this.reconnectTimer)
-    this.reconnectTimer = null
-}
-    this.socket?.close();
+
+    if (this.reconnectTimer !== undefined) {
+      nodeClearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+
+    this.outputChannel.appendLine("CodeDock[ws]: dispose");
+
+    const socket = this.socket;
     this.socket = null;
+
+    if (socket) {
+      try {
+        socket.close(1000, "dispose");
+      } catch {
+        // no-op
+      }
+    }
+
     this.state = "disconnected";
+    this.queue = [];
+    this.token = null;
+    this.roomId = null;
+    this.attemptCount = 0;
+    this.messageHandlers.clear();
+    this.closeHandlers.clear();
   }
 
-  // --- Private Handlers ---
+  send(message: Uint8Array): void {
+    const messageType = message.length > 0 ? message[0] : -1;
+
+    if (
+      this.state === "connected" &&
+      this.socket &&
+      this.socket.readyState === WebSocket.OPEN
+    ) {
+      this.outputChannel.appendLine(
+        `CodeDock[ws]: send -> type=${messageType}, bytes=${message.length}, room=${this.roomId ?? "none"}`,
+      );
+      this.socket.send(Buffer.from(message));
+      return;
+    }
+
+    this.queue.push(message);
+    this.outputChannel.appendLine(
+      `CodeDock[ws]: queued -> type=${messageType}, bytes=${message.length}, pending=${this.queue.length}`,
+    );
+  }
+
+  getConnectionState(): ConnectionState {
+    return this.state;
+  }
+
+  getRoomId(): string | null {
+    return this.roomId;
+  }
 
   private handleOpen(): void {
     this.state = "connected";
     this.attemptCount = 0;
     this.manualDisconnect = false;
-    this.outputChannel.appendLine("CodeDock: WebSocket connected.");
-    vscode.window.showInformationMessage("CodeDock: Connected to room.");
+
+    if (this.reconnectTimer !== undefined) {
+      nodeClearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+
+    this.outputChannel.appendLine(
+      `CodeDock[ws]: connected (room=${this.roomId ?? "none"})`,
+    );
+
     this.flushQueue();
   }
 
-  private handleClose(): void {
+  private handleClose(code: number, reason: string): void {
     this.socket = null;
 
-    if (this.manualDisconnect) {
-      // intentional close — do nothing
+    if (this.reconnectTimer !== undefined) {
+      nodeClearTimeout(this.reconnectTimer);
+      this.reconnectTimer = undefined;
+    }
+
+    const normalizedReason = reason || "none";
+
+    this.outputChannel.appendLine(
+      `CodeDock[ws]: closed (code=${code}, reason=${normalizedReason}, manual=${this.manualDisconnect})`,
+    );
+
+    for (const handler of this.closeHandlers) {
+      try {
+        handler(code, reason);
+      } catch (error) {
+        this.outputChannel.appendLine(
+          `CodeDock[ws]: close handler failure -> ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
+      }
+    }
+
+    const terminal = this.isTerminalClose(code, reason);
+
+    if (this.manualDisconnect || terminal) {
       this.state = "disconnected";
+      this.manualDisconnect = true;
+      this.queue = [];
+      this.token = null;
+      this.roomId = null;
+      this.attemptCount = 0;
+
+      if (reason === "room_deleted" || code === 4004) {
+        vscode.window.showWarningMessage(
+          "CodeDock: This session has ended because the room was deleted.",
+        );
+      } else if (
+        reason === "forbidden" ||
+        reason === "room_unavailable" ||
+        code === 4003
+      ) {
+        vscode.window.showWarningMessage(
+          "CodeDock: This room is no longer available.",
+        );
+      }
+
       return;
     }
 
-    // unexpected close — attempt reconnect
     this.state = "reconnecting";
-    this.outputChannel.appendLine(
-      "CodeDock: Connection lost. Scheduling reconnect...",
-    );
+    this.outputChannel.appendLine("CodeDock[ws]: scheduling reconnect");
     this.scheduleReconnect();
   }
 
-  private handleError(): void {
-    // log safely — no token, no credentials
+  private handleError(error: Error): void {
     this.outputChannel.appendLine(
-      "CodeDock: WebSocket error encountered.",
+      `CodeDock[ws]: socket error -> ${error.message}`,
     );
   }
 
-  private handleMessage(event: MessageEvent): void {
-    if (!(event.data instanceof ArrayBuffer)) {
+  private handleMessage(rawData: RawData): void {
+    const data = this.rawDataToUint8Array(rawData);
+
+    if (!data) {
       this.outputChannel.appendLine(
-        "CodeDock: Received non-binary message — ignored.",
+        "CodeDock[ws]: inbound ignored (unsupported payload)",
       );
       return;
     }
-
-    const data = new Uint8Array(event.data);
 
     if (data.length === 0) {
-      this.outputChannel.appendLine(
-        "CodeDock: Received empty message — ignored.",
-      );
+      this.outputChannel.appendLine("CodeDock[ws]: inbound ignored (empty)");
       return;
     }
 
-    this.messageHandler?.(data);
+    this.outputChannel.appendLine(
+      `CodeDock[ws]: inbound <- type=${data[0]}, bytes=${data.length}, handlers=${this.messageHandlers.size}`,
+    );
+
+    for (const handler of this.messageHandlers) {
+      try {
+        handler(data);
+      } catch (error) {
+        this.outputChannel.appendLine(
+          `CodeDock[ws]: handler failure -> ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
+      }
+    }
   }
 
-  // --- Reconnection ---
+  private rawDataToUint8Array(rawData: RawData): Uint8Array | null {
+    if (Buffer.isBuffer(rawData)) {
+      return new Uint8Array(rawData);
+    }
+
+    if (rawData instanceof ArrayBuffer) {
+      return new Uint8Array(rawData);
+    }
+
+    if (Array.isArray(rawData)) {
+      const merged = Buffer.concat(rawData);
+      return new Uint8Array(merged);
+    }
+
+    return null;
+  }
 
   private scheduleReconnect(): void {
     if (!this.token || !this.roomId) {
       this.outputChannel.appendLine(
-        "CodeDock: Cannot reconnect — credentials missing.",
+        "CodeDock[ws]: reconnect aborted (missing token or room)",
       );
+      this.state = "disconnected";
       return;
     }
 
-    // clear any existing timer — never stack timers
-    if (this.reconnectTimer) {
-    clearTimeout(this.reconnectTimer)
-    this.reconnectTimer = null
-}
+    if (this.reconnectTimer !== undefined) {
+      nodeClearTimeout(this.reconnectTimer);
+    }
 
-    const base = Math.min(
+    const baseDelay = Math.min(
       BASE_BACKOFF_MS * Math.pow(2, this.attemptCount),
       MAX_BACKOFF_MS,
     );
-
-    // jitter — spread reconnect attempts across time
-    const delay = base + Math.random() * base;
+    const jitter = Math.floor(Math.random() * baseDelay);
+    const delay = baseDelay + jitter;
 
     this.outputChannel.appendLine(
-      `CodeDock: Reconnecting in ${Math.round(delay)}ms ` +
-      `(attempt ${this.attemptCount + 1})`,
+      `CodeDock[ws]: reconnect in ${delay}ms (attempt=${this.attemptCount + 1})`,
     );
 
-    this.reconnectTimer = setTimeout(() => {
-      this.attemptCount++;
-      this.connect(this.token!, this.roomId!);
+    this.reconnectTimer = nodeSetTimeout(() => {
+      this.reconnectTimer = undefined;
+      this.attemptCount += 1;
+
+      const token = this.token;
+      const roomId = this.roomId;
+
+      if (!token || !roomId) {
+        this.outputChannel.appendLine(
+          "CodeDock[ws]: reconnect cancelled (missing token or room)",
+        );
+        this.state = "disconnected";
+        return;
+      }
+
+      this.connect(token, roomId);
     }, delay);
   }
 
-  // --- Queue ---
-
   private flushQueue(): void {
     if (this.queue.length === 0) {
+      this.outputChannel.appendLine("CodeDock[ws]: flush skipped (queue empty)");
       return;
     }
 
     this.outputChannel.appendLine(
-      `CodeDock: Flushing ${this.queue.length} queued messages.`,
+      `CodeDock[ws]: flushing queue (${this.queue.length} message(s))`,
     );
 
-    // flush in order — the queue preserves message sequence
     const pending = [...this.queue];
     this.queue = [];
 
     for (const message of pending) {
       this.send(message);
     }
+  }
+
+  private isTerminalClose(code: number, reason: string): boolean {
+    return (
+      code === 4003 ||
+      code === 4004 ||
+      reason === "forbidden" ||
+      reason === "room_deleted" ||
+      reason === "room_unavailable"
+    );
   }
 }

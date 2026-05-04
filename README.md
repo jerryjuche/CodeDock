@@ -1,519 +1,470 @@
 # CodeDock
-CodeDock is a self-hosted, low-latency collaborative coding platform that enables multiple developers to edit code simultaneously inside their editor, with real-time synchronization, presence awareness, and integrated team communication.
 
+**Self-hosted, real-time collaborative coding platform for engineering teams.**
 
-Below is a clean compiled handoff brief you can paste into a new chat to continue the work without losing context.
+CodeDock gives developers a focused control plane for shared coding sessions — room creation, invite management, workspace readiness, and one-click VS Code launch — without surrendering infrastructure ownership.
 
----
-
-# CodeDock — Deployment + Hosting Decision Handoff Brief
-
-## Full summary and next-session continuation pack
-
-### April 10, 2026
-
-This handoff captures the current state of CodeDock, the hosting decisions already reasoned through, what changed, what is now recommended, and the exact next direction.
-
-Primary source project handoff reviewed in this session: 
+[![Go](https://img.shields.io/badge/Go-1.25-00ADD8?style=flat-square&logo=go)](https://golang.org)
+[![Next.js](https://img.shields.io/badge/Next.js-15-black?style=flat-square&logo=next.js)](https://nextjs.org)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?style=flat-square&logo=typescript)](https://typescriptlang.org)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791?style=flat-square&logo=postgresql)](https://postgresql.org)
+[![Tests](https://img.shields.io/badge/tests-60%20passing-4CAF50?style=flat-square)](#testing)
+[![Coverage](https://img.shields.io/badge/coverage-66.7%25-yellowgreen?style=flat-square)](#testing)
 
 ---
 
-## 1. Project identity
+## Table of Contents
 
-**Project:** CodeDock
-**Repo:** `github.com/jerryjuche/CodeDock`
-**Core product:** self-hosted real-time collaborative coding platform for VS Code and compatible editors
-**Core stack:**
-
-* Go backend
-* PostgreSQL
-* WebSocket gateway
-* Yjs/CRDT sync
-* VS Code extension in TypeScript
-
-The product requires **persistent realtime collaboration**. The most important infrastructure fact is that the collaboration layer depends on a stable WebSocket backend. Sleep-based hosting is therefore a serious architectural problem, not just an inconvenience. 
-
----
-
-## 2. Build status from the prior handoff
-
-Backend and extension are already far along.
-
-### Backend completed
-
-* database schema/migrations
-* JWT auth
-* room management
-* WebSocket gateway
-* CRDT relay
-* snapshot service
-* invite token exchange
-
-### Extension completed
-
-* orchestrator/lifecycle
-* auth
-* API client
-* WebSocket manager
-* Yjs sync
-* cursor manager
-* chat panel
-* protocol/types/utils
-
-### Testing state
-
-* 60 tests
-* zero failures
-* total coverage around 66.7%
-
-These details came from the uploaded project handoff and remain the baseline technical status. 
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [Monorepo Structure](#monorepo-structure)
+- [Prerequisites](#prerequisites)
+- [Getting Started](#getting-started)
+  - [Backend](#backend-setup)
+  - [Frontend](#frontend-setup)
+  - [VS Code Extension](#vs-code-extension-setup)
+- [Environment Variables](#environment-variables)
+- [Database Migrations](#database-migrations)
+- [API Reference](#api-reference)
+- [Testing](#testing)
+- [Deployment](#deployment)
+- [Contributing](#contributing)
 
 ---
 
-## 3. Original hosting decision from older handoff
+## Overview
 
-The earlier plan was:
+CodeDock is a self-hosted collaborative coding platform built for engineering teams. It replaces ad-hoc screen sharing with a structured workflow:
 
-* **Koyeb** for the Go backend
-* **Supabase** for PostgreSQL
+1. **Create a room** from the web control plane — choose a local workspace or a GitHub repository as the source
+2. **Invite teammates** with short invite codes or generated invite tokens
+3. **Launch directly into VS Code** with a one-time deep-link that opens the correct workspace and starts the collaboration session
+4. **Collaborate in real time** — Yjs/CRDT document sync, cursor presence, and chat, all over a persistent WebSocket connection
 
-That earlier decision existed because Koyeb had been treated as a free always-on backend option and Render had been ruled out due to sleep. The older handoff explicitly chose Koyeb because sleep is catastrophic for CodeDock’s WebSocket sessions. 
-
----
-
-## 4. What changed
-
-During this session, current platform reality was re-evaluated.
-
-### Updated conclusion about Koyeb
-
-Koyeb is no longer a clean answer for the “fully free, always-on” requirement.
-
-The practical outcome:
-
-* Koyeb is no longer the preferred zero-cost persistent backend target for CodeDock
-* if Koyeb requires Pro for the setup being attempted, it should not be forced at this stage
-* paying for Koyeb Pro is not justified for this current phase
-
-### Why this matters
-
-CodeDock is not just an HTTP app. It is a persistent collaborative system using WebSockets. That means the backend host must be treated as part of the collaboration protocol itself.
-
-So the hosting decision has now changed.
+The system is designed for always-on deployment. The WebSocket collaboration layer requires a persistent server — not a sleep-based host.
 
 ---
 
-## 5. Current recommended infrastructure direction
+## Architecture
 
-## Recommended architecture now
-
-### Core recommendation
-
-* **Oracle Cloud Always Free VM** → host the Go backend and the WebSocket server
-* **Supabase Free** → managed PostgreSQL
-* **Appwrite is optional and not core**
-
-### Stronger refined recommendation
-
-If a managed platform is needed beyond the raw VM, use:
-
-* **Oracle VM** for the realtime collaboration backend
-* **Supabase** for the non-WebSocket app layer
-
-This became the preferred replacement for using Appwrite as the supporting layer.
-
----
-
-## 6. Decision on Appwrite
-
-Appwrite was considered.
-
-### Conclusion
-
-Appwrite is **not** the preferred answer for CodeDock’s current hosting problem.
-
-Why:
-
-* Appwrite is better for app-platform features than for hosting the existing custom Go collaboration server
-* it does not cleanly replace the Go + WebSocket + Yjs collaboration core
-* using it as the main backend layer would push the project toward a broader architectural rewrite
-
-### Acceptable use of Appwrite
-
-Appwrite could still be used later for:
-
-* storage
-* auth-adjacent product surfaces
-* registration portal support
-* dashboard surfaces
-
-But it is **not** the preferred supporting platform right now.
-
-### Preferred alternative to Appwrite
-
-**Supabase** is the preferred alternative because it aligns better with:
-
-* the project’s Postgres foundation
-* the existing Go architecture
-* the need for a clean support layer without rewriting the collaboration system
-
----
-
-## 7. Final hosting strategy now favored
-
-## Best current stack for the project
-
-### Minimal and practical
-
-* Oracle Cloud Always Free Ubuntu VM
-* Go backend running directly on the VM
-* systemd to manage the process
-* Caddy in front for HTTPS and reverse proxy
-* Supabase Free for PostgreSQL
-
-### Optional later additions
-
-* Appwrite only if later needed for side features
-* GitHub Actions deployment later
-* Docker later if operational complexity grows
-
-This is the leanest correct setup for proving realtime collaboration live at zero dollars.
-
----
-
-## 8. Why Oracle Cloud is now the best fit
-
-Oracle Cloud is a better fit than Koyeb for the current need because the project’s most important requirement is **control over a persistent WebSocket server**.
-
-### What Oracle gives
-
-Oracle gives a raw VM and infrastructure primitives.
-
-### What that means
-
-Oracle is not a managed deployment platform like Koyeb or Railway.
-
-It means the developer becomes responsible for:
-
-* server provisioning
-* SSH access
-* Linux setup
-* reverse proxy
-* HTTPS
-* service restart behavior
-* deployment method
-* logging
-* network rules
-* operational management
-
-### Why that is still acceptable
-
-For this phase, the goal is not polished cloud automation.
-The goal is:
-
-* get the realtime system live
-* validate multi-user collaboration
-* test actual WebSocket behavior under a public server
-* keep it at $0
-
-Oracle fits that better than the managed platforms that no longer satisfy the free persistent-hosting constraint.
-
----
-
-## 9. Oracle Cloud operating model that must be remembered
-
-For this project, Oracle Cloud should be understood as:
-
-**“a Linux server in the cloud that you control.”**
-
-Not:
-
-* push-to-deploy PaaS
-* automatic platform restarts and SSL
-* built-in GitHub deployment flow
-
-### What will need to be set up on Oracle
-
-* Ubuntu VM
-* public IP
-* SSH access
-* security rules for ports
-* Git and Go installed
-* CodeDock source on the VM
-* compiled Go binary
-* systemd service for the app
-* Caddy reverse proxy
-* HTTPS via Caddy
-* environment variables for DB and JWT
-* manual deploy workflow initially
-
----
-
-## 10. Minimal recommended Oracle setup
-
-### Use this exact practical shape
-
-* **Ubuntu VM**
-* **Go binary directly**
-* **systemd**
-* **Caddy**
-* **ports 22, 80, 443**
-* **Supabase as DB**
-* **manual deploy via SSH + git pull + go build + restart**
-
-### Why direct Go binary first
-
-Direct binary deployment is preferred over Docker at this stage because it is:
-
-* easier to debug
-* easier to understand
-* fewer moving parts
-* better for first live validation
-
-Docker can come later.
-
-### Why Caddy over Nginx first
-
-Caddy is preferred initially because:
-
-* simpler config
-* easier HTTPS
-* lower setup friction
-* good fit for first deployment
-
----
-
-## 11. How deployment should work initially
-
-### Manual deployment flow
-
-For now, deployment should be manual.
-
-Typical process:
-
-1. push code to GitHub
-2. SSH into Oracle VM
-3. `git pull`
-4. `go build`
-5. restart the `codedock` systemd service
-6. inspect logs
-7. test via extension
-
-This is the best first live deployment model because it minimizes complexity while the product is still being validated.
-
-### Not recommended yet
-
-Do not start with:
-
-* CI/CD-heavy deploy automation
-* Kubernetes
-* load balancers
-* multiple app instances
-* complex container orchestration
-
----
-
-## 12. Operational controls and admin panel discussion
-
-A custom admin panel was discussed.
-
-### Conclusion
-
-Yes, a broader control panel can be built.
-
-### What is a good first version
-
-The recommended first version is an **application operations dashboard**, not a full cloud control plane.
-
-It should expose:
-
-* backend health
-* DB health
-* uptime
-* active WebSocket connections
-* active rooms
-* recent logs
-* memory and CPU
-* version/build info
-* safe restart/status actions
-
-### What it should not be
-
-It should **not** be:
-
-* a remote shell
-* arbitrary command executor
-* direct browser-to-Oracle control layer
-* full VM power controls in v1
-
-### Safe architecture for the control panel
-
-Use:
-
-* React admin UI
-* secure backend admin endpoints
-* optional safe wrapper around `systemd`
-* audit logging for admin actions
-
-### Safe actions to allow
-
-* service status
-* restart service
-* stop service
-* start service
-* view app health and metrics
-
-### Advanced later features
-
-Potential future panel features:
-
-* room inspector
-* connection analytics
-* snapshot diagnostics
-* transport/reconnect metrics
-* deploy history
-* maintenance mode
-* log filtering
-* feature flags
-
----
-
-## 13. Still-open important project items from the older handoff
-
-The prior uploaded handoff identified open items that still matter. 
-
-### Critical item still called out
-
-In `internal/hub/hub.go`, inside `trackAndSnapshot()`, snapshots are still using a placeholder file path `"default"` and must be updated to parse the real file path from the binary payload. This is still an important backend correctness issue before final end-to-end confidence. 
-
-### Other important pending items
-
-* invite generation endpoint
-* React web app / registration UI
-* token refresh flow
-* awareness file path correctness
-* extension packaging
-* status bar item
-
-These were already identified in the uploaded project handoff and remain the broader roadmap after deployment. 
-
----
-
-## 14. Current strategic conclusion
-
-## Final stance after this whole session
-
-### Do not do this now
-
-* do not pay for Koyeb Pro
-* do not treat Appwrite as the main collaboration backend
-* do not overbuild the infrastructure before the first public realtime validation
-
-### Do this instead
-
-* move the backend host to Oracle Cloud Always Free
-* keep the Go collaboration backend intact
-* use Supabase as the preferred supporting managed backend service
-* deploy with a minimal VM-based setup
-* validate realtime collaboration live first
-* add polish, automation, and broader control features later
-
----
-
-## 15. Best next implementation order
-
-Use this sequence next.
-
-### Phase 1 — infrastructure foundation
-
-1. create Oracle Cloud account
-2. choose an Always Free eligible region with capacity
-3. create a compartment for CodeDock
-4. create VCN/subnet
-5. launch Ubuntu VM on an Always Free eligible shape
-6. assign public IP
-7. open ports 22, 80, 443
-
-### Phase 2 — server setup
-
-8. SSH into VM
-9. install Git, Go, and Caddy
-10. clone CodeDock repo
-11. build Go backend
-12. set environment variables
-13. create `systemd` service
-14. start service and inspect logs
-
-### Phase 3 — public routing
-
-15. point domain/subdomain to VM public IP
-16. configure Caddy reverse proxy
-17. confirm HTTPS works
-18. confirm backend reachable over public URL
-
-### Phase 4 — correctness check
-
-19. patch and verify `trackAndSnapshot()` real file path parsing if not yet done
-20. run backend tests/build checks again
-21. validate DB connectivity and app startup
-
-### Phase 5 — realtime validation
-
-22. update VS Code extension server URL
-23. connect two clients
-24. join same room
-25. open same file
-26. test sync, cursors, chat, reconnect
-
-### Phase 6 — only after success
-
-27. decide whether to add admin panel
-28. decide whether to automate deploys
-29. decide whether Appwrite is needed at all
-30. continue with invite endpoint, web UI, and token refresh
-
----
-
-## 16. Sharp summary in one paragraph
-
-CodeDock is already technically advanced enough that the main blocker is no longer core product architecture but finding the right zero-cost hosting model for a persistent WebSocket backend. Koyeb is no longer the preferred free solution, Appwrite is not the right main backend fit, and the strongest current approach is Oracle Cloud Always Free for the Go/WebSocket server plus Supabase for the managed app/database layer. The next step is to deploy a minimal Oracle VM stack using Ubuntu, a direct Go binary, systemd, Caddy, and manual deploys, then run the first real public multi-user collaboration test. 
-
----
-
-## 17. Paste-ready continuation prompt for the next chat
-
-Use this in a new session:
-
-```text
-We are continuing CodeDock deployment planning.
-
-Current decision:
-- Do not use Koyeb Pro
-- Oracle Cloud Always Free is now the preferred host for the Go backend and persistent WebSocket server
-- Supabase is the preferred supporting backend service
-- Appwrite is not the main backend choice and is optional later
-
-Project:
-- CodeDock is a self-hosted real-time collaborative coding platform
-- Stack: Go backend, PostgreSQL, WebSocket, Yjs, VS Code extension
-- The backend must stay stable for realtime WebSocket collaboration
-
-Deployment approach chosen:
-- Oracle Ubuntu VM
-- Go binary directly on the VM
-- systemd for service management
-- Caddy for reverse proxy and HTTPS
-- ports 22, 80, 443 open
-- manual deployment first via SSH + git pull + go build + systemctl restart
-
-Important pending backend issue:
-- internal/hub/hub.go trackAndSnapshot() still needs to parse real file path from binary payload instead of using "default"
-
-Please continue from here and help me do the Oracle deployment in the safest zero-cost way, step by step, without overengineering.
 ```
-`
+┌─────────────────────────────────────────────────────────┐
+│                    Web Control Plane                    │
+│              Next.js 15 · Vercel (or self-hosted)       │
+│  Dashboard · Room management · Invites · Launch trigger │
+└───────────────────┬─────────────────────────────────────┘
+                    │ HTTPS / REST
+┌───────────────────▼─────────────────────────────────────┐
+│                   Go Backend                            │
+│              net/http · Fly.io (fra region)             │
+│  Auth · Room service · Invite service · Launch tokens   │
+│  WebSocket gateway · CRDT relay · Snapshot persistence  │
+└──────────┬─────────────────────┬───────────────────────┘
+           │ SQL                 │ WebSocket
+┌──────────▼──────────┐  ┌──────▼──────────────────────┐
+│    PostgreSQL        │  │      VS Code Extension       │
+│  Supabase / self-   │  │  TypeScript · gorilla/ws     │
+│  hosted             │  │  Yjs sync · Cursor manager   │
+└─────────────────────┘  │  Chat panel · Auth client    │
+                         └──────────────────────────────┘
+```
+
+**Core tech stack:**
+
+| Layer | Technology |
+|-------|-----------|
+| Backend | Go 1.25, `net/http`, `gorilla/websocket` |
+| Auth | JWT (`golang-jwt/jwt/v5`), bcrypt |
+| Database | PostgreSQL 16, `lib/pq` |
+| Real-time sync | Yjs / CRDT over WebSocket |
+| Frontend | Next.js 15 (App Router), React 18, TypeScript, Tailwind CSS |
+| Extension | TypeScript, esbuild, VS Code Extension API |
+| Backend hosting | Fly.io (`fra` region) |
+| Frontend hosting | Vercel |
+| DB hosting | Supabase (managed) or self-hosted PostgreSQL |
 
 ---
 
-If you want, I can also turn this into a cleaner **formal markdown handoff document** you can save as `CodeDock_Oracle_Deployment_Handoff.md`.
+## Monorepo Structure
 
+```
+CodeDock/
+├── main.go                        # Backend entry point
+├── go.mod / go.sum                # Go module
+├── Dockerfile                     # Backend container image
+├── fly.toml                       # Fly.io deployment config
+├── .github/
+│   └── workflows/
+│       └── fly-deploy.yml         # CI/CD → Fly.io
+├── internal/
+│   ├── auth/                      # JWT generation & middleware
+│   ├── handlers/                  # HTTP request handlers
+│   ├── hub/                       # WebSocket hub & client management
+│   └── services/                  # Business logic (rooms, invites, launch, snapshots)
+├── migration/                     # Ordered SQL migration files
+├── codedock-web/                  # Next.js 15 frontend (web control plane)
+│   ├── app/                       # App Router pages & layouts
+│   ├── components/                # UI components
+│   ├── hooks/                     # React data-fetching hooks
+│   ├── lib/                       # API client & utilities
+│   └── types/                     # Shared TypeScript types
+├── extension/                     # VS Code extension
+│   └── src/                       # TypeScript source
+│       ├── extension.ts           # Entry point / lifecycle
+│       ├── websocket.ts           # WebSocket manager
+│       ├── yjs-sync.ts            # Yjs/CRDT document sync
+│       ├── cursor-manager.ts      # Shared cursor presence
+│       ├── chat.ts                # Chat panel
+│       ├── api.ts                 # Backend API client
+│       └── auth.ts                # Auth flow
+├── codedock-test-dashboard/       # Internal test harness (not production)
+└── scripts/                       # Utility scripts (migrations, debug exports)
+```
+
+---
+
+## Prerequisites
+
+| Tool | Version |
+|------|---------|
+| Go | ≥ 1.25 |
+| Node.js | ≥ 20 (v24 recommended) |
+| npm | ≥ 10 |
+| PostgreSQL | ≥ 14 |
+| Git | ≥ 2.40 |
+
+---
+
+## Getting Started
+
+### Backend Setup
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/jerryjuche/CodeDock.git
+cd CodeDock
+
+# 2. Copy and configure environment variables
+cp .env.example .env
+# Edit .env — see Environment Variables section below
+
+# 3. Apply database migrations
+#    Run each file in /migration in order:
+psql "$DATABASE_URL" -f migration/001_create_extensions.sql
+psql "$DATABASE_URL" -f migration/002_create_enums.sql
+psql "$DATABASE_URL" -f migration/003_create_users.sql
+psql "$DATABASE_URL" -f migration/004_create_trigger_function.sql
+psql "$DATABASE_URL" -f migration/005_create_rooms.sql
+psql "$DATABASE_URL" -f migration/006_create_room_members.sql
+psql "$DATABASE_URL" -f migration/007_create_snapshots.sql
+psql "$DATABASE_URL" -f migration/008_create_invite_tokens.sql
+psql "$DATABASE_URL" -f migration/0002_phase1_control_plane.sql
+
+# 4. Download Go dependencies
+go mod download
+
+# 5. Run the backend
+go run main.go
+# → Server starts on :8080 (or $PORT)
+```
+
+### Frontend Setup
+
+```bash
+# From the repository root:
+cd codedock-web
+
+# 1. Install dependencies
+npm install
+
+# 2. Configure environment
+cp .env.example .env.local
+# Set NEXT_PUBLIC_API_BASE_URL to your backend URL
+
+# 3. Start the development server
+npm run dev
+# → Frontend starts on http://localhost:3000
+
+# Production build
+npm run build
+npm run start
+```
+
+### VS Code Extension Setup
+
+```bash
+cd extension
+
+# Install dependencies
+npm install
+
+# Compile TypeScript
+npm run compile
+
+# Package as .vsix for manual install
+npx vsce package
+
+# Install locally
+code --install-extension codedock-*.vsix
+```
+
+Once installed, configure the extension in VS Code settings:
+- `codedock.serverUrl` — URL of your running CodeDock backend (default: `https://codedock.fly.dev`)
+
+---
+
+## Environment Variables
+
+### Backend (root `.env`)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `PORT` | No | `8080` | HTTP server port |
+| `DB_HOST` | Yes | — | PostgreSQL host |
+| `DB_PORT` | Yes | — | PostgreSQL port (usually `5432`) |
+| `DB_USER` | Yes | — | PostgreSQL username |
+| `DB_PASSWORD` | Yes | — | PostgreSQL password |
+| `DB_NAME` | Yes | — | PostgreSQL database name |
+| `DB_SSLMODE` | No | `disable` | PostgreSQL SSL mode (`disable`, `require`, `verify-full`) |
+| `JWT_SECRET` | Yes | — | Secret key used to sign JWT tokens |
+| `WEB_ALLOWED_ORIGINS` | No | `http://localhost:3000` | Comma-separated list of allowed CORS origins |
+
+**Example `.env`:**
+```dotenv
+PORT=8080
+
+DB_HOST=db.example.supabase.co
+DB_PORT=5432
+DB_USER=postgres
+DB_PASSWORD=your-db-password
+DB_NAME=postgres
+DB_SSLMODE=require
+
+JWT_SECRET=your-long-random-secret-here
+
+WEB_ALLOWED_ORIGINS=https://your-app.vercel.app,https://codedock.example.com
+```
+
+> **Never commit `.env`** — it is listed in `.gitignore`.
+
+### Frontend (`codedock-web/.env.local`)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `NEXT_PUBLIC_API_BASE_URL` | Yes | `http://localhost:8080` | Base URL of the CodeDock backend API |
+
+**Example `codedock-web/.env.local`:**
+```dotenv
+NEXT_PUBLIC_API_BASE_URL=https://codedock.fly.dev
+```
+
+> Set this in your Vercel project settings under **Environment Variables** for production.
+
+---
+
+## Database Migrations
+
+Migrations live in `/migration/` as plain SQL files, named with an ordered prefix. Apply them sequentially against your PostgreSQL database:
+
+| File | Description |
+|------|-------------|
+| `001_create_extensions.sql` | Enables `pgcrypto` |
+| `002_create_enums.sql` | Defines `room_role` enum |
+| `003_create_users.sql` | `users` table |
+| `004_create_trigger_function.sql` | `updated_at` trigger |
+| `005_create_rooms.sql` | `rooms` table |
+| `006_create_room_members.sql` | `room_members` join table |
+| `007_create_snapshots.sql` | `snapshots` table (Yjs state persistence) |
+| `008_create_invite_tokens.sql` | `invite_tokens` table |
+| `0002_phase1_control_plane.sql` | Phase 1 control plane schema (join codes, launch tokens, source metadata) |
+
+> If using Supabase, run migrations via the Supabase SQL editor or the `psql` CLI against your project's connection string.
+
+---
+
+## API Reference
+
+All protected routes require a `Bearer` JWT token in the `Authorization` header.
+
+### Auth
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/auth/register` | No | Register a new user |
+| `POST` | `/auth/login` | No | Login and receive a JWT |
+| `GET` | `/auth/me` | Yes | Get current authenticated user |
+
+### Rooms
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/rooms` | Yes | Create a room |
+| `GET` | `/rooms` | Yes | List rooms for current user |
+| `GET` | `/rooms/{roomId}` | Yes | Get room summary |
+| `GET` | `/rooms/{roomId}/details` | Yes | Get full room details (source state, membership) |
+| `GET` | `/rooms/{roomId}/presence` | Yes | Get member presence for a room |
+| `POST` | `/rooms/{roomId}/source/local/bind` | Yes | Bind a local workspace path (host only) |
+| `POST` | `/rooms/{roomId}/activation/toggle` | Yes | Toggle room active/inactive |
+| `DELETE` | `/rooms/{roomId}` | Yes | Delete a room (host only) |
+
+### Invites
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/join-code/resolve` | Yes | Resolve a join code and join the room |
+| `GET` | `/rooms/{roomId}/invites` | Yes | List invite tokens for a room (host only) |
+| `POST` | `/rooms/{roomId}/invites` | Yes | Create a new invite token |
+| `POST` | `/rooms/{roomId}/invites/{inviteId}/revoke` | Yes | Revoke an invite token |
+
+### Launch
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/rooms/{roomId}/open-in-vscode` | Yes | Generate a one-time VS Code launch deep-link |
+| `POST` | `/vscode/launch/exchange` | No | Exchange a launch token (called by the extension) |
+
+### System
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/health` | No | Liveness check |
+| `GET` | `/ready` | No | Readiness check (verifies DB connectivity) |
+| `GET` | `/ws` | Via token | WebSocket connection endpoint |
+
+---
+
+## Testing
+
+The backend test suite covers auth, handlers, hub, and services:
+
+```bash
+# Run all Go tests
+go test ./...
+
+# Run with verbose output
+go test -v ./...
+
+# Run with coverage report
+go test -coverprofile=coverage.out ./...
+go tool cover -html=coverage.out
+```
+
+**Current test status:**
+
+| Package | Status |
+|---------|--------|
+| `internal/auth` | ✅ Pass |
+| `internal/handlers` | ✅ Pass |
+| `internal/hub` | ✅ Pass |
+| `internal/services` | ✅ Pass |
+
+- **60 tests**, 0 failures
+- **~66.7% coverage** across all packages
+
+> Integration tests in `internal/handlers/integration_test.go` run against a real PostgreSQL instance. Set `TEST_DATABASE_URL` or the individual `DB_*` variables before running them.
+
+---
+
+## Deployment
+
+### Backend → Fly.io
+
+The backend is deployed to Fly.io in the `fra` (Frankfurt) region.
+
+```bash
+# Authenticate
+flyctl auth login
+
+# First-time setup (already configured via fly.toml)
+flyctl launch
+
+# Deploy
+flyctl deploy
+
+# Set secrets (run once per environment)
+flyctl secrets set \
+  DB_HOST=... \
+  DB_PORT=5432 \
+  DB_USER=... \
+  DB_PASSWORD=... \
+  DB_NAME=... \
+  DB_SSLMODE=require \
+  JWT_SECRET=... \
+  WEB_ALLOWED_ORIGINS=https://your-app.vercel.app
+
+# View logs
+flyctl logs
+
+# Check health
+curl https://codedock.fly.dev/health
+curl https://codedock.fly.dev/ready
+```
+
+The Fly configuration (`fly.toml`) keeps `auto_stop_machines = 'off'` and `min_machines_running = 1` to ensure the WebSocket server is always available.
+
+### Frontend → Vercel
+
+```bash
+# From codedock-web/
+vercel deploy --prod
+```
+
+Set the following environment variable in your Vercel project dashboard:
+
+```
+NEXT_PUBLIC_API_BASE_URL = https://codedock.fly.dev
+```
+
+### CI/CD
+
+GitHub Actions automates backend deployment to Fly.io on push to `staging`:
+
+```
+.github/workflows/fly-deploy.yml
+```
+
+Required GitHub secret: `FLY_API_TOKEN`
+
+### Docker (Backend)
+
+```bash
+# Build
+docker build -t codedock-server .
+
+# Run
+docker run -p 8080:8080 \
+  -e DB_HOST=... \
+  -e DB_PORT=5432 \
+  -e DB_USER=... \
+  -e DB_PASSWORD=... \
+  -e DB_NAME=... \
+  -e DB_SSLMODE=require \
+  -e JWT_SECRET=... \
+  -e WEB_ALLOWED_ORIGINS=http://localhost:3000 \
+  codedock-server
+```
+
+---
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feat/your-feature`
+3. Commit with a clear message: `git commit -m "feat: describe your change"`
+4. Push and open a pull request against `staging`
+
+**Before submitting:**
+- Run `go test ./...` — all tests must pass
+- Run `go vet ./...` — no vet errors
+- Run `npm run build` inside `codedock-web/` — build must succeed
+- Do not commit `.env`, `.env.local`, or any secrets
+
+---
+
+## License
+
+See [LICENSE](LICENSE) for details.
+
+---
+
+*Built by [@jerryjuche](https://github.com/jerryjuche)*
