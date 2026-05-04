@@ -12968,11 +12968,6 @@ async function activate(context) {
   const serverUrl = config.get("serverUrl", "https://codedock.fly.dev");
   const outputChannel = vscode4.window.createOutputChannel("CodeDock");
   context.subscriptions.push(outputChannel);
-  outputChannel.show(true);
-  outputChannel.appendLine("CodeDock: DIAG BUILD LOADED (SYNC-ONLY)");
-  vscode4.window.showInformationMessage(
-    "CodeDock: DIAG BUILD LOADED (SYNC-ONLY)"
-  );
   const emitter = new import_events.EventEmitter();
   apiClient = new ApiClient(serverUrl);
   authManager = new AuthManager(context.secrets, apiClient, emitter);
@@ -12995,7 +12990,7 @@ async function activate(context) {
     })
   );
   emitter.on("login", () => {
-    outputChannel.appendLine("CodeDock: login event received (sync-only mode)");
+    outputChannel.appendLine("CodeDock: login event received");
   });
   emitter.on("logout", () => {
     outputChannel.appendLine("CodeDock: logout event received");
@@ -13023,7 +13018,7 @@ async function activate(context) {
     vscode4.commands.registerCommand(
       "codedock.openChat",
       () => vscode4.window.showWarningMessage(
-        "CodeDock Chat is temporarily disabled in sync-only diagnostic mode."
+        "CodeDock Chat is not available in this build yet."
       )
     ),
     vscode4.commands.registerCommand("codedock.disconnectRoom", () => {
@@ -13046,24 +13041,9 @@ async function activate(context) {
 async function restoreSession() {
   const token = await authManager.getToken();
   if (!token) {
-    vscode4.window.showInformationMessage(
-      'CodeDock: Not logged in. Run "CodeDock: Login" to start.'
-    );
     return;
   }
-  const valid = await authManager.validateToken();
-  if (!valid) {
-    vscode4.window.showWarningMessage(
-      "CodeDock: Session expired. Please log in again.",
-      "Login"
-    ).then((selection) => {
-      if (selection === "Login") {
-        authManager.login();
-      }
-    });
-    return;
-  }
-  vscode4.window.showInformationMessage("CodeDock: Session restored.");
+  await authManager.validateToken();
 }
 async function handleLaunchUri(context, uri, outputChannel) {
   outputChannel.appendLine(`URI received: ${uri.toString()}`);

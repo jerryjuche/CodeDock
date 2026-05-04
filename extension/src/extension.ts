@@ -31,12 +31,6 @@ export async function activate(
   const outputChannel = vscode.window.createOutputChannel("CodeDock");
   context.subscriptions.push(outputChannel);
 
-  outputChannel.show(true);
-  outputChannel.appendLine("CodeDock: DIAG BUILD LOADED (SYNC-ONLY)");
-  vscode.window.showInformationMessage(
-    "CodeDock: DIAG BUILD LOADED (SYNC-ONLY)",
-  );
-
   const emitter = new EventEmitter();
 
   apiClient = new ApiClient(serverUrl);
@@ -70,7 +64,7 @@ export async function activate(
   );
 
   emitter.on("login", () => {
-    outputChannel.appendLine("CodeDock: login event received (sync-only mode)");
+    outputChannel.appendLine("CodeDock: login event received");
   });
 
   emitter.on("logout", () => {
@@ -95,7 +89,7 @@ export async function activate(
     ),
     vscode.commands.registerCommand("codedock.openChat", () =>
       vscode.window.showWarningMessage(
-        "CodeDock Chat is temporarily disabled in sync-only diagnostic mode.",
+        "CodeDock Chat is not available in this build yet.",
       ),
     ),
     vscode.commands.registerCommand("codedock.disconnectRoom", () => {
@@ -122,29 +116,10 @@ async function restoreSession(): Promise<void> {
   const token = await authManager.getToken();
 
   if (!token) {
-    vscode.window.showInformationMessage(
-      'CodeDock: Not logged in. Run "CodeDock: Login" to start.',
-    );
     return;
   }
 
-  const valid = await authManager.validateToken();
-
-  if (!valid) {
-    vscode.window
-      .showWarningMessage(
-        "CodeDock: Session expired. Please log in again.",
-        "Login",
-      )
-      .then((selection) => {
-        if (selection === "Login") {
-          authManager.login();
-        }
-      });
-    return;
-  }
-
-  vscode.window.showInformationMessage("CodeDock: Session restored.");
+  await authManager.validateToken();
 }
 
 async function handleLaunchUri(
