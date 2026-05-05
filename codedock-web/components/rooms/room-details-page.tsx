@@ -8,6 +8,8 @@ import { useRoomPresence } from "@/hooks/use-room-presence";
 import { useInvites } from "@/hooks/use-invites";
 import { useAuth } from "@/hooks/use-auth";
 import RoomDetailsSkeleton from "@/components/rooms/room-details-skeleton";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { LoadingState } from "@/components/ui/loading-state";
 
 // Dynamically import heavy components
 const RoomHeader = dynamic(() => import("@/components/rooms/room-header"), {
@@ -43,6 +45,15 @@ const OpenIDEButton = dynamic(
   },
 );
 
+const DeleteRoomButton = dynamic(
+  () => import("@/components/rooms/delete-room-button"),
+  {
+    loading: () => (
+      <div className="h-10 w-32 bg-white/5 rounded-lg animate-pulse" />
+    ),
+  },
+);
+
 const Button = dynamic(
   () =>
     import("@/components/ui/button").then((mod) => ({ default: mod.Button })),
@@ -60,6 +71,7 @@ export default function RoomDetailsPageClient({ roomId }: { roomId: string }) {
     presence,
     loading: presenceLoading,
     error: presenceError,
+    reload: reloadPresence,
   } = useRoomPresence(roomId);
 
   const {
@@ -68,6 +80,7 @@ export default function RoomDetailsPageClient({ roomId }: { roomId: string }) {
     error: invitesError,
     createInvite,
     revokeInvite,
+    reload: reloadInvites,
   } = useInvites(roomId);
 
   if (loading) {
@@ -101,25 +114,35 @@ export default function RoomDetailsPageClient({ roomId }: { roomId: string }) {
 
   return (
     <main className="mx-auto max-w-7xl space-y-8 px-6 py-8 sm:px-8 lg:px-10">
-      <RoomHeader details={details} />
+      <ErrorBoundary>
+        <RoomHeader details={details} />
+      </ErrorBoundary>
 
       <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
         <div className="space-y-6">
-          <PresenceCard
-            presence={presence}
-            loading={presenceLoading}
-            error={presenceError}
-          />
+          <ErrorBoundary>
+            <PresenceCard
+              presence={presence}
+              loading={presenceLoading}
+              error={presenceError}
+              onRetry={reloadPresence}
+            />
+          </ErrorBoundary>
 
           {isHost ? (
             <>
-              <InviteList
-                invites={invites}
-                loading={invitesLoading}
-                error={invitesError}
-                onRevoke={revokeInvite}
-              />
-              <InviteCreateForm onCreate={createInvite} />
+              <ErrorBoundary>
+                <InviteList
+                  invites={invites}
+                  loading={invitesLoading}
+                  error={invitesError}
+                  onRevoke={revokeInvite}
+                  onRetry={reloadInvites}
+                />
+              </ErrorBoundary>
+              <ErrorBoundary>
+                <InviteCreateForm onCreate={createInvite} />
+              </ErrorBoundary>
             </>
           ) : (
             <Card>
@@ -133,20 +156,26 @@ export default function RoomDetailsPageClient({ roomId }: { roomId: string }) {
         </div>
 
         <div className="space-y-6">
-          <SourceStateCard
-            sourceState={details.source_state}
-            roomId={roomId}
-            isHost={isHost}
-            onActivated={reload}
-          />
-          <OpenIDEButton
-            roomId={roomId}
-            launchAllowed={details.source_state.launch_allowed}
-            launchReason={details.source_state.launch_reason}
-            isHost={isHost}
-          />
+          <ErrorBoundary>
+            <SourceStateCard
+              sourceState={details.source_state}
+              roomId={roomId}
+              isHost={isHost}
+              onActivated={reload}
+            />
+          </ErrorBoundary>
+          <ErrorBoundary>
+            <OpenIDEButton
+              roomId={roomId}
+              launchAllowed={details.source_state.launch_allowed}
+              launchReason={details.source_state.launch_reason}
+              isHost={isHost}
+            />
+          </ErrorBoundary>
           {isHost ? (
-            <DeleteRoomButton roomId={roomId} roomName={details.room.name} />
+            <ErrorBoundary>
+              <DeleteRoomButton roomId={roomId} roomName={details.room.name} />
+            </ErrorBoundary>
           ) : null}
         </div>
       </div>

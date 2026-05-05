@@ -38,11 +38,16 @@ export function useInvites(roomId: string) {
     },
   });
 
+  const handleRevokeInvite = async (inviteId: string): Promise<void> => {
+    await revokeMutation.mutateAsync(inviteId);
+  };
+
   return {
     invites: query.data || [],
     loading: query.isLoading,
     error: query.error?.message || null,
     createInvite: createMutation.mutateAsync,
-    revokeInvite: revokeMutation.mutateAsync,
+    revokeInvite: handleRevokeInvite,
+    reload: query.refetch,
   };
 }
