@@ -18,16 +18,30 @@ import (
 var (
 	ErrLaunchTokenInvalid = errors.New("invalid launch token")
 	ErrLaunchTokenExpired = errors.New("launch token expired")
+	ErrInvalidEditor      = errors.New("invalid editor target")
 )
 
 const (
-	launchTokenTTL      = 2 * time.Minute
-	extensionDeepLinkID = "jerryjuche.codedock"
+	launchTokenTTL       = 2 * time.Minute
+	extensionDeepLinkID  = "jerryjuche.codedock"
+	EditorVSCode         = "vscode"
+	EditorAntigravity    = "antigravity"
+	URISchemeVSCode      = "vscode"
+	URISchemeAntigravity = "antigravity"
 )
 
+type EditorTarget string
+
+func (e EditorTarget) Valid() bool {
+	return e == EditorVSCode || e == EditorAntigravity
+}
+
 type LaunchTokenResponse struct {
-	LaunchToken string `json:"launch_token"`
-	DeepLink    string `json:"deep_link"`
+	LaunchToken string            `json:"launch_token"`
+	Editor      string            `json:"editor,omitempty"`
+	DeepLink    string            `json:"deep_link"`
+	DeepLinks   map[string]string `json:"deep_links,omitempty"`
+	ExpiresAt   string            `json:"expires_at,omitempty"`
 }
 
 type LaunchContext struct {
@@ -46,6 +60,15 @@ type LaunchService struct {
 }
 
 func (s *LaunchService) CreateRoomLaunch(roomID, userID string) (*LaunchTokenResponse, error) {
+	return s.CreateEditorLaunch(roomID, userID, EditorVSCode)
+}
+
+func (s *LaunchService) CreateEditorLaunch(roomID, userID, editor string) (*LaunchTokenResponse, error) {
+	editorTarget := EditorTarget(editor)
+	if !editorTarget.Valid() {
+		return nil, ErrInvalidEditor
+	}
+
 	var role string
 	err := s.DB.QueryRow(`
 		SELECT rm.role
@@ -68,6 +91,7 @@ func (s *LaunchService) CreateRoomLaunch(roomID, userID string) (*LaunchTokenRes
 	}
 
 	tokenHash := hashLaunchToken(rawToken)
+	expiresAt := time.Now().Add(launchTokenTTL)
 
 	_, err = s.DB.Exec(`
 		INSERT INTO room_launch_tokens (
@@ -78,21 +102,29 @@ func (s *LaunchService) CreateRoomLaunch(roomID, userID string) (*LaunchTokenRes
 			expires_at
 		)
 		VALUES ($1, $2, $3, $4, $5)
-	`, roomID, userID, role, tokenHash, time.Now().Add(launchTokenTTL))
+	`, roomID, userID, role, tokenHash, expiresAt)
 	if err != nil {
 		return nil, err
 	}
 
-	deepLink := fmt.Sprintf(
-		"vscode://%s/launch?token=%s",
-		extensionDeepLinkID,
-		url.QueryEscape(rawToken),
-	)
+	deepLinks := s.buildDeepLinks(rawToken)
+	selectedDeepLink := deepLinks[editor]
 
 	return &LaunchTokenResponse{
 		LaunchToken: rawToken,
-		DeepLink:    deepLink,
+		Editor:      editor,
+		DeepLink:    selectedDeepLink,
+		DeepLinks:   deepLinks,
+		ExpiresAt:   expiresAt.Format(time.RFC3339),
 	}, nil
+}
+
+func (s *LaunchService) buildDeepLinks(rawToken string) map[string]string {
+	encodedToken := url.QueryEscape(rawToken)
+	return map[string]string{
+		EditorVSCode:      fmt.Sprintf("%s://%s/launch?token=%s", URISchemeVSCode, extensionDeepLinkID, encodedToken),
+		EditorAntigravity: fmt.Sprintf("%s://%s/launch?token=%s", URISchemeAntigravity, extensionDeepLinkID, encodedToken),
+	}
 }
 
 func (s *LaunchService) ExchangeLaunchToken(rawToken string) (*LaunchContext, error) {

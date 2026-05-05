@@ -44,7 +44,8 @@ function InviteStatusChip({ invite }: { invite: RoomInviteToken }) {
     );
   }
 
-  const exhausted = invite.max_uses != null && invite.uses_count >= invite.max_uses;
+  const exhausted =
+    invite.max_uses != null && invite.uses_count >= invite.max_uses;
   if (exhausted) {
     return (
       <span className="inline-flex items-center rounded-full bg-white/[0.06] px-2.5 py-0.5 text-[11px] font-medium text-[rgb(158,183,211)]">
@@ -66,11 +67,13 @@ export default function InviteList({
   loading,
   error,
   onRevoke,
+  onRetry,
 }: {
   invites: RoomInviteToken[];
   loading: boolean;
   error: string | null;
   onRevoke: (inviteId: string) => Promise<void>;
+  onRetry?: () => void;
 }) {
   return (
     <Card>
@@ -99,7 +102,17 @@ export default function InviteList({
             ))}
           </div>
         ) : error ? (
-          <p className="text-sm text-[rgb(255,160,170)]">{error}</p>
+          <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-4">
+            <p className="text-sm text-[rgb(255,160,170)] mb-3">{error}</p>
+            {onRetry && (
+              <button
+                onClick={onRetry}
+                className="px-3 py-1.5 text-xs font-medium rounded bg-red-500/20 text-red-300 hover:bg-red-500/30 transition-colors"
+              >
+                Try again
+              </button>
+            )}
+          </div>
         ) : invites.length === 0 ? (
           <div className="rounded-xl border border-dashed border-white/10 py-6 text-center">
             <p className="text-sm text-[rgb(158,183,211)]">
@@ -118,16 +131,17 @@ export default function InviteList({
                   <span className="font-mono text-sm font-semibold tracking-[0.14em] text-white">
                     {invite.code}
                   </span>
-                  {!invite.is_revoked && (
-                    <CopyCodeButton code={invite.code} />
-                  )}
+                  {!invite.is_revoked && <CopyCodeButton code={invite.code} />}
                 </div>
                 {/* Meta row */}
                 <div className="mt-1 flex items-center gap-2 text-[11px] text-[rgb(158,183,211)]">
                   <InviteStatusChip invite={invite} />
                   <span>
                     {invite.uses_count}
-                    {invite.max_uses != null ? ` / ${invite.max_uses}` : ""} uses
+                    {invite.max_uses != null
+                      ? ` / ${invite.max_uses}`
+                      : ""}{" "}
+                    uses
                   </span>
                 </div>
               </div>

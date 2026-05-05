@@ -100,6 +100,43 @@ extension/tsconfig.tsbuildinfo
 
 
 # =============================================================================
+# DEBUG & DEVELOPMENT ARTIFACTS
+# =============================================================================
+
+# Debug dumps and analysis files
+debug-dumps/
+**/debug-dumps/
+
+# Temporary files and backups
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/settings.json
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Docker
+.dockerignore.bak
+
+
+# =============================================================================
 # VERCEL
 # =============================================================================
 .vercel/
@@ -183,3 +220,72 @@ codedock-test-dashboard/frontend/node_modules/
 codedock-test-dashboard/frontend/.next/
 codedock-test-dashboard/frontend/dist/
 codedock-test-dashboard/frontend/build/
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Frontend build/cache
+.next/
+**/.next/
+dist/
+**/dist/
+build/
+**/build/
+coverage/
+**/coverage/
+*.tsbuildinfo
+
+# VS Code extension build/package output
+extension/out/
+extension/dist/
+extension/*.vsix
+*.vsix
+
+# Local deployment/config
+.env
+.env.*
+!.env.example
+.vercel/
+debug-dumps/
+
+# Go build artifacts
+codedock_test_bin
+codedock-server
+*.test
+*.out
+*.coverprofile
+
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Frontend build/cache
+.next/
+**/.next/
+dist/
+**/dist/
+build/
+**/build/
+coverage/
+**/coverage/
+*.tsbuildinfo
+
+# VS Code extension build/package output
+extension/out/
+extension/dist/
+extension/*.vsix
+*.vsix
+
+# Local deployment/config
+.env
+.env.*
+!.env.example
+.vercel/
+debug-dumps/
+
+# Go build artifacts
+codedock_test_bin
+codedock-server
+*.test
+*.out
+*.coverprofile

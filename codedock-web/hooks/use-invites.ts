@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createRoomInvite,
   getRoomInvites,
@@ -10,62 +10,44 @@ import { useAuth } from "@/hooks/use-auth";
 import type { RoomInviteToken } from "@/types/invite";
 
 export function useInvites(roomId: string) {
-  const { token, hydrated } = useAuth();
-  const [invites, setInvites] = useState<RoomInviteToken[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { token } = useAuth();
+  const queryClient = useQueryClient();
 
-  const load = useCallback(async () => {
-    if (!hydrated) return;
+  const query = useQuery({
+    queryKey: ["room-invites", roomId],
+    queryFn: () => getRoomInvites(token!, roomId),
+    enabled: !!token,
+    staleTime: 30000, // Consider data fresh for 30 seconds
+  });
 
-    if (!token) {
-      setError("You are not logged in.");
-      setLoading(false);
-      return;
-    }
+  const createMutation = useMutation({
+    mutationFn: (payload: { expires_in_hours?: number; max_uses?: number }) =>
+      createRoomInvite(token!, roomId, payload),
+    onSuccess: () => {
+      // Invalidate and refetch invites
+      queryClient.invalidateQueries({ queryKey: ["room-invites", roomId] });
+    },
+  });
 
-    try {
-      const response = await getRoomInvites(token, roomId);
-      setInvites(response);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load invites");
-    } finally {
-      setLoading(false);
-    }
-  }, [roomId, token, hydrated]);
+  const revokeMutation = useMutation({
+    mutationFn: (inviteId: string) =>
+      revokeRoomInvite(token!, roomId, inviteId),
+    onSuccess: () => {
+      // Invalidate and refetch invites
+      queryClient.invalidateQueries({ queryKey: ["room-invites", roomId] });
+    },
+  });
 
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  async function createInvite(payload: {
-    expires_in_hours?: number;
-    max_uses?: number;
-  }) {
-    if (!token) {
-      throw new Error("You are not logged in.");
-    }
-
-    await createRoomInvite(token, roomId, payload);
-    await load();
-  }
-
-  async function revokeInvite(inviteId: string) {
-    if (!token) {
-      throw new Error("You are not logged in.");
-    }
-
-    await revokeRoomInvite(token, roomId, inviteId);
-    await load();
-  }
+  const handleRevokeInvite = async (inviteId: string): Promise<void> => {
+    await revokeMutation.mutateAsync(inviteId);
+  };
 
   return {
-    invites,
-    loading,
-    error,
-    createInvite,
-    revokeInvite,
-    reload: load,
+    invites: query.data || [],
+    loading: query.isLoading,
+    error: query.error?.message || null,
+    createInvite: createMutation.mutateAsync,
+    revokeInvite: handleRevokeInvite,
+    reload: query.refetch,
   };
 }

@@ -1,11 +1,13 @@
 // components/rooms/invite-create-form.tsx
 "use client";
 
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Spinner } from "@/components/ui/spinner";
+import { toast } from "sonner";
 
 export default function InviteCreateForm({
   onCreate,
@@ -18,34 +20,48 @@ export default function InviteCreateForm({
   const [expiresInHours, setExpiresInHours] = useState("");
   const [maxUses, setMaxUses] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  async function onSubmit(event: React.FormEvent) {
-    event.preventDefault();
-    setSubmitting(true);
+  const onSubmit = useCallback(
+    async (event: React.FormEvent) => {
+      event.preventDefault();
+      setError(null);
+      setSubmitting(true);
 
-    try {
-      await onCreate({
-        expires_in_hours: expiresInHours ? Number(expiresInHours) : undefined,
-        max_uses: maxUses ? Number(maxUses) : undefined,
-      });
+      try {
+        await onCreate({
+          expires_in_hours: expiresInHours ? Number(expiresInHours) : undefined,
+          max_uses: maxUses ? Number(maxUses) : undefined,
+        });
 
-      setExpiresInHours("");
-      setMaxUses("");
-    } catch (error) {
-      window.alert(
-        error instanceof Error ? error.message : "Invite creation failed",
-      );
-    } finally {
-      setSubmitting(false);
-    }
-  }
+        setExpiresInHours("");
+        setMaxUses("");
+        toast.success("Invite token created successfully!");
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Failed to create invite token";
+        setError(message);
+        toast.error("Failed to create invite token", { description: message });
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [onCreate, expiresInHours, maxUses],
+  );
 
   return (
     <Card>
       <h3 className="text-base font-semibold text-white">Create invite</h3>
       <p className="mt-0.5 text-sm text-[rgb(158,183,211)]">
-        Both fields are optional. Leave blank for an unlimited, non-expiring token.
+        Both fields are optional. Leave blank for an unlimited, non-expiring
+        token.
       </p>
+
+      {error && (
+        <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/5 p-3">
+          <p className="text-sm text-[rgb(255,160,170)]">{error}</p>
+        </div>
+      )}
 
       <form className="mt-5 space-y-4" onSubmit={onSubmit}>
         <div className="grid gap-4 sm:grid-cols-2">
@@ -86,7 +102,14 @@ export default function InviteCreateForm({
 
         <div className="pt-1">
           <Button type="submit" disabled={submitting} variant="secondary">
-            {submitting ? "Creating…" : "Create invite token"}
+            {submitting ? (
+              <>
+                <Spinner size="sm" className="mr-2" />
+                Creating…
+              </>
+            ) : (
+              "Create invite token"
+            )}
           </Button>
         </div>
       </form>

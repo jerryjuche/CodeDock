@@ -30,10 +30,12 @@ export default function PresenceCard({
   presence,
   loading,
   error,
+  onRetry,
 }: {
   presence: RoomPresence | null;
   loading: boolean;
   error: string | null;
+  onRetry?: () => void;
 }) {
   return (
     <Card>
@@ -77,7 +79,17 @@ export default function PresenceCard({
           ))}
         </div>
       ) : error ? (
-        <p className="mt-3 text-sm text-[rgb(255,160,170)]">{error}</p>
+        <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/5 p-3">
+          <p className="text-sm text-[rgb(255,160,170)] mb-2">{error}</p>
+          {onRetry && (
+            <button
+              onClick={onRetry}
+              className="px-3 py-1.5 text-xs font-medium rounded bg-red-500/20 text-red-300 hover:bg-red-500/30 transition-colors"
+            >
+              Try again
+            </button>
+          )}
+        </div>
       ) : !presence ? (
         <p className="mt-3 text-sm text-[rgb(158,183,211)]">
           No presence data available.
