@@ -8,9 +8,11 @@ import (
 	"os"
 	"strings"
 
+	sentryhttp "github.com/getsentry/sentry-go/http"
 	"github.com/jerryjuche/CodeDock/internal/auth"
 	"github.com/jerryjuche/CodeDock/internal/handlers"
 	"github.com/jerryjuche/CodeDock/internal/hub"
+	"github.com/jerryjuche/CodeDock/internal/observability"
 	"github.com/jerryjuche/CodeDock/internal/services"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
@@ -21,12 +23,17 @@ func main() {
 		log.Println("no .env file found, reading from system environment")
 	}
 
+	flushSentry := observability.InitSentry()
+	defer flushSentry()
+
 	db, err := connectDB()
 	if err != nil {
+		observability.CaptureError(err)
+		flushSentry()
 		log.Fatalf("could not connect to database, %s", err)
-		return
 	}
 	defer db.Close()
+
 	log.Println("connected to database successfully")
 
 	snapshotStore := &services.DBSnapshotStore{DB: db}
@@ -56,7 +63,7 @@ func main() {
 	mux.HandleFunc("POST /auth/login", authHandler.Login)
 	mux.Handle("GET /auth/me", auth.RequireAuth(http.HandlerFunc(authHandler.Me)))
 
-	// Legacy route kept temporarily as explicit deprecation response
+	// Legacy route kept temporarily as explicit deprecation response.
 	mux.HandleFunc("POST /auth/exchange", authHandler.ExchangeCode)
 
 	// Room routes
@@ -69,12 +76,13 @@ func main() {
 	mux.Handle("POST /rooms/{roomId}/activation/toggle", auth.RequireAuth(http.HandlerFunc(roomHandler.ToggleRoomActivation)))
 	mux.Handle("DELETE /rooms/{roomId}", auth.RequireAuth(http.HandlerFunc(roomHandler.DeleteRoom)))
 
-	// New web control-plane routes
+	// Web control-plane routes
 	mux.Handle("POST /join-code/resolve", auth.RequireAuth(http.HandlerFunc(inviteHandler.ResolveJoinCode)))
 	mux.Handle("GET /rooms/{roomId}/invites", auth.RequireAuth(http.HandlerFunc(inviteHandler.ListRoomInvites)))
 	mux.Handle("POST /rooms/{roomId}/invites", auth.RequireAuth(http.HandlerFunc(inviteHandler.CreateRoomInvite)))
 	mux.Handle("POST /rooms/{roomId}/invites/{inviteId}/revoke", auth.RequireAuth(http.HandlerFunc(inviteHandler.RevokeRoomInvite)))
 
+	// IDE launch routes
 	mux.Handle("POST /rooms/{roomId}/open-in-vscode", auth.RequireAuth(http.HandlerFunc(launchHandler.OpenInVSCode)))
 	mux.Handle("POST /rooms/{roomId}/open-ide", auth.RequireAuth(http.HandlerFunc(launchHandler.OpenIDE)))
 	mux.HandleFunc("POST /vscode/launch/exchange", launchHandler.ExchangeLaunchToken)
@@ -88,14 +96,22 @@ func main() {
 	}
 
 	allowedOrigins := getAllowedOrigins()
+
 	log.Printf("codedock server starting on port: %s", port)
 	log.Printf("allowed web origins: %s", strings.Join(allowedOrigins, ", "))
 
 	handler := withCORS(mux, allowedOrigins)
 
+	sentryHandler := sentryhttp.New(sentryhttp.Options{
+		Repanic: true,
+	})
+
+	handler = sentryHandler.Handle(handler)
+
 	if err := http.ListenAndServe(":"+port, handler); err != nil {
+		observability.CaptureError(err)
+		flushSentry()
 		log.Fatalf("error, server failed to start up, %s", err)
-		return
 	}
 }
 
@@ -106,22 +122,30 @@ func connectDB() (*sql.DB, error) {
 	password := os.Getenv("DB_PASSWORD")
 	dbname := os.Getenv("DB_NAME")
 	sslmode := os.Getenv("DB_SSLMODE")
+
 	if sslmode == "" {
 		sslmode = "disable"
 	}
 
 	connStr := fmt.Sprintf(
 		"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
-		host, port, user, password, dbname, sslmode,
+		host,
+		port,
+		user,
+		password,
+		dbname,
+		sslmode,
 	)
 
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
 		return nil, err
 	}
+
 	if err := db.Ping(); err != nil {
 		return nil, err
 	}
+
 	return db, nil
 }
 
@@ -136,6 +160,7 @@ func getAllowedOrigins() []string {
 
 	parts := strings.Split(raw, ",")
 	out := make([]string, 0, len(parts))
+
 	for _, part := range parts {
 		value := strings.TrimSpace(part)
 		if value != "" {
@@ -155,12 +180,14 @@ func getAllowedOrigins() []string {
 
 func withCORS(next http.Handler, allowedOrigins []string) http.Handler {
 	allowed := make(map[string]struct{}, len(allowedOrigins))
+
 	for _, origin := range allowedOrigins {
 		allowed[origin] = struct{}{}
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
+
 		if origin != "" {
 			if _, ok := allowed[origin]; ok {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
