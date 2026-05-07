@@ -4,7 +4,10 @@ import * as path from "path";
 import * as vscode from "vscode";
 
 export class GitError extends Error {
-  constructor(message: string, public readonly code?: number) {
+  constructor(
+    message: string,
+    public readonly code?: number,
+  ) {
     super(message);
     this.name = "GitError";
   }
@@ -40,7 +43,8 @@ async function runGitCommand(
       env: {
         ...process.env,
         GIT_TERMINAL_PROMPT: "0",
-        GIT_SSH_COMMAND: "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new",
+        GIT_SSH_COMMAND:
+          "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new",
       },
     });
 
@@ -65,7 +69,9 @@ async function runGitCommand(
       if (code === 0) {
         resolve();
       } else {
-        reject(new GitError(`git ${args[0]} failed: ${stderr}`, code ?? undefined));
+        reject(
+          new GitError(`git ${args[0]} failed: ${stderr}`, code ?? undefined),
+        );
       }
     });
   });
@@ -101,7 +107,12 @@ async function getGitRemoteOrigin(
       if (code === 0) {
         resolve(stdout.trim());
       } else {
-        reject(new GitError(`git remote get-url failed: ${stderr}`, code ?? undefined));
+        reject(
+          new GitError(
+            `git remote get-url failed: ${stderr}`,
+            code ?? undefined,
+          ),
+        );
       }
     });
   });
@@ -157,8 +168,27 @@ export async function ensureGitRepo(
     `CodeDock[git]: cloning ${safeRepoUrl} (branch: ${branch}) into ${targetPath}`,
   );
 
-  // We must clone into the targetPath. Since ensureManagedWorkspace creates the empty dir,
-  // we can clone into it, as long as it's perfectly empty.
+  // Clear target path of non-.git files to avoid "destination path already exists" error
+  try {
+    const entries = await fs.readdir(targetPath);
+    for (const entry of entries) {
+      if (entry !== ".git") {
+        const entryPath = path.join(targetPath, entry);
+        const stat = await fs.stat(entryPath);
+        if (stat.isDirectory()) {
+          await fs.rm(entryPath, { recursive: true, force: true });
+        } else {
+          await fs.unlink(entryPath);
+        }
+      }
+    }
+  } catch (e) {
+    outputChannel.appendLine(
+      `CodeDock[git]: warning - failed to clean target path: ${e instanceof Error ? e.message : "unknown"}`,
+    );
+  }
+
+  // Clone into the targetPath
   await runGitCommand(
     ["clone", "--branch", branch, safeRepoUrl, "."],
     targetPath,

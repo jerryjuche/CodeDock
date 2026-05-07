@@ -1,56 +1,46 @@
 "use client";
 
-import { useState } from "react";
 import { openInVSCode, createEditorLaunch } from "@/lib/api/launch";
 import { useAuth } from "@/hooks/use-auth";
-import type { LaunchTokenResponse, CodeDockEditorTarget } from "@/types/launch";
+import type { CodeDockEditorTarget } from "@/types/launch";
 
 export function useLaunch(roomId: string) {
   const { token } = useAuth();
-  const [loading, setLoading] = useState(false);
 
   async function openRoom() {
     if (!token) {
       throw new Error("You are not logged in.");
     }
 
-    setLoading(true);
-    try {
-      const response = await openInVSCode(token, roomId);
-      window.location.assign(response.deep_link);
-    } finally {
-      setLoading(false);
-    }
+    const response = await openInVSCode(token, roomId);
+    window.location.assign(response.deep_link);
   }
 
-  return { openRoom, loading };
+  return { openRoom };
 }
 
 export function useLaunchIDE(roomId: string) {
   const { token } = useAuth();
-  const [loading, setLoading] = useState(false);
 
-  async function launchIDE(
-    editor: CodeDockEditorTarget,
-    copyOnly: boolean = false,
-  ): Promise<LaunchTokenResponse> {
+  async function launchIDE(editor: CodeDockEditorTarget): Promise<void> {
     if (!token) {
       throw new Error("You are not logged in.");
     }
 
-    setLoading(true);
-    try {
-      const response = await createEditorLaunch(roomId, token, editor);
-
-      if (!copyOnly) {
-        window.location.assign(response.deep_link);
-      }
-
-      return response;
-    } finally {
-      setLoading(false);
-    }
+    const response = await createEditorLaunch(roomId, token, editor);
+    window.location.assign(response.deep_link);
   }
 
-  return { launchIDE, loading };
+  async function requestIDEDeepLink(
+    editor: CodeDockEditorTarget,
+  ): Promise<string> {
+    if (!token) {
+      throw new Error("You are not logged in.");
+    }
+
+    const response = await createEditorLaunch(roomId, token, editor);
+    return response.deep_link;
+  }
+
+  return { launchIDE, requestIDEDeepLink };
 }

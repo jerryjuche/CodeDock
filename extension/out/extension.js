@@ -3759,6 +3759,9 @@ var ApiClient = class {
   constructor(baseUrl) {
     this.baseUrl = baseUrl;
   }
+  setBaseUrl(serverUrl) {
+    this.baseUrl = serverUrl;
+  }
   async login(email, password) {
     return this.request(
       "/auth/login",
@@ -3911,6 +3914,9 @@ var WebSocketManager = class {
         `CodeDock[ws]: removed close handler (total=${this.closeHandlers.size})`
       );
     });
+  }
+  setServerUrl(serverUrl) {
+    this.serverUrl = serverUrl;
   }
   connect(token, roomId) {
     if (!token || !roomId) {
@@ -4070,6 +4076,10 @@ var WebSocketManager = class {
         vscode2.window.showWarningMessage(
           "CodeDock: This session has ended because the room was deleted."
         );
+      } else if (reason === "room_deactivated" || code === 4005) {
+        vscode2.window.showInformationMessage(
+          "CodeDock: Room has been deactivated temporarily. Reconnecting automatically when it becomes available."
+        );
       } else if (reason === "forbidden" || reason === "room_unavailable" || code === 4003) {
         vscode2.window.showWarningMessage(
           "CodeDock: This room is no longer available."
@@ -4161,7 +4171,9 @@ var WebSocketManager = class {
   }
   flushQueue() {
     if (this.queue.length === 0) {
-      this.outputChannel.appendLine("CodeDock[ws]: flush skipped (queue empty)");
+      this.outputChannel.appendLine(
+        "CodeDock[ws]: flush skipped (queue empty)"
+      );
       return;
     }
     this.outputChannel.appendLine(
@@ -4174,7 +4186,7 @@ var WebSocketManager = class {
     }
   }
   isTerminalClose(code, reason) {
-    return code === 4003 || code === 4004 || reason === "forbidden" || reason === "room_deleted" || reason === "room_unavailable";
+    return code === 4003 || reason === "forbidden" || reason === "room_deleted" || reason === "room_unavailable" || code === 4004 && reason === "room_deleted";
   }
 };
 
@@ -4348,7 +4360,7 @@ var MIN_SAFE_INTEGER = Number.MIN_SAFE_INTEGER;
 var LOWEST_INT32 = 1 << 31;
 var isInteger = Number.isInteger || ((num) => typeof num === "number" && isFinite(num) && floor(num) === num);
 var isNaN2 = Number.isNaN;
-var parseInt = Number.parseInt;
+var parseInt2 = Number.parseInt;
 
 // node_modules/lib0/string.js
 var fromCharCode = String.fromCharCode;
@@ -12881,7 +12893,9 @@ async function runGitCommand(args2, cwd, outputChannel) {
       if (code === 0) {
         resolve2();
       } else {
-        reject(new GitError(`git ${args2[0]} failed: ${stderr}`, code ?? void 0));
+        reject(
+          new GitError(`git ${args2[0]} failed: ${stderr}`, code ?? void 0)
+        );
       }
     });
   });
@@ -12907,7 +12921,12 @@ async function getGitRemoteOrigin(cwd, outputChannel) {
       if (code === 0) {
         resolve2(stdout.trim());
       } else {
-        reject(new GitError(`git remote get-url failed: ${stderr}`, code ?? void 0));
+        reject(
+          new GitError(
+            `git remote get-url failed: ${stderr}`,
+            code ?? void 0
+          )
+        );
       }
     });
   });
@@ -12948,6 +12967,24 @@ async function ensureGitRepo(repoUrl, branch, targetPath, outputChannel) {
   outputChannel.appendLine(
     `CodeDock[git]: cloning ${safeRepoUrl} (branch: ${branch}) into ${targetPath}`
   );
+  try {
+    const entries = await fs2.readdir(targetPath);
+    for (const entry of entries) {
+      if (entry !== ".git") {
+        const entryPath = path2.join(targetPath, entry);
+        const stat3 = await fs2.stat(entryPath);
+        if (stat3.isDirectory()) {
+          await fs2.rm(entryPath, { recursive: true, force: true });
+        } else {
+          await fs2.unlink(entryPath);
+        }
+      }
+    }
+  } catch (e) {
+    outputChannel.appendLine(
+      `CodeDock[git]: warning - failed to clean target path: ${e instanceof Error ? e.message : "unknown"}`
+    );
+  }
   await runGitCommand(
     ["clone", "--branch", branch, safeRepoUrl, "."],
     targetPath,
@@ -12959,6 +12996,8 @@ async function ensureGitRepo(repoUrl, branch, targetPath, outputChannel) {
 var PENDING_HYDRATED_ROOM_ID_KEY2 = "codedock.pendingHydrated.roomId";
 var PENDING_HYDRATED_ROOT_KEY2 = "codedock.pendingHydrated.rootPath";
 var PENDING_LAUNCH_CONTEXT_KEY = "codedock.pendingLaunch.context";
+var activeLaunchTokens = /* @__PURE__ */ new Set();
+var statusBarItem = null;
 var authManager;
 var wsManager;
 var yjsSync;
@@ -13021,6 +13060,10 @@ async function activate(context) {
         "CodeDock Chat is not available in this build yet."
       )
     ),
+    vscode4.commands.registerCommand("codedock.openWebApp", async () => {
+      const url = vscode4.workspace.getConfiguration("codedock").get("webAppUrl", "https://codedock.fly.dev");
+      await vscode4.env.openExternal(vscode4.Uri.parse(url));
+    }),
     vscode4.commands.registerCommand("codedock.disconnectRoom", () => {
       outputChannel.appendLine("CodeDock: user requested room disconnect");
       void cleanupActiveRoomState(context);
@@ -13035,6 +13078,30 @@ async function activate(context) {
       }
     })
   );
+  const statusItem = vscode4.window.createStatusBarItem(
+    vscode4.StatusBarAlignment.Right,
+    100
+  );
+  statusItem.command = "codedock.openWebApp";
+  statusItem.text = "$(extensions) CodeDock";
+  statusItem.tooltip = "Open the CodeDock web app";
+  statusItem.show();
+  context.subscriptions.push(statusItem);
+  statusBarItem = statusItem;
+  const autoUpdate = config.get("autoUpdate", true);
+  const updateCheckIntervalMinutes = Math.max(
+    1,
+    config.get("updateCheckIntervalMinutes", 60)
+  );
+  if (autoUpdate) {
+    await checkForExtensionUpdate(context, config, statusItem);
+    const intervalHandle = setInterval(() => {
+      void checkForExtensionUpdate(context, config, statusItem);
+    }, updateCheckIntervalMinutes * 6e4);
+    context.subscriptions.push({
+      dispose: () => clearInterval(intervalHandle)
+    });
+  }
   await restoreSession();
   await resumePendingLaunch(context, outputChannel);
 }
@@ -13045,21 +13112,140 @@ async function restoreSession() {
   }
   await authManager.validateToken();
 }
+async function checkForExtensionUpdate(context, config, statusBarItem2) {
+  const autoUpdate = config.get("autoUpdate", true);
+  const currentVersion = context.extension.packageJSON.version;
+  const lastPrompted = context.globalState.get(
+    "codedock.lastUpdatePromptedVersion"
+  );
+  if (!autoUpdate) {
+    statusBarItem2.text = "$(extensions) CodeDock";
+    statusBarItem2.tooltip = "Open the CodeDock web app";
+    return;
+  }
+  try {
+    const release = await fetchLatestRelease();
+    if (!release?.tag_name) {
+      statusBarItem2.text = "$(extensions) CodeDock";
+      statusBarItem2.tooltip = "Open the CodeDock web app";
+      return;
+    }
+    const latestVersion = release.tag_name.replace(/^v/i, "");
+    const isNewer = compareVersions(latestVersion, currentVersion);
+    if (!isNewer) {
+      statusBarItem2.text = "$(extensions) CodeDock";
+      statusBarItem2.tooltip = "Open the CodeDock web app";
+      return;
+    }
+    statusBarItem2.text = "$(warning) CodeDock Update";
+    statusBarItem2.tooltip = `CodeDock update available (${release.tag_name})`;
+    if (lastPrompted === release.tag_name) {
+      return;
+    }
+    const selection = await vscode4.window.showInformationMessage(
+      `A new CodeDock extension release ${release.tag_name} is available.`,
+      "Install Update",
+      "View Release",
+      "Later"
+    );
+    if (selection === "Install Update") {
+      await vscode4.env.openExternal(
+        vscode4.Uri.parse(
+          "https://marketplace.visualstudio.com/items?itemName=jerryjuche.codedock"
+        )
+      );
+    } else if (selection === "View Release") {
+      await vscode4.env.openExternal(
+        vscode4.Uri.parse(
+          release.html_url ?? "https://github.com/jerryjuche/CodeDock/releases/latest"
+        )
+      );
+    }
+    await context.globalState.update(
+      "codedock.lastUpdatePromptedVersion",
+      release.tag_name
+    );
+  } catch (error) {
+    console.error(
+      "CodeDock: update check failed",
+      error instanceof Error ? error.message : error
+    );
+    statusBarItem2.text = "$(extensions) CodeDock";
+    statusBarItem2.tooltip = "Open the CodeDock web app";
+  }
+}
+async function fetchLatestRelease() {
+  const response = await fetch(
+    "https://api.github.com/repos/jerryjuche/CodeDock/releases/latest",
+    {
+      headers: {
+        Accept: "application/vnd.github+json",
+        "User-Agent": "CodeDock-VSCode-Extension"
+      }
+    }
+  );
+  if (!response.ok) {
+    throw new Error(`GitHub release check failed: ${response.status}`);
+  }
+  const data = await response.json();
+  return data;
+}
+function compareVersions(latest, current) {
+  const toParts = (value) => value.split(/[.-]/g).map((part) => parseInt(part.replace(/[^0-9]/g, ""), 10) || 0);
+  const latestParts = toParts(latest);
+  const currentParts = toParts(current);
+  const maxLength = Math.max(latestParts.length, currentParts.length);
+  for (let i = 0; i < maxLength; i += 1) {
+    const latestPart = latestParts[i] ?? 0;
+    const currentPart = currentParts[i] ?? 0;
+    if (latestPart > currentPart) {
+      return true;
+    }
+    if (latestPart < currentPart) {
+      return false;
+    }
+  }
+  return false;
+}
 async function handleLaunchUri(context, uri, outputChannel) {
   outputChannel.appendLine(`URI received: ${uri.toString()}`);
   const params2 = new URLSearchParams(uri.query);
   const launchToken = params2.get("token");
+  const serverUrl = params2.get("server_url");
   const legacyCode = params2.get("code");
   const legacyRoomId = params2.get("room_id");
   outputChannel.appendLine(`token: ${launchToken ?? "null"}`);
+  outputChannel.appendLine(`server_url: ${serverUrl ?? "null"}`);
   outputChannel.appendLine(`code: ${legacyCode ?? "null"}`);
   outputChannel.appendLine(`room_id: ${legacyRoomId ?? "null"}`);
+  if (serverUrl) {
+    apiClient.setBaseUrl(serverUrl);
+    wsManager.setServerUrl(serverUrl);
+    outputChannel.appendLine(`CodeDock: using launch server URL ${serverUrl}`);
+  }
   if (!launchToken) {
     vscode4.window.showErrorMessage(
       "CodeDock: This launch link is missing its token."
     );
     return;
   }
+  const storedPending = context.globalState.get(
+    PENDING_LAUNCH_CONTEXT_KEY
+  );
+  if (storedPending?.launch_token === launchToken) {
+    outputChannel.appendLine(
+      "CodeDock: duplicate launch URI received; resuming existing pending launch."
+    );
+    await resumePendingLaunch(context, outputChannel);
+    return;
+  }
+  if (activeLaunchTokens.has(launchToken)) {
+    outputChannel.appendLine(
+      "CodeDock: launch token exchange already in progress; ignoring duplicate URI."
+    );
+    return;
+  }
+  activeLaunchTokens.add(launchToken);
   try {
     const launchContext = await apiClient.exchangeLaunchToken(launchToken);
     if (launchContext.auth_token) {
@@ -13074,7 +13260,9 @@ async function handleLaunchUri(context, uri, outputChannel) {
     );
     const pending = {
       ...launchContext,
-      workspace_fs_path: workspaceUri.fsPath
+      workspace_fs_path: workspaceUri.fsPath,
+      launch_token: launchToken,
+      auth_token: launchContext.auth_token
     };
     await context.globalState.update(PENDING_LAUNCH_CONTEXT_KEY, pending);
     const currentRoot = vscode4.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -13114,6 +13302,8 @@ async function handleLaunchUri(context, uri, outputChannel) {
     vscode4.window.showErrorMessage(
       `CodeDock: Launch failed \u2014 ${error instanceof Error ? error.message : "unknown error"}`
     );
+  } finally {
+    activeLaunchTokens.delete(launchToken);
   }
 }
 async function resumePendingLaunch(context, outputChannel) {
@@ -13166,7 +13356,14 @@ async function resumePendingLaunch(context, outputChannel) {
       return;
     }
   }
-  const token = await authManager.getToken();
+  let token = await authManager.getToken();
+  if (!token && pending.auth_token) {
+    await authManager.storeTokenSilently(pending.auth_token);
+    token = pending.auth_token;
+    outputChannel.appendLine(
+      "CodeDock: restored auth token from pending launch context"
+    );
+  }
   if (!token) {
     vscode4.window.showErrorMessage(
       "CodeDock: No auth session found for this launch. Please log in again."

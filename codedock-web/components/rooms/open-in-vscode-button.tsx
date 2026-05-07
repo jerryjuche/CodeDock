@@ -17,12 +17,14 @@ export default function OpenInVSCodeButton({
   launchReason?: string;
   isHost?: boolean;
 }) {
-  const { openRoom, loading } = useLaunch(roomId);
+  const { openRoom } = useLaunch(roomId);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   const disabled = loading || (!isHost && !launchAllowed);
 
   async function handleOpen() {
     setError(null);
+    setLoading(true);
     try {
       await openRoom();
     } catch (err) {
@@ -31,6 +33,8 @@ export default function OpenInVSCodeButton({
           ? err.message
           : "Failed to open in VS Code. Please try again.",
       );
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -98,7 +102,9 @@ export default function OpenInVSCodeButton({
       {isHost && !launchAllowed && (
         <div className="mt-5 flex items-start gap-3 rounded-xl border border-[rgba(36,166,242,0.2)] bg-[rgba(36,166,242,0.05)] px-4 py-3.5">
           <p className="text-sm leading-relaxed text-[rgb(36,166,242)]">
-            <strong>Host Note:</strong> You can launch now to set up the workspace. Guests will be able to join once you have opened the project in VS Code.
+            <strong>Host Note:</strong> You can launch now to set up the
+            workspace. Guests will be able to join once you have opened the
+            project in VS Code.
           </p>
         </div>
       )}

@@ -21,9 +21,9 @@ export default function OpenIDEButton({
   roomId: string;
   launchAllowed: boolean;
   launchReason?: string;
-  isHost?: boolean;
+  isHost: boolean;
 }) {
-  const { launchIDE, loading } = useLaunchIDE(roomId);
+  const { launchIDE, requestIDEDeepLink } = useLaunchIDE(roomId);
   const [showModal, setShowModal] = useState(false);
   const [selectedEditor, setSelectedEditor] =
     useState<CodeDockEditorTarget | null>(null);
@@ -33,8 +33,10 @@ export default function OpenIDEButton({
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [launchingEditor, setLaunchingEditor] =
     useState<CodeDockEditorTarget | null>(null);
+  const [copyingEditor, setCopyingEditor] =
+    useState<CodeDockEditorTarget | null>(null);
 
-  const disabled = loading || (!isHost && !launchAllowed);
+  const disabled = !isHost && !launchAllowed;
 
   async function handleLaunchEditor(editor: CodeDockEditorTarget) {
     setLaunchError(null);
@@ -53,19 +55,21 @@ export default function OpenIDEButton({
   }
 
   async function handleCopyLink(editor: CodeDockEditorTarget) {
+    setLaunchError(null);
+    setCopyingEditor(editor);
     try {
-      const response = await launchIDE(editor, true);
-      if (response.deep_link) {
-        await navigator.clipboard.writeText(response.deep_link);
-        setCopiedEditor(editor);
-        setTimeout(() => setCopiedEditor(null), 2000);
-      }
+      const deepLink = await requestIDEDeepLink(editor);
+      await navigator.clipboard.writeText(deepLink);
+      setCopiedEditor(editor);
+      setTimeout(() => setCopiedEditor(null), 2000);
     } catch (err) {
       setLaunchError(
         err instanceof Error
           ? err.message
           : "Failed to copy link. Please try again.",
       );
+    } finally {
+      setCopyingEditor(null);
     }
   }
 
@@ -101,7 +105,7 @@ export default function OpenIDEButton({
         </div>
 
         {/* Readiness warning */}
-        {!launchAllowed && launchReason && !isHost ? (
+        {!launchAllowed && !isHost && launchReason ? (
           <div className="mt-5 flex items-start gap-3 rounded-xl border border-[rgba(249,145,53,0.2)] bg-[rgba(249,145,53,0.07)] px-4 py-3.5">
             <svg
               viewBox="0 0 16 16"
@@ -128,15 +132,15 @@ export default function OpenIDEButton({
           </div>
         ) : null}
 
-        {isHost && !launchAllowed && (
-          <div className="mt-5 flex items-start gap-3 rounded-xl border border-[rgba(36,166,242,0.2)] bg-[rgba(36,166,242,0.05)] px-4 py-3.5">
+        {!launchAllowed && isHost ? (
+          <div className="mt-5 rounded-xl border border-[rgba(36,166,242,0.2)] bg-[rgba(36,166,242,0.05)] px-4 py-3.5">
             <p className="text-sm leading-relaxed text-[rgb(36,166,242)]">
-              <strong>Host Note:</strong> You can launch now to set up the
-              workspace. Guests will be able to join once you have opened the
-              project in your editor.
+              You are the host. Open the IDE now to select the repository and
+              prepare the workspace for guests. Guests will stay blocked until
+              preparation is complete.
             </p>
           </div>
-        )}
+        ) : null}
 
         {/* Launch error */}
         {launchError ? (
@@ -242,15 +246,17 @@ export default function OpenIDEButton({
                   </Button>
                   <Button
                     variant="outline"
-                    disabled={launchingEditor !== null}
+                    disabled={copyingEditor !== null}
                     onClick={() => {
                       void handleCopyLink(selectedEditor);
                     }}
                     className="w-full"
                   >
-                    {copiedEditor === selectedEditor
-                      ? "Link copied!"
-                      : `Copy ${EDITOR_LABELS[selectedEditor]} link`}
+                    {copyingEditor === selectedEditor
+                      ? "Copying…"
+                      : copiedEditor === selectedEditor
+                        ? "Link copied!"
+                        : `Copy ${EDITOR_LABELS[selectedEditor]} link`}
                   </Button>
                 </>
               )}

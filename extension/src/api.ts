@@ -14,7 +14,11 @@ export type LaunchContext = {
 };
 
 export class ApiClient {
-  constructor(private readonly baseUrl: string) {}
+  constructor(private baseUrl: string) {}
+
+  setBaseUrl(serverUrl: string): void {
+    this.baseUrl = serverUrl;
+  }
 
   async login(email: string, password: string): Promise<AuthResponse> {
     return this.request<AuthResponse>(

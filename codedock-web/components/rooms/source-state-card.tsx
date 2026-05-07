@@ -15,6 +15,10 @@ function readableStatus(state: RoomSourceState) {
       return "Repository configured";
     case "repo_not_configured":
       return "Repository not configured";
+    case "waiting_for_host_bind":
+      return "Waiting for host to prepare repository";
+    case "waiting_for_host_ready":
+      return "Waiting for host IDE session";
     case "host_workspace_required":
       return "Host must select a project folder in VS Code";
     case "host_activation_required":
@@ -25,6 +29,9 @@ function readableStatus(state: RoomSourceState) {
       return "Waiting for host workspace";
     case "clone_not_ready":
       return "Repository is not provisioned yet";
+    case "paused":
+    case "inactive":
+      return "Room deactivated";
     default:
       return state.status || "Unknown";
   }
@@ -37,8 +44,16 @@ function StatusPill({ status }: { status: string }) {
       className="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium transition-all"
       style={
         ready
-          ? { background: "rgba(42,211,139,0.08)", color: "rgb(42,211,139)", border: "1px solid rgba(42,211,139,0.15)" }
-          : { background: "rgba(249,145,53,0.08)", color: "rgb(249,145,53)", border: "1px solid rgba(249,145,53,0.15)" }
+          ? {
+              background: "rgba(42,211,139,0.08)",
+              color: "rgb(42,211,139)",
+              border: "1px solid rgba(42,211,139,0.15)",
+            }
+          : {
+              background: "rgba(249,145,53,0.08)",
+              color: "rgb(249,145,53)",
+              border: "1px solid rgba(249,145,53,0.15)",
+            }
       }
     >
       <span
@@ -58,7 +73,9 @@ function StatusPill({ status }: { status: string }) {
 function BoolRow({ label, value }: { label: string; value: boolean }) {
   return (
     <div className="flex items-center justify-between py-3">
-      <span className="text-sm font-medium text-[rgb(158,183,211)]">{label}</span>
+      <span className="text-sm font-medium text-[rgb(158,183,211)]">
+        {label}
+      </span>
       <span className="flex items-center gap-1.5">
         <span
           className="h-1.5 w-1.5 rounded-full transition-all duration-500"
@@ -111,17 +128,20 @@ export default function SourceStateCard({
   };
 
   const showToggleButton = isHost;
+  const activationDisabled = !sourceState.activated && !sourceState.host_bound;
 
   return (
     <Card className="relative overflow-hidden border-white/[0.04] bg-white/[0.02] backdrop-blur-xl">
       {/* Decorative gradient flare */}
       <div className="absolute -right-20 -top-20 h-40 w-40 rounded-full bg-emerald-500/5 blur-[80px]" />
-      
+
       <div className="relative p-5">
         {/* Header: title + status pill */}
         <div className="flex items-center justify-between gap-4">
           <div>
-            <h3 className="text-sm font-bold uppercase tracking-wider text-white/50">Source state</h3>
+            <h3 className="text-sm font-bold uppercase tracking-wider text-white/50">
+              Source state
+            </h3>
             <p className="mt-1 text-lg font-semibold text-white">
               Launch Readiness
             </p>
@@ -135,32 +155,54 @@ export default function SourceStateCard({
           <BoolRow label="Network Access" value={sourceState.launch_allowed} />
         </div>
 
+        {!sourceState.launch_allowed &&
+        sourceState.activated === false &&
+        sourceState.host_bound ? (
+          <div className="mt-5 rounded-xl border border-orange-500/20 bg-orange-500/5 px-4 py-3.5">
+            <p className="text-xs font-medium leading-relaxed text-orange-400/90">
+              Guests cannot open the workspace or collaborate until the host
+              activates the room.
+            </p>
+          </div>
+        ) : null}
+
         {/* Manual Activation Toggle for Host */}
         {showToggleButton && (
           <div className="mt-8">
             <Button
               onClick={handleToggle}
-              disabled={loading}
+              disabled={loading || activationDisabled}
               className={`relative w-full h-12 overflow-hidden rounded-xl border transition-all duration-300 active:scale-[0.98] ${
                 sourceState.activated
                   ? "bg-rose-500/10 border-rose-500/30 text-rose-400 hover:bg-rose-500/20"
-                  : "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20"
+                  : activationDisabled
+                    ? "bg-slate-500/10 border-slate-500/20 text-slate-300 cursor-not-allowed"
+                    : "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20"
               }`}
             >
               {loading ? (
                 <Loader2 className="h-4.5 w-4.5 animate-spin" />
               ) : null}
-              
+
               <span className="relative z-10 text-sm font-bold tracking-tight">
-                {sourceState.activated ? "Deactivate Room" : "Activate Room for Guests"}
+                {sourceState.activated
+                  ? "Deactivate Room"
+                  : "Activate Room for Guests"}
               </span>
             </Button>
-            
-            <div className="mt-3 flex items-center justify-center gap-2 text-[10px] uppercase tracking-widest font-bold opacity-40">
-              <span className="h-px w-8 bg-white/10" />
-              {sourceState.activated ? "Guests can join" : "Gated access"}
-              <span className="h-px w-8 bg-white/10" />
-            </div>
+
+            {activationDisabled ? (
+              <div className="mt-3 rounded-xl border border-slate-500/20 bg-slate-500/5 px-4 py-3 text-sm text-slate-300">
+                Select a workspace in VS Code before activating this room for
+                guests.
+              </div>
+            ) : (
+              <div className="mt-3 flex items-center justify-center gap-2 text-[10px] uppercase tracking-widest font-bold opacity-40">
+                <span className="h-px w-8 bg-white/10" />
+                {sourceState.activated ? "Guests can join" : "Gated access"}
+                <span className="h-px w-8 bg-white/10" />
+              </div>
+            )}
           </div>
         )}
 

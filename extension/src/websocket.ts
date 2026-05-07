@@ -27,11 +27,11 @@ export class WebSocketManager {
   private token: string | null = null;
   private roomId: string | null = null;
 
-  private readonly messageHandlers = new Set<MessageHandler>();
-  private readonly closeHandlers = new Set<CloseHandler>();
+  private messageHandlers = new Set<MessageHandler>();
+  private closeHandlers = new Set<CloseHandler>();
 
   constructor(
-    private readonly serverUrl: string,
+    private serverUrl: string,
     private readonly outputChannel: vscode.OutputChannel,
   ) {}
 
@@ -61,6 +61,10 @@ export class WebSocketManager {
         `CodeDock[ws]: removed close handler (total=${this.closeHandlers.size})`,
       );
     });
+  }
+
+  setServerUrl(serverUrl: string): void {
+    this.serverUrl = serverUrl;
   }
 
   connect(token: string, roomId: string): void {
@@ -275,6 +279,10 @@ export class WebSocketManager {
         vscode.window.showWarningMessage(
           "CodeDock: This session has ended because the room was deleted.",
         );
+      } else if (reason === "room_deactivated" || code === 4005) {
+        vscode.window.showInformationMessage(
+          "CodeDock: Room has been deactivated temporarily. Reconnecting automatically when it becomes available.",
+        );
       } else if (
         reason === "forbidden" ||
         reason === "room_unavailable" ||
@@ -393,7 +401,9 @@ export class WebSocketManager {
 
   private flushQueue(): void {
     if (this.queue.length === 0) {
-      this.outputChannel.appendLine("CodeDock[ws]: flush skipped (queue empty)");
+      this.outputChannel.appendLine(
+        "CodeDock[ws]: flush skipped (queue empty)",
+      );
       return;
     }
 
@@ -412,10 +422,10 @@ export class WebSocketManager {
   private isTerminalClose(code: number, reason: string): boolean {
     return (
       code === 4003 ||
-      code === 4004 ||
       reason === "forbidden" ||
       reason === "room_deleted" ||
-      reason === "room_unavailable"
+      reason === "room_unavailable" ||
+      (code === 4004 && reason === "room_deleted")
     );
   }
 }

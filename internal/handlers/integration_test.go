@@ -419,6 +419,9 @@ func TestRoomJoinInviteAndLaunchControlPlane(t *testing.T) {
 	if !strings.HasPrefix(hostLaunch.DeepLink, "vscode://jerryjuche.codedock/launch?token=") {
 		t.Fatalf("unexpected deep link: %q", hostLaunch.DeepLink)
 	}
+	if !strings.Contains(hostLaunch.DeepLink, "server_url=") {
+		t.Fatalf("expected server_url in deep link: %q", hostLaunch.DeepLink)
+	}
 
 	exchangeHostResp := performJSONRequest(t, app.mux, http.MethodPost, "/vscode/launch/exchange", map[string]any{
 		"launch_token": hostLaunch.LaunchToken,
@@ -442,6 +445,14 @@ func TestRoomJoinInviteAndLaunchControlPlane(t *testing.T) {
 		"launch_token": hostLaunch.LaunchToken,
 	}, "")
 	assertStatus(t, reuseHostLaunchResp, http.StatusUnauthorized)
+
+	bindResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms/"+room.ID+"/source/local/bind", map[string]any{
+		"workspace_label": "Local Workspace",
+	}, hostToken)
+	assertStatus(t, bindResp, http.StatusOK)
+
+	toggleResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms/"+room.ID+"/activation/toggle", nil, hostToken)
+	assertStatus(t, toggleResp, http.StatusOK)
 
 	guestLaunchResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms/"+room.ID+"/open-in-vscode", nil, guestAToken)
 	assertStatus(t, guestLaunchResp, http.StatusOK)
@@ -536,11 +547,11 @@ func TestOpenIDEMultiEditorSupport(t *testing.T) {
 	if !strings.HasPrefix(vsCodeLaunch.DeepLink, "vscode://jerryjuche.codedock/launch?token=") {
 		t.Fatalf("unexpected vscode deep link: %q", vsCodeLaunch.DeepLink)
 	}
-	if vsCodeLaunch.DeepLinks["vscode"] != vsCodeLaunch.DeepLink {
-		t.Fatalf("expected deep_links[vscode] to match deep_link")
+	if !strings.Contains(vsCodeLaunch.DeepLink, "server_url=") {
+		t.Fatalf("expected server_url in vscode deep link: %q", vsCodeLaunch.DeepLink)
 	}
-	if !strings.HasPrefix(vsCodeLaunch.DeepLinks["antigravity"], "antigravity://jerryjuche.codedock/launch?token=") {
-		t.Fatalf("unexpected antigravity deep link: %q", vsCodeLaunch.DeepLinks["antigravity"])
+	if len(vsCodeLaunch.DeepLinks) != 1 || vsCodeLaunch.DeepLinks["vscode"] != vsCodeLaunch.DeepLink {
+		t.Fatalf("expected deep_links to contain only vscode and match deep_link")
 	}
 
 	// Test OpenIDE with antigravity
@@ -566,8 +577,11 @@ func TestOpenIDEMultiEditorSupport(t *testing.T) {
 	if !strings.HasPrefix(antigravityLaunch.DeepLink, "antigravity://jerryjuche.codedock/launch?token=") {
 		t.Fatalf("unexpected antigravity deep link: %q", antigravityLaunch.DeepLink)
 	}
-	if antigravityLaunch.DeepLinks["antigravity"] != antigravityLaunch.DeepLink {
-		t.Fatalf("expected deep_links[antigravity] to match deep_link")
+	if !strings.Contains(antigravityLaunch.DeepLink, "server_url=") {
+		t.Fatalf("expected server_url in antigravity deep link: %q", antigravityLaunch.DeepLink)
+	}
+	if len(antigravityLaunch.DeepLinks) != 1 || antigravityLaunch.DeepLinks["antigravity"] != antigravityLaunch.DeepLink {
+		t.Fatalf("expected deep_links to contain only antigravity and match deep_link")
 	}
 
 	// Test invalid editor
@@ -620,6 +634,9 @@ func TestOpenIDEMultiEditorSupport(t *testing.T) {
 	if !strings.HasPrefix(oldVSCode.DeepLink, "vscode://jerryjuche.codedock/launch?token=") {
 		t.Fatalf("unexpected old vscode deep link: %q", oldVSCode.DeepLink)
 	}
+	if !strings.Contains(oldVSCode.DeepLink, "server_url=") {
+		t.Fatalf("expected server_url in legacy vscode deep link: %q", oldVSCode.DeepLink)
+	}
 }
 
 func setupTestApp(t *testing.T) *testApp {
@@ -655,6 +672,7 @@ func setupTestApp(t *testing.T) *testApp {
 	mux.Handle("GET /rooms/{roomId}/details", auth.RequireAuth(http.HandlerFunc(app.roomHandler.GetRoomDetails)))
 	mux.Handle("GET /rooms/{roomId}/presence", auth.RequireAuth(http.HandlerFunc(app.roomHandler.GetRoomPresence)))
 	mux.Handle("POST /rooms/{roomId}/source/local/bind", auth.RequireAuth(http.HandlerFunc(app.roomHandler.BindLocalWorkspace)))
+	mux.Handle("POST /rooms/{roomId}/activation/toggle", auth.RequireAuth(http.HandlerFunc(app.roomHandler.ToggleRoomActivation)))
 	mux.Handle("DELETE /rooms/{roomId}", auth.RequireAuth(http.HandlerFunc(app.roomHandler.DeleteRoom)))
 
 	mux.Handle("GET /auth/me", auth.RequireAuth(http.HandlerFunc(app.authHandler.Me)))
@@ -918,12 +936,13 @@ func TestGetRoomDetails_ReturnsMembershipAndSourceState(t *testing.T) {
 			Role string `json:"role"`
 		} `json:"membership"`
 		SourceState struct {
-			Type      string `json:"type"`
-			Ready     bool   `json:"ready"`
-			Status    string `json:"status"`
-			RepoOwner string `json:"repo_owner"`
-			RepoName  string `json:"repo_name"`
-			Branch    string `json:"branch"`
+			Type          string `json:"type"`
+			Ready         bool   `json:"ready"`
+			LaunchAllowed bool   `json:"launch_allowed"`
+			Status        string `json:"status"`
+			RepoOwner     string `json:"repo_owner"`
+			RepoName      string `json:"repo_name"`
+			Branch        string `json:"branch"`
 		} `json:"source_state"`
 	}
 	decodeJSON(t, detailsResp, &details)
@@ -937,8 +956,11 @@ func TestGetRoomDetails_ReturnsMembershipAndSourceState(t *testing.T) {
 	if details.SourceState.Type != services.SourceTypeGitHubRepo {
 		t.Fatalf("expected source_state type %q, got %q", services.SourceTypeGitHubRepo, details.SourceState.Type)
 	}
-	if !details.SourceState.Ready {
-		t.Fatal("expected github source_state ready=true")
+	if details.SourceState.Ready {
+		t.Fatal("expected github source_state ready=false before host hydrates repository")
+	}
+	if details.SourceState.LaunchAllowed {
+		t.Fatal("expected github source_state launch_allowed=false before host hydrates repository")
 	}
 	if details.SourceState.RepoOwner != "jerryjuche" {
 		t.Fatalf("expected repo_owner jerryjuche, got %q", details.SourceState.RepoOwner)
@@ -948,6 +970,93 @@ func TestGetRoomDetails_ReturnsMembershipAndSourceState(t *testing.T) {
 	}
 	if details.SourceState.Branch != "staging" {
 		t.Fatalf("expected branch staging, got %q", details.SourceState.Branch)
+	}
+}
+
+func TestGithubRepoRoom_RequiresHostBindBeforeActivation(t *testing.T) {
+	app := setupTestApp(t)
+	resetTestDB(t, app.db)
+
+	host := mustRegisterUser(t, app, "github-host")
+	guest := mustRegisterUser(t, app, "github-guest")
+
+	createResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms", map[string]any{
+		"name":        "GitHub Repo Room",
+		"source_type": "github_repo",
+		"source_metadata": map[string]any{
+			"repo_owner": "jerryjuche",
+			"repo_name":  "CodeDock",
+			"branch":     "staging",
+		},
+	}, host.Token)
+	assertStatus(t, createResp, http.StatusCreated)
+
+	var room roomJSON
+	decodeJSON(t, createResp, &room)
+
+	joinResp := performJSONRequest(t, app.mux, http.MethodPost, "/join-code/resolve", map[string]any{
+		"code": room.PrimaryJoinCode,
+	}, guest.Token)
+	assertStatus(t, joinResp, http.StatusOK)
+
+	guestDetailsResp := performJSONRequest(t, app.mux, http.MethodGet, "/rooms/"+room.ID+"/details", nil, guest.Token)
+	assertStatus(t, guestDetailsResp, http.StatusOK)
+
+	var guestDetails struct {
+		SourceState struct {
+			HostBound     bool   `json:"host_bound"`
+			Ready         bool   `json:"ready"`
+			LaunchAllowed bool   `json:"launch_allowed"`
+			Status        string `json:"status"`
+		} `json:"source_state"`
+	}
+	decodeJSON(t, guestDetailsResp, &guestDetails)
+
+	if guestDetails.SourceState.HostBound {
+		t.Fatal("expected github source_state host_bound=false before host binds repository")
+	}
+	if guestDetails.SourceState.Ready {
+		t.Fatal("expected github source_state ready=false before host binds repository")
+	}
+	if guestDetails.SourceState.LaunchAllowed {
+		t.Fatal("expected github source_state launch_allowed=false before host binds repository")
+	}
+	if guestDetails.SourceState.Status != "repo_configured" {
+		t.Fatalf("expected source_state status=repo_configured, got %q", guestDetails.SourceState.Status)
+	}
+
+	guestBlockedResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms/"+room.ID+"/open-in-vscode", nil, guest.Token)
+	if guestBlockedResp.Code != http.StatusConflict {
+		t.Fatalf("expected guest open-in-vscode to be rejected with 409, got %d", guestBlockedResp.Code)
+	}
+
+	bindResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms/"+room.ID+"/source/local/bind", map[string]any{
+		"workspace_label": "GitHub Repo",
+	}, host.Token)
+	t.Logf("bind request status=%d body=%s", bindResp.Code, bindResp.Body.String())
+	assertStatus(t, bindResp, http.StatusOK)
+
+	var boundDetails struct {
+		SourceState struct {
+			HostBound     bool   `json:"host_bound"`
+			Ready         bool   `json:"ready"`
+			LaunchAllowed bool   `json:"launch_allowed"`
+			Status        string `json:"status"`
+		} `json:"source_state"`
+	}
+	decodeJSON(t, bindResp, &boundDetails)
+
+	if !boundDetails.SourceState.HostBound {
+		t.Fatal("expected github source_state host_bound=true after host bind")
+	}
+	if boundDetails.SourceState.Ready {
+		t.Fatal("expected github source_state ready=false until activation")
+	}
+	if boundDetails.SourceState.LaunchAllowed {
+		t.Fatal("expected github source_state launch_allowed=false until activation")
+	}
+	if boundDetails.SourceState.Status != "waiting_for_host_ready" {
+		t.Fatalf("expected source_state status=waiting_for_host_ready after bind, got %q", boundDetails.SourceState.Status)
 	}
 }
 
@@ -1104,17 +1213,17 @@ func TestBindLocalWorkspace_UpdatesSourceState(t *testing.T) {
 	}
 	decodeJSON(t, bindResp, &boundDetails)
 
-	if !boundDetails.SourceState.Ready {
-		t.Fatal("expected room ready after bind")
+	if boundDetails.SourceState.Ready {
+		t.Fatal("expected room not ready after bind")
 	}
 	if !boundDetails.SourceState.HostBound {
 		t.Fatal("expected host_bound=true after bind")
 	}
-	if boundDetails.SourceState.Status != "ready" {
-		t.Fatalf("expected status=ready, got %q", boundDetails.SourceState.Status)
+	if boundDetails.SourceState.Status != "host_activation_required" {
+		t.Fatalf("expected status=host_activation_required, got %q", boundDetails.SourceState.Status)
 	}
-	if !boundDetails.SourceState.LaunchAllowed {
-		t.Fatal("expected launch_allowed=true after bind")
+	if boundDetails.SourceState.LaunchAllowed {
+		t.Fatal("expected launch_allowed=false after bind")
 	}
 	if boundDetails.SourceState.WorkspaceLabel != "my-project" {
 		t.Fatalf("expected workspace_label=my-project, got %q", boundDetails.SourceState.WorkspaceLabel)

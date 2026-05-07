@@ -2,7 +2,7 @@
   "name": "codedock",
   "displayName": "CodeDock",
   "description": "Self-hosted real-time collaborative coding for VS Code",
-  "version": "1.1.5",
+  "version": "2.0.0",
   "publisher": "jerryjuche",
   "license": "MIT",
   "icon": "images/codedock.jpg",
@@ -30,7 +30,8 @@
     "Other"
   ],
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onUri"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -61,6 +62,11 @@
         "category": "CodeDock"
       },
       {
+        "command": "codedock.openWebApp",
+        "title": "Open CodeDock Web App",
+        "category": "CodeDock"
+      },
+      {
         "command": "codedock.disconnectRoom",
         "title": "Disconnect from Room",
         "category": "CodeDock"
@@ -73,6 +79,25 @@
           "type": "string",
           "default": "https://codedock.fly.dev",
           "description": "Base URL of the CodeDock backend server",
+          "scope": "application"
+        },
+        "codedock.webAppUrl": {
+          "type": "string",
+          "default": "https://code-dock-beige.vercel.app/",
+          "description": "URL of the CodeDock web app to open from the status bar",
+          "scope": "application"
+        },
+        "codedock.autoUpdate": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically check for new CodeDock extension releases and prompt to update.",
+          "scope": "application"
+        },
+        "codedock.updateCheckIntervalMinutes": {
+          "type": "number",
+          "default": 60,
+          "minimum": 1,
+          "description": "Interval in minutes to re-check for new CodeDock extension releases.",
           "scope": "application"
         }
       }

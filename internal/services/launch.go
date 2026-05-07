@@ -59,11 +59,11 @@ type LaunchService struct {
 	DB *sql.DB
 }
 
-func (s *LaunchService) CreateRoomLaunch(roomID, userID string) (*LaunchTokenResponse, error) {
-	return s.CreateEditorLaunch(roomID, userID, EditorVSCode)
+func (s *LaunchService) CreateRoomLaunch(roomID, userID, serverURL string) (*LaunchTokenResponse, error) {
+	return s.CreateEditorLaunch(roomID, userID, EditorVSCode, serverURL)
 }
 
-func (s *LaunchService) CreateEditorLaunch(roomID, userID, editor string) (*LaunchTokenResponse, error) {
+func (s *LaunchService) CreateEditorLaunch(roomID, userID, editor, serverURL string) (*LaunchTokenResponse, error) {
 	editorTarget := EditorTarget(editor)
 	if !editorTarget.Valid() {
 		return nil, ErrInvalidEditor
@@ -83,6 +83,16 @@ func (s *LaunchService) CreateEditorLaunch(roomID, userID, editor string) (*Laun
 	}
 	if err != nil {
 		return nil, err
+	}
+
+	if role != "host" {
+		allowed, err := s.isGuestLaunchAllowed(roomID)
+		if err != nil {
+			return nil, err
+		}
+		if !allowed {
+			return nil, fmt.Errorf("room is not ready for guest launch - %w", ErrRoomNotReady)
+		}
 	}
 
 	rawToken, err := generateLaunchToken()
@@ -107,24 +117,67 @@ func (s *LaunchService) CreateEditorLaunch(roomID, userID, editor string) (*Laun
 		return nil, err
 	}
 
-	deepLinks := s.buildDeepLinks(rawToken)
-	selectedDeepLink := deepLinks[editor]
+	selectedDeepLink := s.buildDeepLink(editor, rawToken, serverURL)
+	selectedDeepLinks := map[string]string{editor: selectedDeepLink}
 
 	return &LaunchTokenResponse{
 		LaunchToken: rawToken,
 		Editor:      editor,
 		DeepLink:    selectedDeepLink,
-		DeepLinks:   deepLinks,
+		DeepLinks:   selectedDeepLinks,
 		ExpiresAt:   expiresAt.Format(time.RFC3339),
 	}, nil
 }
 
-func (s *LaunchService) buildDeepLinks(rawToken string) map[string]string {
+func (s *LaunchService) buildDeepLink(editor, rawToken, serverURL string) string {
 	encodedToken := url.QueryEscape(rawToken)
-	return map[string]string{
-		EditorVSCode:      fmt.Sprintf("%s://%s/launch?token=%s", URISchemeVSCode, extensionDeepLinkID, encodedToken),
-		EditorAntigravity: fmt.Sprintf("%s://%s/launch?token=%s", URISchemeAntigravity, extensionDeepLinkID, encodedToken),
+	encodedServerURL := url.QueryEscape(serverURL)
+
+	if serverURL == "" {
+		switch editor {
+		case EditorVSCode:
+			return fmt.Sprintf("%s://%s/launch?token=%s", URISchemeVSCode, extensionDeepLinkID, encodedToken)
+		case EditorAntigravity:
+			return fmt.Sprintf("%s://%s/launch?token=%s", URISchemeAntigravity, extensionDeepLinkID, encodedToken)
+		default:
+			return ""
+		}
 	}
+
+	switch editor {
+	case EditorVSCode:
+		return fmt.Sprintf("%s://%s/launch?token=%s&server_url=%s", URISchemeVSCode, extensionDeepLinkID, encodedToken, encodedServerURL)
+	case EditorAntigravity:
+		return fmt.Sprintf("%s://%s/launch?token=%s&server_url=%s", URISchemeAntigravity, extensionDeepLinkID, encodedToken, encodedServerURL)
+	default:
+		return ""
+	}
+}
+
+func (s *LaunchService) isGuestLaunchAllowed(roomID string) (bool, error) {
+	var sourceType string
+	var metadataBytes []byte
+
+	err := s.DB.QueryRow(`
+		SELECT source_type, source_metadata
+		FROM rooms
+		WHERE id = $1
+		AND is_active = TRUE
+	`, roomID).Scan(&sourceType, &metadataBytes)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, ErrRoomNotFound
+	}
+	if err != nil {
+		return false, err
+	}
+
+	room := &Room{
+		SourceType:     sourceType,
+		SourceMetadata: ensureJSON(metadataBytes),
+	}
+
+	state := buildRoomSourceState(room, "editor", map[string]bool{})
+	return state.LaunchAllowed, nil
 }
 
 func (s *LaunchService) ExchangeLaunchToken(rawToken string) (*LaunchContext, error) {

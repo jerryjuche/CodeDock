@@ -228,10 +228,17 @@ func (h *RoomHandler) ToggleRoomActivation(w http.ResponseWriter, r *http.Reques
 		case errors.Is(err, services.ErrRoomNotFound):
 			http.Error(w, "room not found", http.StatusNotFound)
 			return
+		case errors.Is(err, services.ErrRoomNotReady):
+			http.Error(w, "room is not ready to be activated", http.StatusBadRequest)
+			return
 		default:
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
+	}
+
+	if !details.SourceState.Activated {
+		h.Hub.CloseRoom(roomID, 4005, "room_deactivated")
 	}
 
 	writeJSON(w, http.StatusOK, details)
@@ -250,7 +257,6 @@ func (h *RoomHandler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	
 	writeJSON(w, http.StatusOK, rooms)
 }
 

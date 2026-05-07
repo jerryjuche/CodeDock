@@ -3,7 +3,9 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/jerryjuche/CodeDock/internal/auth"
 	"github.com/jerryjuche/CodeDock/internal/services"
@@ -21,6 +23,25 @@ type openIDERequest struct {
 	Editor string `json:"editor"`
 }
 
+func getRequestBaseURL(r *http.Request) string {
+	proto := "http"
+	if forwardedProto := r.Header.Get("X-Forwarded-Proto"); forwardedProto != "" {
+		proto = strings.TrimSpace(strings.Split(forwardedProto, ",")[0])
+	} else if r.TLS != nil {
+		proto = "https"
+	}
+
+	host := r.Header.Get("X-Forwarded-Host")
+	if host == "" {
+		host = r.Host
+	}
+	if host == "" {
+		host = "localhost"
+	}
+
+	return fmt.Sprintf("%s://%s", proto, host)
+}
+
 func (h *LaunchHandler) OpenInVSCode(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.GetUserFromContext(r)
 	if !ok {
@@ -34,14 +55,21 @@ func (h *LaunchHandler) OpenInVSCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response, err := h.Service.CreateRoomLaunch(roomID, claims.UserID)
+	serverURL := getRequestBaseURL(r)
+
+	response, err := h.Service.CreateRoomLaunch(roomID, claims.UserID, serverURL)
 	if err != nil {
-		if errors.Is(err, services.ErrRoomForbidden) {
+		switch {
+		case errors.Is(err, services.ErrRoomForbidden):
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
+		case errors.Is(err, services.ErrRoomNotReady):
+			http.Error(w, "room is not ready for launch", http.StatusConflict)
+			return
+		default:
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
 		}
-		http.Error(w, "internal server error", http.StatusInternalServerError)
-		return
 	}
 
 	writeJSON(w, http.StatusOK, response)
@@ -71,7 +99,8 @@ func (h *LaunchHandler) OpenIDE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	response, err := h.Service.CreateEditorLaunch(roomID, claims.UserID, req.Editor)
+	serverURL := getRequestBaseURL(r)
+	response, err := h.Service.CreateEditorLaunch(roomID, claims.UserID, req.Editor, serverURL)
 	if err != nil {
 		switch {
 		case errors.Is(err, services.ErrRoomForbidden):
@@ -79,6 +108,9 @@ func (h *LaunchHandler) OpenIDE(w http.ResponseWriter, r *http.Request) {
 			return
 		case errors.Is(err, services.ErrInvalidEditor):
 			http.Error(w, "invalid editor target", http.StatusBadRequest)
+			return
+		case errors.Is(err, services.ErrRoomNotReady):
+			http.Error(w, "room is not ready for launch", http.StatusConflict)
 			return
 		default:
 			http.Error(w, "internal server error", http.StatusInternalServerError)

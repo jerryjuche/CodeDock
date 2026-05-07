@@ -289,3 +289,4 @@ codedock-server
 *.test
 *.out
 *.coverprofile
+.env*.local

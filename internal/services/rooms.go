@@ -16,11 +16,20 @@ var (
 	ErrRoomForbidden    = errors.New("forbidden")
 	ErrInvalidSource    = errors.New("invalid source type")
 	ErrInvalidRoomState = errors.New("invalid room state")
+	ErrRoomNotReady     = errors.New("room is not ready for activation")
 )
 
 const (
 	SourceTypeLocalWorkspace = "local_workspace"
 	SourceTypeGitHubRepo     = "github_repo"
+)
+
+const (
+	SourceStatusMissingSource       = "repo_not_configured"
+	SourceStatusRepoConfigured      = "repo_configured"
+	SourceStatusWaitingForHostBind  = "repo_configured"
+	SourceStatusWaitingForHostReady = "waiting_for_host_ready"
+	SourceStatusReady               = "ready"
 )
 
 var codeAlphabet = []byte("ABCDEFGHJKMNPQRSTVWXYZ23456789")
@@ -50,14 +59,16 @@ type RoomMembership struct {
 }
 
 type RoomSourceState struct {
-	Type          string `json:"type"`
-	Ready         bool   `json:"ready"`
-	HostBound     bool   `json:"host_bound"`
-	Activated     bool   `json:"activated"`
-	HostConnected bool   `json:"host_connected"`
-	Status        string `json:"status"`
-	LaunchAllowed bool   `json:"launch_allowed"`
-	LaunchReason  string `json:"launch_reason,omitempty"`
+	Type             string `json:"type"`
+	Ready            bool   `json:"ready"`
+	HostBound        bool   `json:"host_bound"`
+	Activated        bool   `json:"activated"`
+	HostConnected    bool   `json:"host_connected"`
+	Status           string `json:"status"`
+	LaunchAllowed    bool   `json:"launch_allowed"`
+	LaunchReason     string `json:"launch_reason,omitempty"`
+	RepoConfigured   bool   `json:"repo_configured,omitempty"`
+	HostSetupAllowed bool   `json:"host_setup_allowed,omitempty"`
 
 	WorkspaceLabel string `json:"workspace_label,omitempty"`
 
@@ -336,9 +347,20 @@ func (s *RoomService) MarkLocalWorkspaceBound(roomID, userID, workspaceLabel str
 	}
 
 	metadata["workspace_bound"] = true
-	metadata["activated"] = true
-	metadata["ready"] = true
-	metadata["status"] = "ready"
+	metadata["host_bound"] = true
+	if _, ok := metadata["activated"]; !ok {
+		metadata["activated"] = false
+	}
+
+	activated, activatedOk := metadata["activated"].(bool)
+	if activatedOk && activated {
+		metadata["ready"] = true
+		metadata["status"] = "ready"
+	} else {
+		metadata["ready"] = false
+		metadata["status"] = "host_activation_required"
+	}
+
 	metadata["host_selected_at"] = time.Now().UTC().Format(time.RFC3339)
 	if strings.TrimSpace(workspaceLabel) != "" {
 		metadata["workspace_label"] = strings.TrimSpace(workspaceLabel)
@@ -373,6 +395,11 @@ func (s *RoomService) ToggleRoomActivation(roomID, userID string, connectedUserI
 		return nil, ErrRoomForbidden
 	}
 
+	state := buildRoomSourceState(room, "host", connectedUserIDs)
+	if !state.HostBound {
+		return nil, ErrRoomNotReady
+	}
+
 	var metadata map[string]any
 	if err := json.Unmarshal(room.SourceMetadata, &metadata); err != nil {
 		metadata = make(map[string]any)
@@ -381,7 +408,7 @@ func (s *RoomService) ToggleRoomActivation(roomID, userID string, connectedUserI
 	// Toggle activated state
 	currentlyActivated := metadata["activated"] == true
 	metadata["activated"] = !currentlyActivated
-	
+
 	// Also sync ready status
 	metadata["ready"] = metadata["activated"]
 	if metadata["activated"] == true {
@@ -540,6 +567,7 @@ func buildRoomSourceState(room *Room, role string, connectedUserIDs map[string]b
 		Status:        "unknown",
 		Ready:         false,
 		HostBound:     false,
+		HostConnected: connectedUserIDs[room.OwnerUserID],
 		LaunchAllowed: false,
 	}
 
@@ -551,6 +579,7 @@ func buildRoomSourceState(room *Room, role string, connectedUserIDs map[string]b
 			Branch     string `json:"branch"`
 			CloneReady bool   `json:"clone_ready"`
 			Ready      bool   `json:"ready"`
+			HostBound  bool   `json:"host_bound"`
 			Activated  *bool  `json:"activated"`
 		}
 
@@ -566,39 +595,46 @@ func buildRoomSourceState(room *Room, role string, connectedUserIDs map[string]b
 		state.RepoName = meta.RepoName
 		state.Branch = meta.Branch
 
-		// For GitHub rooms, valid repo metadata is enough to allow launch.
-		//
-		// The actual clone happens later in the VS Code extension, but the
-		// control plane can safely mark the source as ready because the room has
-		// all information required for the extension to clone deterministically.
-		hasRepoMetadata := meta.RepoOwner != "" && meta.RepoName != ""
-
-		state.HostBound = meta.Ready || meta.CloneReady || hasRepoMetadata
-		state.Ready = state.HostBound
-		state.LaunchAllowed = state.Ready
+		repoConfigured := meta.RepoOwner != "" && meta.RepoName != ""
+		hostBound := meta.HostBound || meta.Ready || meta.CloneReady
+		state.RepoConfigured = repoConfigured
+		state.HostBound = hostBound
+		state.HostSetupAllowed = repoConfigured
 
 		if meta.Activated != nil {
 			state.Activated = *meta.Activated
 		} else {
-			state.Activated = true
+			state.Activated = false
 		}
 
-		if !hasRepoMetadata {
-			state.Status = "missing_repo_metadata"
+		if !repoConfigured {
+			state.Status = SourceStatusMissingSource
 			state.Ready = false
 			state.HostBound = false
 			state.LaunchAllowed = false
+			state.LaunchReason = "Repository metadata is missing. Host must configure the repository before guests can join."
+			return state
+		}
+
+		if !hostBound {
+			state.Status = SourceStatusRepoConfigured
+			state.Ready = false
+			state.LaunchAllowed = false
+			state.LaunchReason = "Waiting for the host to open and prepare the GitHub repository."
 			return state
 		}
 
 		if !state.Activated {
-			state.Status = "paused"
+			state.Status = SourceStatusWaitingForHostReady
 			state.Ready = false
 			state.LaunchAllowed = false
+			state.LaunchReason = "Waiting for the host IDE session to become active."
 			return state
 		}
 
-		state.Status = "ready"
+		state.Status = SourceStatusReady
+		state.Ready = true
+		state.LaunchAllowed = true
 		return state
 
 	case SourceTypeLocalWorkspace:
@@ -616,24 +652,27 @@ func buildRoomSourceState(room *Room, role string, connectedUserIDs map[string]b
 
 		state.WorkspaceLabel = meta.WorkspaceLabel
 		state.HostBound = meta.WorkspaceBound || meta.HostBound || meta.Ready
+		state.HostSetupAllowed = true
 
 		if meta.Activated != nil {
 			state.Activated = *meta.Activated
 		} else {
-			state.Activated = room.IsActive
+			state.Activated = false
 		}
 
 		if !state.HostBound {
 			state.Status = "waiting_for_host_workspace"
 			state.Ready = false
 			state.LaunchAllowed = false
+			state.LaunchReason = "Waiting for the host to select a project folder in VS Code."
 			return state
 		}
 
 		if !state.Activated {
-			state.Status = "paused"
+			state.Status = "host_activation_required"
 			state.Ready = false
 			state.LaunchAllowed = false
+			state.LaunchReason = "Host must activate the room before guests can open the workspace."
 			return state
 		}
 
@@ -641,7 +680,6 @@ func buildRoomSourceState(room *Room, role string, connectedUserIDs map[string]b
 		state.Ready = true
 		state.LaunchAllowed = true
 		return state
-
 	default:
 		state.Status = "unsupported_source"
 		state.Ready = false
