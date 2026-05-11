@@ -3,37 +3,60 @@
 @tailwind utilities;
 
 :root {
-  --cd-bg: 1 26 61;
-  --cd-bg-elevated: 9 34 72;
-  --cd-panel: 8 30 63;
-  --cd-panel-2: 13 40 81;
-  --cd-border: 255 255 255;
-  --cd-text: 234 244 255;
-  --cd-text-muted: 158 183 211;
-  --cd-cyan: 36 166 242;
-  --cd-cyan-soft: 47 203 255;
-  --cd-orange: 239 102 46;
-  --cd-amber: 249 145 53;
-  --cd-success: 42 211 139;
-  --cd-danger: 255 90 107;
+  /* Core palette */
+  --cd-bg:            4 18 44;
+  --cd-bg-deep:       2 12 32;
+  --cd-bg-elevated:   8 28 60;
+  --cd-panel:         8 30 63;
+  --cd-panel-2:       13 40 81;
+
+  /* Borders */
+  --cd-border:        255 255 255;
+
+  /* Text */
+  --cd-text:          230 242 255;
+  --cd-text-muted:    100 140 185;
+  --cd-text-subtle:   60 95 140;
+
+  /* Brand accents */
+  --cd-cyan:          36 166 242;
+  --cd-cyan-soft:     47 203 255;
+  --cd-orange:        239 102 46;
+  --cd-amber:         249 145 53;
+  --cd-success:       42 211 139;
+  --cd-danger:        255 90 107;
+
+  /* Semantic design tokens */
+  --background:   rgb(var(--cd-bg));
+  --foreground:   rgb(var(--cd-text));
+  --card:         rgba(var(--cd-panel), 0.74);
+  --border:       rgba(var(--cd-border), 0.08);
+  --accent:       rgb(var(--cd-cyan));
+  --accent-2:     rgb(var(--cd-orange));
+  --muted:        rgb(var(--cd-text-muted));
+  --radius:       1.125rem;
 }
 
 html,
 body {
   min-height: 100%;
   background:
-    radial-gradient(circle at top left, rgba(var(--cd-cyan), 0.12), transparent 24%),
-    radial-gradient(circle at top right, rgba(var(--cd-orange), 0.10), transparent 18%),
-    linear-gradient(180deg, rgba(4, 22, 49, 1) 0%, rgba(1, 26, 61, 1) 100%);
+    radial-gradient(ellipse 80% 50% at 0% 0%, rgba(var(--cd-cyan), 0.10) 0%, transparent 50%),
+    radial-gradient(ellipse 60% 40% at 100% 0%, rgba(var(--cd-orange), 0.08) 0%, transparent 40%),
+    radial-gradient(ellipse 50% 60% at 50% 100%, rgba(var(--cd-cyan), 0.04) 0%, transparent 50%),
+    linear-gradient(180deg, rgb(4, 14, 38) 0%, rgb(var(--cd-bg)) 100%);
   color: rgb(var(--cd-text));
 }
 
 body {
   @apply antialiased;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
 }
 
 * {
   border-color: rgba(var(--cd-border), 0.08);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(var(--cd-cyan), 0.2) transparent;
 }
 
 a {
@@ -41,6 +64,22 @@ a {
 }
 
 ::selection {
-  background: rgba(var(--cd-cyan), 0.25);
+  background: rgba(var(--cd-cyan), 0.22);
   color: rgb(var(--cd-text));
+}
+
+/* Thin scrollbar for webkit */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(var(--cd-cyan), 0.2);
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(var(--cd-cyan), 0.35);
 }
