@@ -11,8 +11,8 @@ export default function MarketingShell({
 }) {
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(36,166,242,0.14),transparent_24%),radial-gradient(circle_at_top_right,rgba(239,102,46,0.10),transparent_18%),linear-gradient(180deg,rgba(4,22,49,1)_0%,rgba(1,26,61,1)_100%)] text-[rgb(234,244,255)]">
-      <div className="mx-auto flex min-h-screen max-w-7xl flex-col px-6 pt-5 pb-8 sm:px-8 lg:px-10">
-        <header className="mb-8 flex items-center justify-between gap-6 border-b border-white/[0.06] pb-5">
+      <div className="mx-auto flex min-h-screen max-w-7xl flex-col px-6 pt-3 pb-8 sm:px-8 lg:px-10">
+        <header className="mb-8 flex items-center justify-between gap-6 border-b border-white/[0.06] py-3">
           <Link href="/" className="shrink-0">
             <BrandLogo priority />
           </Link>

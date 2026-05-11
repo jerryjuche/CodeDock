@@ -14,9 +14,9 @@ export default function BrandLogo({
         src="/brand/codedock-logo.png"
         alt="CodeDock"
         width={420}
-        height={140}
+        height={100}
         priority={priority}
-        className="h-auto w-[150px] sm:w-[175px] lg:w-[195px]"
+        className="h-auto w-[140px] sm:w-[160px] lg:w-[180px]"
       />
     </div>
   );
