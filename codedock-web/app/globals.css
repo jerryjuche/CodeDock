@@ -22,8 +22,16 @@ html,
 body {
   min-height: 100%;
   background:
-    radial-gradient(circle at top left, rgba(var(--cd-cyan), 0.12), transparent 24%),
-    radial-gradient(circle at top right, rgba(var(--cd-orange), 0.10), transparent 18%),
+    radial-gradient(
+      circle at top left,
+      rgba(var(--cd-cyan), 0.12),
+      transparent 24%
+    ),
+    radial-gradient(
+      circle at top right,
+      rgba(var(--cd-orange), 0.1),
+      transparent 18%
+    ),
     linear-gradient(180deg, rgba(4, 22, 49, 1) 0%, rgba(1, 26, 61, 1) 100%);
   color: rgb(var(--cd-text));
 }
@@ -43,4 +51,33 @@ a {
 ::selection {
   background: rgba(var(--cd-cyan), 0.25);
   color: rgb(var(--cd-text));
+}
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in-up {
+  animation: fade-in-up 0.9s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+@keyframes soft-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+.animate-soft-float {
+  animation: soft-float 6s ease-in-out infinite;
 }

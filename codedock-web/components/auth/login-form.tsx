@@ -110,7 +110,7 @@ export default function LoginForm() {
       <p className="text-center text-sm text-[rgb(158,183,211)]">
         No account?{" "}
         <Link
-          className="font-medium text-white underline-offset-2 transition-colors hover:text-[rgb(47,203,255)] hover:underline"
+          className="font-medium text-white underline-offset-2 transition-all duration-200 ease-out hover:-translate-y-[1px] hover:text-[rgb(47,203,255)] hover:underline"
           href="/register"
         >
           Create one
