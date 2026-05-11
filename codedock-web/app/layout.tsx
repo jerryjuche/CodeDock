@@ -7,6 +7,9 @@ import Providers from "@/components/ui/providers";
 export const metadata: Metadata = {
   title: "CodeDock",
   description: "CodeDock control plane",
+  icons: {
+    icon: "/favicon.ico",
+  },
 };
 
 export default function RootLayout({
