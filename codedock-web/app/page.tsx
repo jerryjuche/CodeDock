@@ -5,7 +5,7 @@ import TextRotate from "@/components/fancy/text/text-rotate";
 export default function HomePage() {
   return (
     <MarketingShell>
-      <main className="grid items-center gap-12 pb-12 pt-10 lg:grid-cols-[1.15fr_0.85fr] lg:gap-16 lg:pb-16 lg:pt-20">
+      <main className="grid items-center gap-12 pb-[60px] pt-[30px] lg:grid-cols-[1.15fr_0.85fr] lg:gap-16 lg:pb-[60px] lg:pt-[30px]">
         {/* ── Left column ─────────────────────────────────── */}
         <section className="max-w-3xl space-y-10">
 
