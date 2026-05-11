@@ -13,7 +13,7 @@ export default function HomePage() {
           <div className="inline-flex items-center gap-2 rounded-full border border-[rgba(36,166,242,0.28)] bg-[rgba(36,166,242,0.08)] px-3.5 py-1.5">
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[rgb(36,166,242)]" />
             <span className="text-xs font-medium tracking-widest text-[rgb(36,166,242)] uppercase">
-              Self-hosted · VS Code
+              Self-hosted · VS Code · Antigravity
             </span>
           </div>
 
@@ -27,7 +27,7 @@ export default function HomePage() {
                 texts={["owned", "stable", "fast", "focused", "professional"]}
               />
             </h1>
-            <p className="max-w-xl text-base leading-relaxed text-[rgb(158,183,211)]">
+            <p className="mt-[30px] max-w-xl text-base leading-relaxed text-[rgb(158,183,211)]">
               CodeDock gives engineering teams a control plane for shared VS Code
               sessions, room lifecycle, invites, and launch readiness — without
               sacrificing ownership.
