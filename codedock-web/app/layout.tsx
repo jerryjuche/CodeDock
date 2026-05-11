@@ -8,7 +8,9 @@ export const metadata: Metadata = {
   title: "CodeDock",
   description: "CodeDock control plane",
   icons: {
-    icon: "/favicon.ico",
+    icon: "/favicon.png",
+    shortcut: "/favicon.png",
+    apple: "/favicon.png",
   },
 };
 
