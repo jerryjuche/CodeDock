@@ -16,7 +16,7 @@ export default function BrandLogo({
         width={420}
         height={100}
         priority={priority}
-        className="h-auto w-[140px] sm:w-[160px] lg:w-[180px]"
+        className="h-auto w-[140px] shadow-[0_1px_2px_rgba(0,0,0,0.05)] sm:w-[160px] lg:w-[180px]"
       />
     </div>
   );

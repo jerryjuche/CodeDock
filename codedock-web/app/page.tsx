@@ -25,6 +25,7 @@ export default function HomePage() {
               {" "}that feels{" "}
               <TextRotate
                 texts={["owned", "stable", "fast", "focused", "professional"]}
+                className="rounded-[10px]"
               />
             </h1>
             <p className="mt-[30px] max-w-xl text-base leading-relaxed text-[rgb(158,183,211)]">
@@ -166,7 +167,7 @@ export default function HomePage() {
                 href="/register"
                 className="flex w-full items-center justify-between rounded-xl bg-[rgba(239,102,46,0.12)] px-4 py-3 text-sm font-medium text-[rgb(239,102,46)] transition hover:bg-[rgba(239,102,46,0.2)]"
               >
-                <span>Get started — it&apos;s free</span>
+                <span>Get started - it&apos;s free</span>
                 <svg className="h-4 w-4" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                   <path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
                 </svg>
