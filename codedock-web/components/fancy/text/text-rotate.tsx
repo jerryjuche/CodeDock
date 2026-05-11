@@ -30,7 +30,7 @@ export default function TextRotate({
   return (
     <span
       className={cn(
-        "inline-flex min-w-[8ch] items-center justify-center rounded-xl bg-[rgb(239,102,46)] px-3 py-1 text-white shadow-[0_10px_28px_rgba(239,102,46,0.18)] transition-all duration-300",
+        "inline-flex min-w-[8ch] items-center justify-center rounded-xl bg-[rgb(239,102,46)] px-3 py-1 text-white shadow-[0_8px_24px_rgba(239,102,46,0.36)] transition-all duration-300",
         className,
       )}
     >
