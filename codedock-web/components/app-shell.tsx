@@ -66,8 +66,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               >
                 Dashboard
               </Link>
-              <Link href="/join" className={navClass(pathname === "/join")}>
+              <Link href="/join" className={navClass(pathname === "/join")}> 
                 Join
+              </Link>
+              <Link href="/activity" className={navClass(pathname === "/activity")}> 
+                Activity
               </Link>
               <Link
                 href="/rooms/new"

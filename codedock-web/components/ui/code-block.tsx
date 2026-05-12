@@ -2,7 +2,7 @@
 import React from "react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { atomDark } from "react-syntax-highlighter/dist/cjs/styles/prism";
-import { IconCheck, IconCopy } from "@tabler/icons-react";
+import { Check, Copy } from "lucide-react";
 
 type CodeBlockProps = {
   language: string;
@@ -41,7 +41,7 @@ export const CodeBlock = ({
     if (textToCopy) {
       await navigator.clipboard.writeText(textToCopy);
       setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      window.setTimeout(() => setCopied(false), 2000);
     }
   };
 
@@ -54,61 +54,84 @@ export const CodeBlock = ({
     : highlightLines;
 
   return (
-    <div className="relative w-full rounded-lg bg-slate-900 p-4 font-mono text-sm">
-      <div className="flex flex-col gap-2">
-        {tabsExist && (
-          <div className="flex  overflow-x-auto">
-            {tabs.map((tab, index) => (
-              <button
-                key={index}
-                onClick={() => setActiveTab(index)}
-                className={`px-3 !py-2 text-xs transition-colors font-sans ${
-                  activeTab === index
-                    ? "text-white"
-                    : "text-zinc-400 hover:text-zinc-200"
-                }`}
-              >
-                {tab.name}
-              </button>
-            ))}
-          </div>
-        )}
-        {!tabsExist && filename && (
-          <div className="flex justify-between items-center py-2">
-            <div className="text-xs text-zinc-400">{filename}</div>
-            <button
-              onClick={copyToClipboard}
-              className="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200 transition-colors font-sans"
-            >
-              {copied ? <IconCheck size={14} /> : <IconCopy size={14} />}
-            </button>
-          </div>
-        )}
+    <div className="overflow-hidden rounded-[24px] border border-white/10 bg-slate-950 shadow-[0_20px_60px_rgba(0,0,0,0.35)]">
+      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 bg-slate-900 px-4 py-3">
+        <div className="min-w-0">
+          <p className="text-xs uppercase tracking-[0.26em] text-[rgb(158,183,211)]">
+            Code preview
+          </p>
+          <p className="truncate text-sm font-semibold text-white">
+            {filename}
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            onClick={copyToClipboard}
+            className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium text-[rgb(158,183,211)] transition-colors hover:bg-white/10 hover:text-white"
+          >
+            {copied ? (
+              <Check className="h-3.5 w-3.5" />
+            ) : (
+              <Copy className="h-3.5 w-3.5" />
+            )}
+            {copied ? "Copied" : "Copy"}
+          </button>
+        </div>
       </div>
-      <SyntaxHighlighter
-        language={activeLanguage}
-        style={atomDark}
-        customStyle={{
-          margin: 0,
-          padding: 0,
-          background: "transparent",
-          fontSize: "0.875rem", // text-sm equivalent
-        }}
-        wrapLines={true}
-        showLineNumbers={true}
-        lineProps={(lineNumber) => ({
-          style: {
-            backgroundColor: activeHighlightLines.includes(lineNumber)
-              ? "rgba(255,255,255,0.1)"
-              : "transparent",
-            display: "block",
-            width: "100%",
-          },
-        })}
-        PreTag="div"
-      >
-        {String(activeCode)}
-      </SyntaxHighlighter>
+
+      {tabsExist && (
+        <div className="flex flex-wrap gap-2 border-b border-white/10 bg-slate-950 px-4 py-3">
+          {tabs.map((tab, index) => (
+            <button
+              key={index}
+              onClick={() => setActiveTab(index)}
+              className={`rounded-full px-3 py-2 text-xs font-medium transition ${
+                activeTab === index
+                  ? "bg-slate-800 text-white shadow-[0_0_0_1px_rgba(255,255,255,0.08)]"
+                  : "text-[rgb(148,163,184)] hover:bg-white/5 hover:text-white"
+              }`}
+            >
+              {tab.name}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="overflow-x-auto px-4 py-4">
+        <div className="rounded-[20px] border border-white/10 bg-slate-950 p-3">
+          <SyntaxHighlighter
+            language={activeLanguage}
+            style={atomDark}
+            customStyle={{
+              margin: 0,
+              padding: 0,
+              background: "transparent",
+              fontSize: "0.9rem",
+              lineHeight: 1.6,
+            }}
+            wrapLines={true}
+            showLineNumbers={true}
+            lineNumberStyle={{
+              color: "rgba(148,163,184,0.75)",
+              paddingRight: 16,
+              minWidth: 28,
+            }}
+            lineProps={(lineNumber) => ({
+              style: {
+                backgroundColor: activeHighlightLines.includes(lineNumber)
+                  ? "rgba(255,255,255,0.08)"
+                  : "transparent",
+                display: "block",
+                width: "100%",
+              },
+            })}
+            PreTag="div"
+          >
+            {String(activeCode)}
+          </SyntaxHighlighter>
+        </div>
+      </div>
     </div>
   );
 };
