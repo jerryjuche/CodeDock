@@ -21,6 +21,7 @@
 html,
 body {
   min-height: 100%;
+  margin: 0;
   background:
     radial-gradient(
       circle at top left,
@@ -41,7 +42,20 @@ body {
 }
 
 * {
+  box-sizing: border-box;
   border-color: rgba(var(--cd-border), 0.08);
+}
+
+button,
+button[type="submit"],
+input,
+textarea,
+select {
+  @apply transition-all duration-200 ease-out outline-none;
+}
+
+button {
+  @apply cursor-pointer;
 }
 
 a {

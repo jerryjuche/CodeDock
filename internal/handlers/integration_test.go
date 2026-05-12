@@ -416,7 +416,7 @@ func TestRoomJoinInviteAndLaunchControlPlane(t *testing.T) {
 	if hostLaunch.LaunchToken == "" {
 		t.Fatalf("expected host launch token to be non-empty")
 	}
-	if !strings.HasPrefix(hostLaunch.DeepLink, "vscode://jerryjuche.codedock/launch?token=") {
+	if !strings.HasPrefix(hostLaunch.DeepLink, "vscode://jerryjuche.codedock/launch/") {
 		t.Fatalf("unexpected deep link: %q", hostLaunch.DeepLink)
 	}
 
@@ -533,13 +533,13 @@ func TestOpenIDEMultiEditorSupport(t *testing.T) {
 	if vsCodeLaunch.Editor != "vscode" {
 		t.Fatalf("expected editor=vscode, got %q", vsCodeLaunch.Editor)
 	}
-	if !strings.HasPrefix(vsCodeLaunch.DeepLink, "vscode://jerryjuche.codedock/launch?token=") {
+	if !strings.HasPrefix(vsCodeLaunch.DeepLink, "vscode://jerryjuche.codedock/launch/") {
 		t.Fatalf("unexpected vscode deep link: %q", vsCodeLaunch.DeepLink)
 	}
 	if vsCodeLaunch.DeepLinks["vscode"] != vsCodeLaunch.DeepLink {
 		t.Fatalf("expected deep_links[vscode] to match deep_link")
 	}
-	if !strings.HasPrefix(vsCodeLaunch.DeepLinks["antigravity"], "antigravity://jerryjuche.codedock/launch?token=") {
+	if !strings.HasPrefix(vsCodeLaunch.DeepLinks["antigravity"], "antigravity://jerryjuche.codedock/launch/") {
 		t.Fatalf("unexpected antigravity deep link: %q", vsCodeLaunch.DeepLinks["antigravity"])
 	}
 
@@ -563,7 +563,7 @@ func TestOpenIDEMultiEditorSupport(t *testing.T) {
 	if antigravityLaunch.Editor != "antigravity" {
 		t.Fatalf("expected editor=antigravity, got %q", antigravityLaunch.Editor)
 	}
-	if !strings.HasPrefix(antigravityLaunch.DeepLink, "antigravity://jerryjuche.codedock/launch?token=") {
+	if !strings.HasPrefix(antigravityLaunch.DeepLink, "antigravity://jerryjuche.codedock/launch/") {
 		t.Fatalf("unexpected antigravity deep link: %q", antigravityLaunch.DeepLink)
 	}
 	if antigravityLaunch.DeepLinks["antigravity"] != antigravityLaunch.DeepLink {
@@ -617,7 +617,7 @@ func TestOpenIDEMultiEditorSupport(t *testing.T) {
 	if oldVSCode.LaunchToken == "" {
 		t.Fatal("expected old vscode launch token to be non-empty")
 	}
-	if !strings.HasPrefix(oldVSCode.DeepLink, "vscode://jerryjuche.codedock/launch?token=") {
+	if !strings.HasPrefix(oldVSCode.DeepLink, "vscode://jerryjuche.codedock/launch/") {
 		t.Fatalf("unexpected old vscode deep link: %q", oldVSCode.DeepLink)
 	}
 }
