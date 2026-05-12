@@ -122,6 +122,15 @@ async function restoreSession(): Promise<void> {
   await authManager.validateToken();
 }
 
+function extractLaunchTokenFromUriPath(path: string): string | null {
+  const cleanedPath = path.startsWith("/") ? path.slice(1) : path;
+  const prefix = "launch/";
+  if (!cleanedPath.startsWith(prefix)) {
+    return null;
+  }
+  return cleanedPath.slice(prefix.length) || null;
+}
+
 async function handleLaunchUri(
   context: vscode.ExtensionContext,
   uri: vscode.Uri,
@@ -130,10 +139,12 @@ async function handleLaunchUri(
   outputChannel.appendLine(`URI received: ${uri.toString()}`);
 
   const params = new URLSearchParams(uri.query);
-  const launchToken = params.get("token");
+  const launchToken =
+    params.get("token") || extractLaunchTokenFromUriPath(uri.path);
   const legacyCode = params.get("code");
   const legacyRoomId = params.get("room_id");
 
+  outputChannel.appendLine(`uri.path: ${uri.path}`);
   outputChannel.appendLine(`token: ${launchToken ?? "null"}`);
   outputChannel.appendLine(`code: ${legacyCode ?? "null"}`);
   outputChannel.appendLine(`room_id: ${legacyRoomId ?? "null"}`);

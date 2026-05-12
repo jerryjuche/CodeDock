@@ -22,6 +22,8 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png" />
+        <link rel="apple-touch-icon" sizes="180x180" href="/favicon.png" />
         {/* Preload critical resources */}
         <link rel="dns-prefetch" href="//fonts.googleapis.com" />
         <link
