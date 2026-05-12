@@ -21,12 +21,34 @@ let authManager: AuthManager;
 let wsManager: WebSocketManager;
 let yjsSync: YjsSync;
 let apiClient: ApiClient;
+let statusBarItem: vscode.StatusBarItem | undefined;
+
+function refreshStatusBar(): void {
+  if (!statusBarItem) {
+    return;
+  }
+
+  const connectionState = wsManager?.getConnectionState?.() ?? "disconnected";
+  const roomId = wsManager?.getRoomId?.();
+  const roomLabel = roomId ? ` • ${roomId.slice(0, 8)}` : "";
+
+  statusBarItem.text = roomId
+    ? `$(rocket) CodeDock ${connectionState}${roomLabel}`
+    : "$(rocket) CodeDock";
+  statusBarItem.tooltip = roomId
+    ? `CodeDock — ${connectionState.toUpperCase()}${roomLabel}\nClick for room and web app actions`
+    : `CodeDock — ${connectionState.toUpperCase()}\nClick for room and web app actions`;
+}
 
 export async function activate(
   context: vscode.ExtensionContext,
 ): Promise<void> {
   const config = vscode.workspace.getConfiguration("codedock");
   const serverUrl = config.get<string>("serverUrl", "https://codedock.fly.dev");
+  const webAppUrl = config.get<string>(
+    "webAppUrl",
+    "https://code-dock-beige.vercel.app/",
+  );
 
   const outputChannel = vscode.window.createOutputChannel("CodeDock");
   context.subscriptions.push(outputChannel);
@@ -60,6 +82,7 @@ export async function activate(
       yjsSync.setActiveRoomId(null);
       yjsSync.setGuestMaterializationRoot(null);
       yjsSync.dispose();
+      refreshStatusBar();
     }),
   );
 
@@ -72,7 +95,66 @@ export async function activate(
     void cleanupActiveRoomState(context);
     wsManager.disconnect("logout");
     yjsSync.dispose();
+    refreshStatusBar();
   });
+
+  statusBarItem = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Right,
+    100,
+  );
+  statusBarItem.command = "codedock.showMenu";
+  statusBarItem.text = "$(rocket) CodeDock";
+  statusBarItem.tooltip =
+    "CodeDock — click for session actions and web app access";
+  statusBarItem.show();
+  context.subscriptions.push(statusBarItem);
+  refreshStatusBar();
+
+  async function showCodeDockMenu(): Promise<void> {
+    const options = [
+      {
+        label: "$(browser) Open CodeDock Web App",
+        description: webAppUrl,
+        command: "codedock.openWebApp",
+      },
+      {
+        label: "$(sign-in) Login / Reauthenticate",
+        description: "Sign in to CodeDock",
+        command: "codedock.login",
+      },
+      {
+        label: "$(link-external) Join Room",
+        description: "Enter an existing room ID",
+        command: "codedock.joinRoom",
+      },
+      {
+        label: "$(add) Create Room",
+        description: "Create a new collaborative room",
+        command: "codedock.createRoom",
+      },
+      {
+        label: "$(debug) Show CodeDock Logs",
+        description: "Open the CodeDock output channel",
+        command: "codedock.openLogs",
+      },
+      {
+        label: "$(sign-out) Disconnect Room",
+        description: "Leave the current collaboration session",
+        command: "codedock.disconnectRoom",
+      },
+    ];
+
+    const selection = await vscode.window.showQuickPick(options, {
+      placeHolder: "Choose a CodeDock action",
+      ignoreFocusOut: true,
+    });
+
+    if (!selection) {
+      return;
+    }
+
+    await vscode.commands.executeCommand(selection.command);
+  }
 
   context.subscriptions.push(
     vscode.commands.registerCommand("codedock.login", () =>
@@ -97,7 +179,15 @@ export async function activate(
       void cleanupActiveRoomState(context);
       wsManager.disconnect("user");
       yjsSync.dispose();
+      refreshStatusBar();
     }),
+    vscode.commands.registerCommand("codedock.openWebApp", async () => {
+      await vscode.env.openExternal(vscode.Uri.parse(webAppUrl));
+    }),
+    vscode.commands.registerCommand("codedock.openLogs", () => {
+      outputChannel.show(true);
+    }),
+    vscode.commands.registerCommand("codedock.showMenu", showCodeDockMenu),
   );
 
   context.subscriptions.push(
@@ -107,6 +197,8 @@ export async function activate(
       },
     }),
   );
+
+  refreshStatusBar();
 
   await restoreSession();
   await resumePendingLaunch(context, outputChannel);
@@ -128,7 +220,29 @@ function extractLaunchTokenFromUriPath(path: string): string | null {
   if (!cleanedPath.startsWith(prefix)) {
     return null;
   }
-  return cleanedPath.slice(prefix.length) || null;
+  const encodedToken = cleanedPath.slice(prefix.length);
+  if (!encodedToken) {
+    return null;
+  }
+  try {
+    return decodeURIComponent(encodedToken);
+  } catch {
+    return encodedToken;
+  }
+}
+
+function extractLaunchTokenFromUriFragment(fragment: string): string | null {
+  if (!fragment) {
+    return null;
+  }
+
+  const params = new URLSearchParams(fragment);
+  const token = params.get("token");
+  if (token) {
+    return token;
+  }
+
+  return fragment || null;
 }
 
 async function handleLaunchUri(
@@ -140,11 +254,17 @@ async function handleLaunchUri(
 
   const params = new URLSearchParams(uri.query);
   const launchToken =
-    params.get("token") || extractLaunchTokenFromUriPath(uri.path);
+    params.get("token") ||
+    extractLaunchTokenFromUriPath(uri.path) ||
+    extractLaunchTokenFromUriFragment(uri.fragment);
   const legacyCode = params.get("code");
   const legacyRoomId = params.get("room_id");
 
+  outputChannel.appendLine(`uri.scheme: ${uri.scheme}`);
+  outputChannel.appendLine(`uri.authority: ${uri.authority}`);
   outputChannel.appendLine(`uri.path: ${uri.path}`);
+  outputChannel.appendLine(`uri.query: ${uri.query}`);
+  outputChannel.appendLine(`uri.fragment: ${uri.fragment}`);
   outputChannel.appendLine(`token: ${launchToken ?? "null"}`);
   outputChannel.appendLine(`code: ${legacyCode ?? "null"}`);
   outputChannel.appendLine(`room_id: ${legacyRoomId ?? "null"}`);
@@ -519,6 +639,7 @@ async function handleCreateRoom(
     yjsSync.setGuestMaterializationRoot(null);
     wsManager.connect(token, room.id);
     yjsSync.activate();
+    refreshStatusBar();
   } catch (err) {
     vscode.window.showErrorMessage(
       `CodeDock: Failed to create a room — ${
@@ -539,6 +660,7 @@ async function joinRoomNow(
   yjsSync.setActiveRoomId(roomId);
   wsManager.connect(token, roomId);
   yjsSync.activate();
+  refreshStatusBar();
 }
 
 async function cleanupActiveRoomState(
