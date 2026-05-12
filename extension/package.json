@@ -65,6 +65,21 @@
         "command": "codedock.disconnectRoom",
         "title": "Disconnect from Room",
         "category": "CodeDock"
+      },
+      {
+        "command": "codedock.showMenu",
+        "title": "CodeDock: Show Actions",
+        "category": "CodeDock"
+      },
+      {
+        "command": "codedock.openWebApp",
+        "title": "Open CodeDock Web App",
+        "category": "CodeDock"
+      },
+      {
+        "command": "codedock.openLogs",
+        "title": "Show CodeDock Logs",
+        "category": "CodeDock"
       }
     ],
     "configuration": {
@@ -74,6 +89,12 @@
           "type": "string",
           "default": "https://codedock.fly.dev",
           "description": "Base URL of the CodeDock backend server",
+          "scope": "application"
+        },
+        "codedock.webAppUrl": {
+          "type": "string",
+          "default": "https://code-dock-beige.vercel.app/",
+          "description": "URL of the CodeDock web app for the status bar and open web app command",
           "scope": "application"
         }
       }
