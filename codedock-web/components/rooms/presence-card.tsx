@@ -1,6 +1,6 @@
 // components/rooms/presence-card.tsx
 import { Card } from "@/components/ui/card";
-import type { RoomPresence } from "@/types/room";
+import type { RoomPresence, RoomPresenceMember } from "@/types/room";
 
 /** Deterministic hue from email for avatar background */
 function colorFromEmail(email: string): string {
@@ -31,11 +31,13 @@ export default function PresenceCard({
   loading,
   error,
   onRetry,
+  onMemberClick,
 }: {
   presence: RoomPresence | null;
   loading: boolean;
   error: string | null;
   onRetry?: () => void;
+  onMemberClick?: (member: RoomPresenceMember) => void;
 }) {
   return (
     <Card>
@@ -99,7 +101,8 @@ export default function PresenceCard({
           {presence.members.map((member) => (
             <div
               key={member.user_id}
-              className="flex items-center justify-between gap-4 rounded-xl border border-white/[0.06] bg-white/[0.03] px-4 py-3 transition-colors"
+              className="flex items-center justify-between gap-4 rounded-xl border border-white/[0.06] bg-white/[0.03] px-4 py-3 transition-colors cursor-pointer hover:bg-white/[0.06]"
+              onClick={() => onMemberClick?.(member)}
             >
               <div className="flex min-w-0 items-center gap-3">
                 <Avatar email={member.email} />

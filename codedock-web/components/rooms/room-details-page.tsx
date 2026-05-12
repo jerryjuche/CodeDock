@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import { useState } from "react";
 import { Card } from "@/components/ui/card";
 import { useRoomDetails } from "@/hooks/use-room-details";
 import { useRoomPresence } from "@/hooks/use-room-presence";
@@ -10,6 +11,8 @@ import { useAuth } from "@/hooks/use-auth";
 import RoomDetailsSkeleton from "@/components/rooms/room-details-skeleton";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { LoadingState } from "@/components/ui/loading-state";
+import type { RoomPresenceMember } from "@/types/room";
+import type { ActivityEvent } from "./activity-timeline-card";
 
 // Dynamically import heavy components
 const RoomHeader = dynamic(() => import("@/components/rooms/room-header"), {
@@ -19,6 +22,20 @@ const RoomHeader = dynamic(() => import("@/components/rooms/room-header"), {
 const PresenceCard = dynamic(() => import("@/components/rooms/presence-card"), {
   loading: () => <div className="h-32 bg-white/5 rounded-lg animate-pulse" />,
 });
+
+const ActivityTimelineCard = dynamic(
+  () => import("@/components/rooms/activity-timeline-card"),
+  {
+    loading: () => <div className="h-48 bg-white/5 rounded-lg animate-pulse" />,
+  },
+);
+
+const MemberDetailsModal = dynamic(
+  () => import("@/components/rooms/member-details-modal"),
+  {
+    loading: () => <div className="h-32 bg-white/5 rounded-lg animate-pulse" />,
+  },
+);
 
 const SourceStateCard = dynamic(
   () => import("@/components/rooms/source-state-card"),
@@ -83,6 +100,54 @@ export default function RoomDetailsPageClient({ roomId }: { roomId: string }) {
     reload: reloadInvites,
   } = useInvites(roomId);
 
+  const [selectedMember, setSelectedMember] =
+    useState<RoomPresenceMember | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
+
+  // Mock activities - replace with real API later
+  const activities: ActivityEvent[] = presence
+    ? presence.members.flatMap((member) => [
+        {
+          id: `${member.user_id}-joined`,
+          type: "member_joined" as const,
+          user_id: member.user_id,
+          email: member.email,
+          timestamp: new Date(
+            Date.now() - Math.random() * 3600000,
+          ).toISOString(), // random time in last hour
+        },
+        ...(member.connected
+          ? [
+              {
+                id: `${member.user_id}-connected`,
+                type: "member_connected" as const,
+                user_id: member.user_id,
+                email: member.email,
+                timestamp: new Date(
+                  Date.now() - Math.random() * 1800000,
+                ).toISOString(),
+              },
+            ]
+          : []),
+        // Mock file edit
+        {
+          id: `${member.user_id}-edit`,
+          type: "file_edited" as const,
+          user_id: member.user_id,
+          email: member.email,
+          timestamp: new Date(
+            Date.now() - Math.random() * 900000,
+          ).toISOString(),
+          details: {
+            file: "example.ts",
+            code: `function example() {\n  console.log('Hello');\n}`,
+            language: "typescript",
+            highlightLines: [1, 2],
+          },
+        },
+      ])
+    : [];
+
   if (loading) {
     return <RoomDetailsSkeleton />;
   }
@@ -126,6 +191,18 @@ export default function RoomDetailsPageClient({ roomId }: { roomId: string }) {
               loading={presenceLoading}
               error={presenceError}
               onRetry={reloadPresence}
+              onMemberClick={(member) => {
+                setSelectedMember(member);
+                setModalOpen(true);
+              }}
+            />
+          </ErrorBoundary>
+
+          <ErrorBoundary>
+            <ActivityTimelineCard
+              events={activities}
+              loading={false}
+              error={null}
             />
           </ErrorBoundary>
 
@@ -179,6 +256,14 @@ export default function RoomDetailsPageClient({ roomId }: { roomId: string }) {
           ) : null}
         </div>
       </div>
+
+      {modalOpen && selectedMember && (
+        <MemberDetailsModal
+          member={selectedMember}
+          activities={activities}
+          onClose={() => setModalOpen(false)}
+        />
+      )}
     </main>
   );
 }
