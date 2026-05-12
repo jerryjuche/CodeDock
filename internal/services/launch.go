@@ -120,10 +120,10 @@ func (s *LaunchService) CreateEditorLaunch(roomID, userID, editor string) (*Laun
 }
 
 func (s *LaunchService) buildDeepLinks(rawToken string) map[string]string {
-	encodedToken := url.PathEscape(rawToken)
+	encodedToken := url.QueryEscape(rawToken)
 	return map[string]string{
-		EditorVSCode:      fmt.Sprintf("%s://%s/launch/%s", URISchemeVSCode, extensionDeepLinkID, encodedToken),
-		EditorAntigravity: fmt.Sprintf("%s://%s/launch/%s", URISchemeAntigravity, extensionDeepLinkID, encodedToken),
+		EditorVSCode:      fmt.Sprintf("%s://%s/launch?token=%s", URISchemeVSCode, extensionDeepLinkID, encodedToken),
+		EditorAntigravity: fmt.Sprintf("%s://%s/launch?token=%s", URISchemeAntigravity, extensionDeepLinkID, encodedToken),
 	}
 }
 

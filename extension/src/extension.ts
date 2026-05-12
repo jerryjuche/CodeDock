@@ -128,7 +128,29 @@ function extractLaunchTokenFromUriPath(path: string): string | null {
   if (!cleanedPath.startsWith(prefix)) {
     return null;
   }
-  return cleanedPath.slice(prefix.length) || null;
+  const encodedToken = cleanedPath.slice(prefix.length);
+  if (!encodedToken) {
+    return null;
+  }
+  try {
+    return decodeURIComponent(encodedToken);
+  } catch {
+    return encodedToken;
+  }
+}
+
+function extractLaunchTokenFromUriFragment(fragment: string): string | null {
+  if (!fragment) {
+    return null;
+  }
+
+  const params = new URLSearchParams(fragment);
+  const token = params.get("token");
+  if (token) {
+    return token;
+  }
+
+  return fragment || null;
 }
 
 async function handleLaunchUri(
@@ -140,11 +162,17 @@ async function handleLaunchUri(
 
   const params = new URLSearchParams(uri.query);
   const launchToken =
-    params.get("token") || extractLaunchTokenFromUriPath(uri.path);
+    params.get("token") ||
+    extractLaunchTokenFromUriPath(uri.path) ||
+    extractLaunchTokenFromUriFragment(uri.fragment);
   const legacyCode = params.get("code");
   const legacyRoomId = params.get("room_id");
 
+  outputChannel.appendLine(`uri.scheme: ${uri.scheme}`);
+  outputChannel.appendLine(`uri.authority: ${uri.authority}`);
   outputChannel.appendLine(`uri.path: ${uri.path}`);
+  outputChannel.appendLine(`uri.query: ${uri.query}`);
+  outputChannel.appendLine(`uri.fragment: ${uri.fragment}`);
   outputChannel.appendLine(`token: ${launchToken ?? "null"}`);
   outputChannel.appendLine(`code: ${legacyCode ?? "null"}`);
   outputChannel.appendLine(`room_id: ${legacyRoomId ?? "null"}`);
