@@ -17,6 +17,10 @@ export function getRoomPresence(token: string, roomId: string) {
   return apiRequest<RoomPresence>(`/rooms/${roomId}/presence`, { token });
 }
 
+export function getRoomActivities(token: string, roomId: string) {
+  return apiRequest<any[]>(`/rooms/${roomId}/activities`, { token });
+}
+
 export function createRoom(
   token: string,
   payload: {

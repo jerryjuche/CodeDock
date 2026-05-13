@@ -6,6 +6,7 @@ import { useState } from "react";
 import { Card } from "@/components/ui/card";
 import { useRoomDetails } from "@/hooks/use-room-details";
 import { useRoomPresence } from "@/hooks/use-room-presence";
+import { useRoomActivities } from "@/hooks/use-room-activities";
 import { useInvites } from "@/hooks/use-invites";
 import { useAuth } from "@/hooks/use-auth";
 import RoomDetailsSkeleton from "@/components/rooms/room-details-skeleton";
@@ -81,6 +82,13 @@ export default function RoomDetailsPageClient({ roomId }: { roomId: string }) {
     error: presenceError,
     reload: reloadPresence,
   } = useRoomPresence(roomId);
+
+  const {
+    activities,
+    loading: activitiesLoading,
+    error: activitiesError,
+    reload: reloadActivities,
+  } = useRoomActivities(roomId);
 
   const {
     invites,
@@ -199,6 +207,7 @@ export default function RoomDetailsPageClient({ roomId }: { roomId: string }) {
       {modalOpen && selectedMember && (
         <MemberDetailsModal
           member={selectedMember}
+          activities={activities}
           onClose={() => setModalOpen(false)}
         />
       )}

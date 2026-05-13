@@ -1,7 +1,9 @@
 package hub
 
 import (
+	"encoding/json"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -11,6 +13,10 @@ import (
 type SnapshotStore interface {
 	Save(roomID, filePath string, state []byte) error
 	Get(roomID, filePath string) ([]byte, error)
+}
+
+type ActivityStore interface {
+	LogActivity(roomID, userID, activityType, filePath string, details map[string]interface{}) error
 }
 
 type snapshotKey struct {
@@ -28,11 +34,12 @@ type Client struct {
 }
 
 type Hub struct {
-	rooms     map[string]map[*Client]bool
-	mu        sync.RWMutex
-	snapshots SnapshotStore
-	counts    map[snapshotKey]int
-	countsMu  sync.Mutex
+	rooms      map[string]map[*Client]bool
+	mu         sync.RWMutex
+	snapshots  SnapshotStore
+	activities ActivityStore
+	counts     map[snapshotKey]int
+	countsMu   sync.Mutex
 }
 
 func New(store SnapshotStore) *Hub {
@@ -41,6 +48,56 @@ func New(store SnapshotStore) *Hub {
 		snapshots: store,
 		counts:    make(map[snapshotKey]int),
 	}
+}
+
+func NewWithActivityStore(store SnapshotStore, activityStore ActivityStore) *Hub {
+	return &Hub{
+		rooms:      make(map[string]map[*Client]bool),
+		snapshots:  store,
+		activities: activityStore,
+		counts:     make(map[snapshotKey]int),
+	}
+}
+
+// detectLanguage infers the programming language from file extension
+func detectLanguage(filePath string) string {
+	if strings.HasSuffix(filePath, ".go") {
+		return "go"
+	}
+	if strings.HasSuffix(filePath, ".js") || strings.HasSuffix(filePath, ".ts") {
+		return "javascript"
+	}
+	if strings.HasSuffix(filePath, ".py") {
+		return "python"
+	}
+	if strings.HasSuffix(filePath, ".rs") {
+		return "rust"
+	}
+	if strings.HasSuffix(filePath, ".java") {
+		return "java"
+	}
+	if strings.HasSuffix(filePath, ".cpp") || strings.HasSuffix(filePath, ".cc") || strings.HasSuffix(filePath, ".cxx") {
+		return "cpp"
+	}
+	if strings.HasSuffix(filePath, ".c") {
+		return "c"
+	}
+	if strings.HasSuffix(filePath, ".html") {
+		return "html"
+	}
+	if strings.HasSuffix(filePath, ".css") {
+		return "css"
+	}
+	if strings.HasSuffix(filePath, ".json") {
+		return "json"
+	}
+	if strings.HasSuffix(filePath, ".md") {
+		return "markdown"
+	}
+	if strings.HasSuffix(filePath, ".sql") {
+		return "sql"
+	}
+	return "text"
 }
 
 func (h *Hub) Register(client *Client) {
@@ -120,7 +177,30 @@ func (h *Hub) Route(msg Message) {
 	switch msg.Type {
 	case MessageTypeSync:
 		h.Broadcast(msg.Sender, msg.Sender.RoomID, append([]byte{MessageTypeSync}, msg.Payload...))
-		h.trackAndSnapshot(msg)
+		h.trackSnapshot(msg)
+
+	case MessageTypeFileActivity:
+		var payload struct {
+			FilePath string `json:"filePath"`
+			Content  string `json:"content"`
+		}
+		if err := json.Unmarshal(msg.Payload, &payload); err == nil {
+			if h.activities != nil && msg.Sender.UserID != "" {
+				details := map[string]interface{}{
+					"code":     payload.Content,
+					"language": detectLanguage(payload.FilePath),
+				}
+				go func() {
+					_ = h.activities.LogActivity(
+						msg.Sender.RoomID,
+						msg.Sender.UserID,
+						"file_edited",
+						payload.FilePath,
+						details,
+					)
+				}()
+			}
+		}
 
 	case MessageTypeAwareness:
 		h.BroadcastAll(msg.Sender.RoomID, append([]byte{MessageTypeAwareness}, msg.Payload...))
@@ -145,11 +225,7 @@ func (h *Hub) Route(msg Message) {
 	}
 }
 
-func (h *Hub) trackAndSnapshot(msg Message) {
-	if h.snapshots == nil {
-		return
-	}
-
+func (h *Hub) trackSnapshot(msg Message) {
 	if len(msg.Payload) < 4 {
 		return
 	}
@@ -162,6 +238,11 @@ func (h *Hub) trackAndSnapshot(msg Message) {
 
 	filePath := string(msg.Payload[2 : 2+filePathLen])
 	yjsUpdate := msg.Payload[2+filePathLen:]
+
+	// Save snapshot
+	if h.snapshots == nil {
+		return
+	}
 
 	key := snapshotKey{roomID: msg.Sender.RoomID, filePath: filePath}
 

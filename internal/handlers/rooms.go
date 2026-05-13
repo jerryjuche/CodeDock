@@ -250,8 +250,41 @@ func (h *RoomHandler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	
 	writeJSON(w, http.StatusOK, rooms)
+}
+
+func (h *RoomHandler) GetRoomActivities(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.GetUserFromContext(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	roomID := r.PathValue("roomId")
+	if roomID == "" {
+		http.Error(w, "room ID cannot be empty", http.StatusBadRequest)
+		return
+	}
+
+	// Check if user is a room member
+	member, err := h.Services.IsRoomMember(roomID, claims.UserID)
+	if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	if !member {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	// Get activities for the room
+	activities, err := services.GetRoomActivities(h.Services.GetDB(), roomID, 100)
+	if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, activities)
 }
 
 func (h *RoomHandler) DeleteRoom(w http.ResponseWriter, r *http.Request) {

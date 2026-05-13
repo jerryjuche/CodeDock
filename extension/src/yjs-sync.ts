@@ -10,6 +10,7 @@ import {
   decodeSyncPayload,
   decodeWorkspaceManifestRequest,
   decodeWorkspaceManifestResponse,
+  encodeFileActivityPayload,
   encodeFileBootstrapRequest,
   encodeFileBootstrapResponse,
   encodeHydrationRequest,
@@ -24,6 +25,7 @@ import {
   SyncPayload,
   WorkspaceManifest,
   WorkspaceManifestEntry,
+  FileActivityPayload,
 } from "./types";
 
 const PENDING_HYDRATED_ROOM_ID_KEY = "codedock.pendingHydrated.roomId";
@@ -35,6 +37,7 @@ const GUEST_HYDRATION_WAIT_MS = 1200;
 const WORKSPACE_MANIFEST_RETRY_MS = 1000;
 const MAX_MANIFEST_RETRIES = 6;
 const MAX_BOOTSTRAP_FILE_BYTES = 400 * 1024;
+const ACTIVITY_DEBOUNCE_MS = 250;
 
 const LOCAL_CHANGE_ORIGIN = Symbol("codedock-local-change");
 const INITIAL_DOCUMENT_ORIGIN = Symbol("codedock-initial-document");
@@ -146,6 +149,7 @@ export class YjsSync {
   private patchStates: Map<string, PatchState> = new Map();
   private hydrationTimers: Map<string, ReturnType<typeof setTimeout>> =
     new Map();
+  private activityTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
   private pendingFileBootstrapRequests: Set<string> = new Set();
 
   private workspaceManifestReceived = false;
@@ -271,6 +275,11 @@ export class YjsSync {
     }
     this.hydrationTimers.clear();
 
+    for (const timer of this.activityTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.activityTimers.clear();
+
     if (this.workspaceManifestRetryTimer !== undefined) {
       clearTimeout(this.workspaceManifestRetryTimer);
       this.workspaceManifestRetryTimer = undefined;
@@ -385,6 +394,8 @@ export class YjsSync {
             }
           }
         }, LOCAL_CHANGE_ORIGIN);
+
+        this.scheduleActivityUpdate(fileKey, event.document);
       },
     );
 
@@ -409,6 +420,12 @@ export class YjsSync {
 
     binding.documentChangeDisposable.dispose();
     this.bindings.delete(fileKey);
+
+    const activityTimer = this.activityTimers.get(fileKey);
+    if (activityTimer) {
+      clearTimeout(activityTimer);
+      this.activityTimers.delete(fileKey);
+    }
   }
 
   private requestWorkspaceManifest(): void {
@@ -637,6 +654,36 @@ export class YjsSync {
     state.timer = setTimeout(() => {
       void this.flushOutboundUpdates(fileKey);
     }, OUTBOUND_BATCH_MS);
+  }
+
+  private scheduleActivityUpdate(
+    fileKey: string,
+    document: vscode.TextDocument,
+  ): void {
+    const existingTimer = this.activityTimers.get(fileKey);
+    if (existingTimer !== undefined) {
+      clearTimeout(existingTimer);
+    }
+
+    const timer = setTimeout(() => {
+      this.activityTimers.delete(fileKey);
+
+      // Only send if still active and document still bound
+      if (!this.active || !this.bindings.has(fileKey)) {
+        return;
+      }
+
+      const content = document.getText();
+      const payload: FileActivityPayload = {
+        filePath: fileKey,
+        content: content,
+      };
+
+      const bytes = encodeFileActivityPayload(payload);
+      this.wsManager.send(bytes);
+    }, ACTIVITY_DEBOUNCE_MS);
+
+    this.activityTimers.set(fileKey, timer);
   }
 
   private async flushOutboundUpdates(fileKey: string): Promise<void> {

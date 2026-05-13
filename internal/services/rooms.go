@@ -89,6 +89,10 @@ type RoomService struct {
 	DB *sql.DB
 }
 
+func (s *RoomService) GetDB() *sql.DB {
+	return s.DB
+}
+
 func (s *RoomService) CreateRoom(userID string, name string) (*Room, error) {
 	return s.CreateRoomWithOptions(userID, CreateRoomInput{
 		Name:           name,

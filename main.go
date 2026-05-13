@@ -37,7 +37,8 @@ func main() {
 	log.Println("connected to database successfully")
 
 	snapshotStore := &services.DBSnapshotStore{DB: db}
-	h := hub.New(snapshotStore)
+	activityStore := &services.DBActivityStore{DB: db}
+	h := hub.NewWithActivityStore(snapshotStore, activityStore)
 
 	authHandler := &handlers.AuthHandler{DB: db}
 
@@ -75,6 +76,7 @@ func main() {
 	mux.Handle("POST /rooms/{roomId}/source/local/bind", auth.RequireAuth(http.HandlerFunc(roomHandler.BindLocalWorkspace)))
 	mux.Handle("POST /rooms/{roomId}/activation/toggle", auth.RequireAuth(http.HandlerFunc(roomHandler.ToggleRoomActivation)))
 	mux.Handle("DELETE /rooms/{roomId}", auth.RequireAuth(http.HandlerFunc(roomHandler.DeleteRoom)))
+	mux.Handle("GET /rooms/{roomId}/activities", auth.RequireAuth(http.HandlerFunc(roomHandler.GetRoomActivities)))
 
 	// Web control-plane routes
 	mux.Handle("POST /join-code/resolve", auth.RequireAuth(http.HandlerFunc(inviteHandler.ResolveJoinCode)))

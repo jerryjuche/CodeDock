@@ -4,6 +4,7 @@ import {
   SyncPayload,
   WorkspaceManifest,
   WorkspaceManifestRequest,
+  FileActivityPayload,
 } from "./types";
 
 export const MessageType = {
@@ -15,6 +16,7 @@ export const MessageType = {
   WORKSPACE_MANIFEST_RESPONSE: 0x06,
   FILE_BOOTSTRAP_REQUEST: 0x07,
   FILE_BOOTSTRAP_RESPONSE: 0x08,
+  FILE_ACTIVITY: 0x09,
 } as const;
 
 export type MessageTypeValue = typeof MessageType[keyof typeof MessageType];
@@ -256,6 +258,21 @@ export function decodeFileBootstrapResponse(
   );
 }
 
+export function encodeFileActivityPayload(
+  payload: FileActivityPayload,
+): Uint8Array {
+  return encodeJsonPayload(MessageType.FILE_ACTIVITY, payload);
+}
+
+export function decodeFileActivityPayload(
+  buffer: Uint8Array,
+): FileActivityPayload | null {
+  return decodeJsonPayload<FileActivityPayload>(
+    buffer,
+    MessageType.FILE_ACTIVITY,
+  );
+}
+
 export function isValidMessageType(byte: number): byte is MessageTypeValue {
   return (
     byte === MessageType.SYNC ||
@@ -265,6 +282,7 @@ export function isValidMessageType(byte: number): byte is MessageTypeValue {
     byte === MessageType.WORKSPACE_MANIFEST_REQUEST ||
     byte === MessageType.WORKSPACE_MANIFEST_RESPONSE ||
     byte === MessageType.FILE_BOOTSTRAP_REQUEST ||
-    byte === MessageType.FILE_BOOTSTRAP_RESPONSE
+    byte === MessageType.FILE_BOOTSTRAP_RESPONSE ||
+    byte === MessageType.FILE_ACTIVITY
   );
 }
