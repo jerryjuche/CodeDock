@@ -342,16 +342,20 @@ async function handleLaunchUri(
       true,
     );
   } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "unknown error";
     outputChannel.appendLine(
-      `CodeDock: launch exchange failed -> ${
-        error instanceof Error ? error.message : "unknown error"
-      }`,
+      `CodeDock: launch exchange failed -> ${errorMessage}`,
     );
-    vscode.window.showErrorMessage(
-      `CodeDock: Launch failed — ${
-        error instanceof Error ? error.message : "unknown error"
-      }`,
-    );
+
+    if (errorMessage.includes("Unexpected HTML response")) {
+      vscode.window.showErrorMessage(
+        `CodeDock: Launch failed — Incorrect server URL. Verify your codedock.serverUrl is pointed at the backend server.`,
+      );
+      return;
+    }
+
+    vscode.window.showErrorMessage(`CodeDock: Launch failed — ${errorMessage}`);
   }
 }
 
