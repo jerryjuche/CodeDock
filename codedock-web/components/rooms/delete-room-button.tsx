@@ -32,8 +32,7 @@ export default function DeleteRoomButton({
 
     try {
       await deleteRoom(token, roomId);
-      router.push("/dashboard");
-      router.refresh();
+      window.location.href = "/dashboard";
     } catch (err) {
       setError(
         err instanceof Error
@@ -47,14 +46,14 @@ export default function DeleteRoomButton({
   }
 
   return (
-    <Card className="border-[rgba(255,90,107,0.15)]">
+    <Card className="border-[rgba(249,145,53,0.15)]">
       {/* Header */}
       <div className="flex items-center gap-2.5">
-        <span className="flex h-7 w-7 items-center justify-center rounded-md bg-[rgba(255,90,107,0.12)]">
+        <span className="flex h-7 w-7 items-center justify-center rounded-md bg-[rgba(249,145,53,0.12)]">
           <svg
             viewBox="0 0 16 16"
             fill="none"
-            className="h-3.5 w-3.5 text-[rgb(255,90,107)]"
+            className="h-3.5 w-3.5 text-[rgb(249,145,53)]"
             aria-hidden="true"
           >
             <path
@@ -75,8 +74,8 @@ export default function DeleteRoomButton({
 
       {/* Error */}
       {error ? (
-        <div className="mt-4 rounded-[12px] border border-[rgba(255,90,107,0.25)] bg-[rgba(255,90,107,0.08)] px-4 py-3">
-          <p className="text-sm text-[rgb(255,160,170)]">{error}</p>
+        <div className="mt-4 rounded-[12px] border border-[rgba(249,145,53,0.25)] bg-[rgba(249,145,53,0.08)] px-4 py-3">
+          <p className="text-sm text-[rgb(249,145,53)]">{error}</p>
         </div>
       ) : null}
 
@@ -84,8 +83,8 @@ export default function DeleteRoomButton({
         {confirming ? (
           <div className="space-y-3">
             {/* Confirmation warning */}
-            <div className="rounded-[12px] border border-[rgba(255,90,107,0.25)] bg-[rgba(255,90,107,0.08)] px-4 py-3">
-              <p className="text-sm leading-relaxed text-[rgb(255,160,170)]">
+            <div className="rounded-[12px] border border-[rgba(249,145,53,0.25)] bg-[rgba(249,145,53,0.08)] px-4 py-3">
+              <p className="text-sm leading-relaxed text-[rgb(249,145,53)]">
                 This will permanently delete{" "}
                 <strong className="font-semibold text-white">
                   {roomName}

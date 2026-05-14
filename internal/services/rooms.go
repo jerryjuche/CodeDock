@@ -150,9 +150,10 @@ func (s *RoomService) CreateRoomWithOptions(userID string, input CreateRoomInput
 			owner_user_id,
 			source_type,
 			source_metadata,
-			primary_join_code
+			primary_join_code,
+			is_active
 		)
-		VALUES ($1, $2, $3, $3, $4, $5, $6)
+		VALUES ($1, $2, $3, $3, $4, $5, $6, FALSE)
 		RETURNING
 			id,
 			name,
@@ -260,6 +261,9 @@ func (s *RoomService) GetRoomDetails(roomID, userID string, connectedUserIDs map
 		return nil, err
 	}
 
+	room, _ = s.GetRoom(roomID)
+	s.broadcastRoomUpdate(roomID)
+
 	return &RoomDetails{
 		Room: room,
 		Membership: RoomMembership{
@@ -354,23 +358,59 @@ func (s *RoomService) MarkLocalWorkspaceBound(roomID, userID, workspaceLabel str
 		metadata["workspace_label"] = strings.TrimSpace(workspaceLabel)
 	}
 
-	metadataBytes, err := json.Marshal(metadata)
+	sourceMetadata, err := json.Marshal(metadata)
 	if err != nil {
 		return nil, err
+	}
+
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`
+		UPDATE rooms
+		SET source_metadata = $1,
+		    is_active = TRUE,
+		    updated_at = NOW()
+		WHERE id = $2
+	`, sourceMetadata, roomID)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	room, _ = s.GetRoom(roomID)
+	s.broadcastRoomUpdate(roomID)
+
+	return &RoomDetails{
+		Room: room,
+		Membership: RoomMembership{
+			Role: role,
+		},
+		SourceState: buildRoomSourceState(room, role, connectedUserIDs),
+	}, nil
+}
+
+func (s *RoomService) broadcastRoomUpdate(roomID string) {
+	// Signal to handlers/hub that room state changed
+}
+
+func (s *RoomService) LeaveRoom(roomID, userID string) error {
+	_, err := s.GetUserRole(roomID, userID)
+	if err != nil {
+		return err
 	}
 
 	_, err = s.DB.Exec(`
-		UPDATE rooms
-		SET source_metadata = $2,
-		    updated_at = NOW()
-		WHERE id = $1
-		  AND is_active = TRUE
-	`, roomID, metadataBytes)
-	if err != nil {
-		return nil, err
-	}
-
-	return s.GetRoomDetails(roomID, userID, connectedUserIDs)
+		DELETE FROM room_members
+		WHERE room_id = $1 AND user_id = $2
+	`, roomID, userID)
+	return err
 }
 
 func (s *RoomService) ToggleRoomActivation(roomID, userID string, connectedUserIDs map[string]bool) (*RoomDetails, error) {
@@ -390,11 +430,12 @@ func (s *RoomService) ToggleRoomActivation(roomID, userID string, connectedUserI
 
 	// Toggle activated state
 	currentlyActivated := metadata["activated"] == true
-	metadata["activated"] = !currentlyActivated
+	newActivated := !currentlyActivated
+	metadata["activated"] = newActivated
 	
 	// Also sync ready status
-	metadata["ready"] = metadata["activated"]
-	if metadata["activated"] == true {
+	metadata["ready"] = newActivated
+	if newActivated {
 		metadata["status"] = "ready"
 	} else {
 		metadata["status"] = "inactive"
@@ -405,9 +446,23 @@ func (s *RoomService) ToggleRoomActivation(roomID, userID string, connectedUserI
 		return nil, err
 	}
 
-	if _, err := s.DB.Exec(`
-		UPDATE rooms SET source_metadata = $1, updated_at = $2 WHERE id = $3
-	`, metadataBytes, time.Now().UTC(), roomID); err != nil {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`
+		UPDATE rooms 
+		SET source_metadata = $1, 
+		    is_active = $2,
+		    updated_at = NOW() 
+		WHERE id = $3
+	`, metadataBytes, newActivated, roomID); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 

@@ -129,6 +129,28 @@ func (h *Hub) Unregister(client *Client) {
 	}
 }
 
+func (h *Hub) CloseUserInRoom(roomID, userID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	room, ok := h.rooms[roomID]
+	if !ok {
+		return
+	}
+
+	for client := range room {
+		if client.UserID == userID {
+			delete(room, client)
+			close(client.Send)
+			_ = client.Conn.Close()
+		}
+	}
+
+	if len(room) == 0 {
+		delete(h.rooms, roomID)
+	}
+}
+
 func (h *Hub) Broadcast(sender *Client, roomID string, message []byte) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()

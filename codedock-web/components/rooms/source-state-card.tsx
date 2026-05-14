@@ -143,7 +143,7 @@ export default function SourceStateCard({
               disabled={loading}
               className={`relative w-full h-12 overflow-hidden rounded-xl border transition-all duration-300 active:scale-[0.98] ${
                 sourceState.activated
-                  ? "bg-rose-500/10 border-rose-500/30 text-rose-400 hover:bg-rose-500/20"
+                  ? "bg-orange-500/10 border-orange-500/30 text-orange-400 hover:bg-orange-500/20"
                   : "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20"
               }`}
             >

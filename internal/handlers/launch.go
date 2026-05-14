@@ -22,6 +22,10 @@ type openIDERequest struct {
 }
 
 func (h *LaunchHandler) OpenInVSCode(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	claims, ok := auth.GetUserFromContext(r)
 	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -48,6 +52,10 @@ func (h *LaunchHandler) OpenInVSCode(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *LaunchHandler) OpenIDE(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	claims, ok := auth.GetUserFromContext(r)
 	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)

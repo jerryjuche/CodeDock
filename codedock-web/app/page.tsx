@@ -1,9 +1,22 @@
+"use client";
+
 import Link from "next/link";
 import MarketingShell from "@/components/marketing/marketing-shell";
 import TextRotate from "@/components/fancy/text/text-rotate";
 import { Server, Users, Settings, Building, Rocket, Code } from "lucide-react";
+import { useAuth } from "@/hooks/use-auth";
+import { useRouter } from "next/navigation";
+import { useEffect } from "react";
 
 export default function HomePage() {
+  const { token, hydrated } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (hydrated && token) {
+      router.push("/dashboard");
+    }
+  }, [hydrated, token, router]);
   return (
     <MarketingShell>
       <main className="grid lg:grid-cols-[1.1fr_0.9fr]">

@@ -75,3 +75,10 @@ export function toggleRoomActivation(token: string, roomId: string) {
     token,
   });
 }
+
+export function leaveRoom(token: string, roomId: string) {
+  return apiRequest<{ success: boolean }>(`/rooms/${roomId}/leave`, {
+    method: "POST",
+    token,
+  });
+}

@@ -9,6 +9,7 @@ import { useRoomPresence } from "@/hooks/use-room-presence";
 import { useRoomActivities } from "@/hooks/use-room-activities";
 import { useInvites } from "@/hooks/use-invites";
 import { useAuth } from "@/hooks/use-auth";
+import { useRoomSync } from "@/hooks/use-room-sync";
 import RoomDetailsSkeleton from "@/components/rooms/room-details-skeleton";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import type { RoomPresenceMember } from "@/types/room";
@@ -63,6 +64,15 @@ const DeleteRoomButton = dynamic(
   },
 );
 
+const LeaveRoomButton = dynamic(
+  () => import("@/components/rooms/leave-room-button"),
+  {
+    loading: () => (
+      <div className="h-10 w-full bg-white/5 rounded-lg animate-pulse" />
+    ),
+  },
+);
+
 const Button = dynamic(
   () =>
     import("@/components/ui/button").then((mod) => ({ default: mod.Button })),
@@ -75,6 +85,7 @@ const Button = dynamic(
 
 export default function RoomDetailsPageClient({ roomId }: { roomId: string }) {
   const { userId } = useAuth();
+  useRoomSync(roomId);
   const { details, loading, error, reload } = useRoomDetails(roomId);
   const {
     presence,
@@ -196,11 +207,16 @@ export default function RoomDetailsPageClient({ roomId }: { roomId: string }) {
               isHost={isHost}
             />
           </ErrorBoundary>
+          
           {isHost ? (
             <ErrorBoundary>
               <DeleteRoomButton roomId={roomId} roomName={details.room.name} />
             </ErrorBoundary>
-          ) : null}
+          ) : (
+            <ErrorBoundary>
+              <LeaveRoomButton roomId={roomId} />
+            </ErrorBoundary>
+          )}
         </div>
       </div>
 

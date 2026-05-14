@@ -12,6 +12,7 @@ const (
 	MessageTypeFileBootstrapReq     byte = 0x07 // guest asks host for file contents
 	MessageTypeFileBootstrapRes     byte = 0x08 // host returns file contents
 	MessageTypeFileActivity         byte = 0x09 // file text snippet for activity feed
+	MessageTypeRoomUpdate           byte = 0x0A // signal to clients to re-fetch room metadata
 )
 
 // Message carries a decoded incoming message ready for routing.
