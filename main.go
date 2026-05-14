@@ -58,6 +58,7 @@ func main() {
 
 	// Rate limiters
 	authLimiter := middleware.NewRateLimiter(10, time.Minute)
+	wsLimiter := middleware.NewRateLimiter(100, time.Minute)
 
 	allowedOrigins := getAllowedOrigins()
 
@@ -97,7 +98,7 @@ func main() {
 	mux.HandleFunc("POST /vscode/launch/exchange", launchHandler.ExchangeLaunchToken)
 
 	// WebSocket route
-	mux.HandleFunc("/ws", handlers.ServeWS(h, roomService, allowedOrigins))
+	mux.Handle("/ws", wsLimiter.Limit(http.HandlerFunc(handlers.ServeWS(h, roomService, allowedOrigins))))
 
 	port := os.Getenv("PORT")
 	if port == "" {

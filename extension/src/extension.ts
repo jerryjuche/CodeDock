@@ -485,6 +485,12 @@ async function ensureManagedWorkspace(
   launchContext: LaunchContext,
   outputChannel: vscode.OutputChannel,
 ): Promise<vscode.Uri> {
+  // Validate room_slug to prevent path traversal
+  const slugRegex = /^[a-z0-9-]+$/;
+  if (!slugRegex.test(launchContext.room_slug)) {
+    throw new Error(`Invalid room slug: "${launchContext.room_slug}". Slugs must be alphanumeric and contain no path traversal characters.`);
+  }
+
   const baseDir = path.join(os.homedir(), ".codedock", "rooms");
   const roomDir = path.join(baseDir, launchContext.room_slug);
 

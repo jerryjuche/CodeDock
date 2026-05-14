@@ -379,7 +379,7 @@ func TestRoute_UnknownTypeDoesNothing(t *testing.T) {
 	mustNotReceiveHubMessage(t, receiver.Send, 50*time.Millisecond)
 }
 
-func TestTrackAndSnapshot_DoesNothingForInvalidPayloads(t *testing.T) {
+func TestTrackSnapshot_DoesNothingForInvalidPayloads(t *testing.T) {
 	store := newMockSnapshotStore()
 	h := New(store)
 	sender := newHubTestClient("room-1", "sender", 1)
@@ -395,7 +395,7 @@ func TestTrackAndSnapshot_DoesNothingForInvalidPayloads(t *testing.T) {
 
 	for _, payload := range invalidPayloads {
 		for i := 0; i < snapshotThreshold+2; i++ {
-			h.trackAndSnapshot(Message{
+			h.trackSnapshot(Message{
 				Type:    MessageTypeSync,
 				Payload: payload,
 				Sender:  sender,
@@ -410,7 +410,7 @@ func TestTrackAndSnapshot_DoesNothingForInvalidPayloads(t *testing.T) {
 	}
 }
 
-func TestTrackAndSnapshot_ResetsAfterThreshold(t *testing.T) {
+func TestTrackSnapshot_ResetsAfterThreshold(t *testing.T) {
 	store := newMockSnapshotStore()
 	h := New(store)
 	sender := newHubTestClient("room-1", "sender", 1)
@@ -418,7 +418,7 @@ func TestTrackAndSnapshot_ResetsAfterThreshold(t *testing.T) {
 	payload := buildSnapshotPayload("index.html", []byte("state"))
 
 	for i := 0; i < snapshotThreshold; i++ {
-		h.trackAndSnapshot(Message{
+		h.trackSnapshot(Message{
 			Type:    MessageTypeSync,
 			Payload: payload,
 			Sender:  sender,
@@ -431,7 +431,7 @@ func TestTrackAndSnapshot_ResetsAfterThreshold(t *testing.T) {
 	}
 
 	for i := 0; i < snapshotThreshold-1; i++ {
-		h.trackAndSnapshot(Message{
+		h.trackSnapshot(Message{
 			Type:    MessageTypeSync,
 			Payload: payload,
 			Sender:  sender,
@@ -444,7 +444,7 @@ func TestTrackAndSnapshot_ResetsAfterThreshold(t *testing.T) {
 	case <-time.After(75 * time.Millisecond):
 	}
 
-	h.trackAndSnapshot(Message{
+	h.trackSnapshot(Message{
 		Type:    MessageTypeSync,
 		Payload: payload,
 		Sender:  sender,
