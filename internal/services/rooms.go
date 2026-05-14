@@ -133,6 +133,12 @@ func (s *RoomService) CreateRoomWithOptions(userID string, input CreateRoomInput
 		return nil, err
 	}
 
+	// Default new rooms to deactivated
+	finalMetadata := map[string]any{}
+	_ = json.Unmarshal(sourceMetadata, &finalMetadata)
+	finalMetadata["activated"] = false
+	sourceMetadata, _ = json.Marshal(finalMetadata)
+
 	var room Room
 	var metadataBytes []byte
 
@@ -545,6 +551,7 @@ func buildRoomSourceState(room *Room, role string, connectedUserIDs map[string]b
 		Ready:         false,
 		HostBound:     false,
 		LaunchAllowed: false,
+		HostConnected: connectedUserIDs[room.OwnerUserID],
 	}
 
 	switch room.SourceType {
