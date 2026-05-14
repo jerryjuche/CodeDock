@@ -8,6 +8,8 @@ type CodeBlockProps = {
   language: string;
   filename: string;
   highlightLines?: number[];
+  /** If true, removes outer border/radius so CodeBlock can be embedded flush inside a parent container */
+  embedded?: boolean;
 } & (
   | {
       code: string;
@@ -30,6 +32,7 @@ export const CodeBlock = ({
   code,
   highlightLines = [],
   tabs = [],
+  embedded = false,
 }: CodeBlockProps) => {
   const [copied, setCopied] = React.useState(false);
   const [activeTab, setActiveTab] = React.useState(0);
@@ -53,43 +56,50 @@ export const CodeBlock = ({
     ? tabs[activeTab].highlightLines || []
     : highlightLines;
 
+  const outerClasses = embedded
+    ? "overflow-hidden bg-slate-950"
+    : "overflow-hidden rounded-2xl border border-white/[0.08] bg-slate-950 shadow-[0_8px_32px_rgba(0,0,0,0.3)]";
+
   return (
-    <div className="overflow-hidden rounded-[24px] border border-white/10 bg-slate-950 shadow-[0_20px_60px_rgba(0,0,0,0.35)]">
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/10 bg-slate-900 px-4 py-3">
-        <div className="min-w-0">
-          <p className="text-xs uppercase tracking-[0.26em] text-[rgb(158,183,211)]">
-            Code preview
-          </p>
-          <p className="truncate text-sm font-semibold text-white">
+    <div className={outerClasses}>
+      {/* Header bar */}
+      <div className="flex items-center justify-between gap-4 border-b border-white/[0.06] bg-[rgba(15,23,42,0.8)] px-4 py-2.5">
+        <div className="flex items-center gap-3 min-w-0">
+          {/* Traffic-light dots */}
+          <div className="flex items-center gap-1.5" aria-hidden="true">
+            <span className="h-[10px] w-[10px] rounded-full bg-[rgba(255,95,87,0.8)]" />
+            <span className="h-[10px] w-[10px] rounded-full bg-[rgba(255,189,46,0.8)]" />
+            <span className="h-[10px] w-[10px] rounded-full bg-[rgba(39,201,63,0.8)]" />
+          </div>
+          <p className="truncate text-[13px] font-medium text-[rgb(180,195,214)]">
             {filename}
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            onClick={copyToClipboard}
-            className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-2 text-xs font-medium text-[rgb(158,183,211)] transition-colors hover:bg-white/10 hover:text-white"
-          >
-            {copied ? (
-              <Check className="h-3.5 w-3.5" />
-            ) : (
-              <Copy className="h-3.5 w-3.5" />
-            )}
-            {copied ? "Copied" : "Copy"}
-          </button>
-        </div>
+        <button
+          onClick={copyToClipboard}
+          className="flex items-center gap-1.5 rounded-lg border border-white/[0.06] bg-white/[0.03] px-2.5 py-1.5 text-[11px] font-medium text-[rgb(148,163,184)] transition-all hover:bg-white/[0.06] hover:text-white"
+        >
+          {copied ? (
+            <Check className="h-3 w-3" />
+          ) : (
+            <Copy className="h-3 w-3" />
+          )}
+          {copied ? "Copied" : "Copy"}
+        </button>
       </div>
 
+      {/* Tabs (if any) */}
       {tabsExist && (
-        <div className="flex flex-wrap gap-2 border-b border-white/10 bg-slate-950 px-4 py-3">
+        <div className="flex flex-wrap gap-1 border-b border-white/[0.06] bg-[rgba(15,23,42,0.5)] px-4 py-2">
           {tabs.map((tab, index) => (
             <button
               key={index}
               onClick={() => setActiveTab(index)}
-              className={`rounded-full px-3 py-2 text-xs font-medium transition ${
+              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
                 activeTab === index
-                  ? "bg-slate-800 text-white shadow-[0_0_0_1px_rgba(255,255,255,0.08)]"
-                  : "text-[rgb(148,163,184)] hover:bg-white/5 hover:text-white"
+                  ? "bg-white/[0.08] text-white"
+                  : "text-[rgb(148,163,184)] hover:bg-white/[0.04] hover:text-white"
               }`}
             >
               {tab.name}
@@ -98,39 +108,49 @@ export const CodeBlock = ({
         </div>
       )}
 
-      <div className="overflow-x-auto px-4 py-4">
-        <div className="rounded-[20px] border border-white/10 bg-slate-950 p-3">
-          <SyntaxHighlighter
-            language={activeLanguage}
-            style={atomDark}
-            customStyle={{
-              margin: 0,
-              padding: 0,
-              background: "transparent",
-              fontSize: "0.9rem",
-              lineHeight: 1.6,
-            }}
-            wrapLines={true}
-            showLineNumbers={true}
-            lineNumberStyle={{
-              color: "rgba(148,163,184,0.75)",
-              paddingRight: 16,
-              minWidth: 28,
-            }}
-            lineProps={(lineNumber) => ({
+      {/* Code area */}
+      <div className="overflow-x-auto max-h-[600px] overflow-y-auto scrollbar-hide">
+        <SyntaxHighlighter
+          language={activeLanguage}
+          style={atomDark}
+          customStyle={{
+            margin: 0,
+            padding: "16px 0",
+            background: "transparent",
+            fontSize: "0.82rem",
+            lineHeight: 1.7,
+          }}
+          wrapLines={true}
+          wrapLongLines={true}
+          showLineNumbers={true}
+          lineNumberStyle={{
+            color: "rgba(148,163,184,0.4)",
+            paddingRight: 20,
+            paddingLeft: 20,
+            minWidth: 56,
+            flexShrink: 0,
+            fontSize: "0.75rem",
+          }}
+          lineProps={(lineNumber) => {
+            const isHighlighted = activeHighlightLines.includes(lineNumber);
+            return {
               style: {
-                backgroundColor: activeHighlightLines.includes(lineNumber)
-                  ? "rgba(255,255,255,0.08)"
+                backgroundColor: isHighlighted
+                  ? "rgba(46,160,67,0.12)"
                   : "transparent",
+                borderLeft: isHighlighted
+                  ? "3px solid rgba(46,160,67,0.7)"
+                  : "3px solid transparent",
                 display: "block",
                 width: "100%",
+                paddingRight: 16,
               },
-            })}
-            PreTag="div"
-          >
-            {String(activeCode)}
-          </SyntaxHighlighter>
-        </div>
+            };
+          }}
+          PreTag="div"
+        >
+          {String(activeCode)}
+        </SyntaxHighlighter>
       </div>
     </div>
   );

@@ -208,6 +208,7 @@ export default function RoomDetailsPageClient({ roomId }: { roomId: string }) {
         <MemberDetailsModal
           member={selectedMember}
           activities={activities}
+          roomId={roomId}
           onClose={() => setModalOpen(false)}
         />
       )}

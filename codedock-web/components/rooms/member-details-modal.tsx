@@ -1,12 +1,19 @@
-// components/rooms/member-details-modal.tsx
-import { useMemo, useState } from "react";
-import { Card } from "@/components/ui/card";
+import { useMemo, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { CodeBlock } from "@/components/ui/code-block";
-import { Badge } from "@/components/ui/badge";
-import { X, User, Activity, FileText, ClipboardCopy } from "lucide-react";
+import { X, Activity, FileText, ArrowUpRight, Clock, ChevronRight } from "lucide-react";
 import type { RoomPresenceMember } from "@/types/room";
-import type { ActivityEvent } from "./activity-timeline-card";
+
+/** Deterministic hue from email for avatar background */
+function colorFromEmail(email: string): string {
+  let hash = 0;
+  for (let i = 0; i < email.length; i++) {
+    hash = email.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const hue = Math.abs(hash) % 360;
+  return `hsl(${hue}, 55%, 48%)`;
+}
 
 const formatTimestamp = (timestamp: string) => {
   const date = new Date(timestamp);
@@ -21,271 +28,182 @@ const formatTimestamp = (timestamp: string) => {
 export default function MemberDetailsModal({
   member,
   activities = [],
+  roomId,
   onClose,
 }: {
   member: RoomPresenceMember;
-  activities?: Array<ActivityEvent | any>;
+  activities?: any[];
+  roomId: string;
   onClose: () => void;
 }) {
-  const [showCodeReview, setShowCodeReview] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const memberActivities = useMemo(() => {
+    return activities.filter((a) => a.user_id === member.user_id);
+  }, [activities, member.user_id]);
 
-  const transformedActivities: ActivityEvent[] = activities.map((activity) => ({
-    id: activity.id,
-    type: activity.type || "file_edited",
-    user_id: activity.user_id,
-    email: member.email,
-    subject: member.email,
-    timestamp: activity.created_at || new Date().toISOString(),
-    details: activity.details
-      ? {
-          file: activity.file_path || activity.details?.file,
-          code: activity.details?.code,
-          language: activity.details?.language,
-          highlightLines: activity.details?.highlightLines,
-        }
-      : undefined,
-  }));
-
-  const memberActivities = transformedActivities.filter(
-    (activity) => activity.user_id === member.user_id,
-  );
-
-  const editActivities = memberActivities.filter(
-    (activity) => activity.type === "file_edited",
-  );
+  const editActivities = useMemo(() => {
+    return memberActivities.filter((a) => a.type === "file_edited" || a.activity_type === "file_edited");
+  }, [memberActivities]);
 
   const fileGroups = useMemo(() => {
-    const groups = new Map<
-      string,
-      { file: string; activities: ActivityEvent[] }
-    >();
+    const groups = new Map<string, { file: string; count: number; lastTimestamp: string }>();
 
     editActivities.forEach((activity) => {
-      const file = activity.details?.file || "Unknown file";
-      const existing = groups.get(file) ?? { file, activities: [] };
-      existing.activities.push(activity);
-      groups.set(file, existing);
+      const file = activity.file_path || activity.details?.file || "Unknown file";
+      const existing = groups.get(file);
+      if (existing) {
+        existing.count++;
+        if (new Date(activity.created_at || activity.timestamp).getTime() > new Date(existing.lastTimestamp).getTime()) {
+          existing.lastTimestamp = activity.created_at || activity.timestamp;
+        }
+      } else {
+        groups.set(file, {
+          file,
+          count: 1,
+          lastTimestamp: activity.created_at || activity.timestamp || new Date().toISOString(),
+        });
+      }
     });
 
-    return Array.from(groups.values()).map((group) => ({
-      file: group.file,
-      activities: group.activities.sort(
-        (a, b) =>
-          new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
-      ),
-    }));
+    return Array.from(groups.values()).sort(
+      (a, b) => new Date(b.lastTimestamp).getTime() - new Date(a.lastTimestamp).getTime(),
+    );
   }, [editActivities]);
 
-  const selectedFileGroup = selectedFile
-    ? (fileGroups.find((group) => group.file === selectedFile) ?? fileGroups[0])
-    : fileGroups[0];
-
   const filesModifiedCount = fileGroups.length;
-  const latestEdit = editActivities[0];
+  const totalEdits = editActivities.length;
+  const initials = member.email.slice(0, 2).toUpperCase();
+  const avatarColor = colorFromEmail(member.email);
+  const [mounted, setMounted] = useState(false);
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/90 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-5xl overflow-hidden rounded-[32px] border border-white/10 bg-slate-950 shadow-2xl shadow-black/40">
-        <div className="flex flex-col gap-6 border-b border-white/10 bg-slate-900 px-6 py-6 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-          <div className="min-w-0">
-            <p className="text-xs uppercase tracking-[0.32em] text-[rgb(158,183,211)]">
-              Member profile overview
-            </p>
-            <h2 className="mt-3 text-3xl font-semibold text-white sm:text-4xl">
+  useEffect(() => {
+    setMounted(true);
+    return () => setMounted(false);
+  }, []);
+
+  const modalContent = (
+    <div
+      className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/60 p-4"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="w-full max-w-md overflow-hidden rounded-[32px] border border-white/[0.12] bg-[rgba(8,18,36,0.98)] shadow-[0_32px_64px_-12px_rgba(0,0,0,0.8)] animate-in fade-in zoom-in-95 duration-200">
+        <div className="absolute inset-0 bg-gradient-to-br from-sky-500/5 to-transparent pointer-events-none" />
+        {/* Compact Header */}
+        <div className="relative flex items-center gap-4 border-b border-white/[0.08] bg-white/[0.04] px-6 py-5">
+          <div
+            className="flex h-11 w-11 flex-shrink-0 items-center justify-center rounded-2xl text-sm font-bold text-white shadow-xl ring-1 ring-white/20"
+            style={{ background: avatarColor }}
+          >
+            {initials}
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2 className="truncate text-base font-bold tracking-tight text-white">
               {member.email}
             </h2>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-[rgb(158,183,211)]">
-              A concise view of this participant’s session activity, code
-              contributions, and recent file edits.
-            </p>
+            <div className="mt-0.5 flex items-center gap-2">
+              <span className={`h-2 w-2 rounded-full ${member.connected ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.6)]' : 'bg-slate-500'}`} />
+              <span className="text-[11px] font-bold text-[rgb(120,140,165)] uppercase tracking-[0.15em]">
+                {member.role} • {member.connected ? "Active" : "Away"}
+              </span>
+            </div>
           </div>
+          <button
+            onClick={onClose}
+            className="flex h-8 w-8 items-center justify-center rounded-xl bg-white/[0.05] border border-white/[0.08] text-[rgb(148,163,184)] transition-all hover:bg-white/[0.1] hover:text-white"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
 
-          <div className="flex items-center gap-3 self-start">
-            <Button
-              variant="secondary"
-              size="sm"
-              className="rounded-full"
-              onClick={onClose}
-            >
-              Close profile
-            </Button>
+        {/* Premium Stats Row */}
+        <div className="grid grid-cols-2 gap-3 px-6 py-5">
+          <div className="group relative overflow-hidden rounded-3xl border border-white/[0.06] bg-white/[0.03] p-4 transition-all hover:bg-white/[0.05]">
+            <div className="absolute top-0 right-0 p-2 opacity-10 transition-opacity group-hover:opacity-20">
+              <Activity className="h-8 w-8 text-white" />
+            </div>
+            <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-[rgb(100,120,150)]">Edits</p>
+            <p className="mt-2 text-3xl font-black text-white tracking-tight">{totalEdits}</p>
+          </div>
+          <div className="group relative overflow-hidden rounded-3xl border border-white/[0.06] bg-white/[0.03] p-4 transition-all hover:bg-white/[0.05]">
+            <div className="absolute top-0 right-0 p-2 opacity-10 transition-opacity group-hover:opacity-20">
+              <FileText className="h-8 w-8 text-white" />
+            </div>
+            <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-[rgb(100,120,150)]">Files</p>
+            <p className="mt-2 text-3xl font-black text-white tracking-tight">{filesModifiedCount}</p>
           </div>
         </div>
 
-        <div className="grid gap-6 px-6 py-6 lg:grid-cols-[1.15fr_0.85fr]">
-          <div className="space-y-6">
-            <Card className="border border-white/10 bg-slate-900 p-6 shadow-none">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.24em] text-[rgb(158,183,211)]">
-                    Session Activity
-                  </p>
-                  <h3 className="mt-3 text-xl font-semibold text-white">
-                    {memberActivities.length} contribution
-                    {memberActivities.length === 1 ? "" : "s"}
-                  </h3>
-                  <p className="mt-3 text-sm leading-6 text-[rgb(158,183,211)]">
-                    Captured this member’s collaboration footprint for the
-                    current session, including file edits and presence events.
-                  </p>
-                </div>
-                <Activity className="h-8 w-8 text-[rgb(239,102,46)]" />
-              </div>
-            </Card>
-
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Card className="border border-white/10 bg-slate-900 p-6 shadow-none">
-                <p className="text-xs uppercase tracking-[0.22em] text-[rgb(158,183,211)]">
-                  Files modified
-                </p>
-                <p className="mt-3 text-3xl font-semibold text-white">
-                  {filesModifiedCount}
-                </p>
-                <p className="mt-2 text-sm leading-6 text-[rgb(158,183,211)]">
-                  unique files touched during this session.
-                </p>
-              </Card>
-              <Card className="border border-white/10 bg-slate-900 p-6 shadow-none">
-                <p className="text-xs uppercase tracking-[0.22em] text-[rgb(158,183,211)]">
-                  Latest edit
-                </p>
-                <p className="mt-3 text-xl font-semibold text-white">
-                  {latestEdit
-                    ? formatTimestamp(latestEdit.timestamp)
-                    : "No edits yet"}
-                </p>
-                <p className="mt-2 text-sm leading-6 text-[rgb(158,183,211)]">
-                  {latestEdit?.details?.file ??
-                    "No code changes have been captured."}
-                </p>
-              </Card>
-            </div>
-          </div>
-
-          <div className="space-y-6">
-            <Card className="border border-white/10 bg-slate-900 p-6 shadow-none">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.24em] text-[rgb(158,183,211)]">
-                    Code contributions
-                  </p>
-                  <h3 className="mt-3 text-xl font-semibold text-white">
-                    {editActivities.length} edit
-                    {editActivities.length === 1 ? "" : "s"}
-                  </h3>
-                  <p className="mt-2 text-sm leading-6 text-[rgb(158,183,211)]">
-                    {filesModifiedCount > 0
-                      ? `${filesModifiedCount} file${filesModifiedCount === 1 ? "" : "s"} modified across this session.`
-                      : "No code contributions recorded yet."}
-                  </p>
-                </div>
-                <FileText className="h-8 w-8 text-[rgb(36,166,242)]" />
-              </div>
-            </Card>
-
-            <div className="rounded-[24px] border border-white/10 bg-slate-950 p-6 shadow-none">
-              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.24em] text-[rgb(158,183,211)]">
-                    Recent code review
-                  </p>
-                  <p className="mt-2 text-sm leading-6 text-[rgb(158,183,211)]">
-                    Inspect the latest changed files and preview updated content
-                    with contextual line highlighting.
-                  </p>
-                </div>
-                <Button
-                  variant="secondary"
-                  onClick={() => setShowCodeReview((current) => !current)}
+        {/* Files list (Compact) */}
+        <div className="px-5 pb-5">
+          <p className="mb-2 px-1 text-[10px] font-bold uppercase tracking-[0.2em] text-[rgb(100,120,150)]">
+            Recent Changes
+          </p>
+          <div className="max-h-[160px] space-y-1.5 overflow-y-auto pr-1 scrollbar-hide">
+            {fileGroups.length > 0 ? (
+              fileGroups.map((group) => (
+                <div
+                  key={group.file}
+                  className="group flex items-center justify-between rounded-xl border border-transparent bg-white/[0.03] px-3 py-2 transition-colors hover:border-white/[0.06] hover:bg-white/[0.05]"
                 >
-                  {showCodeReview ? "Hide review" : "Review changes"}
-                </Button>
-              </div>
-
-              {filesModifiedCount === 0 ? (
-                <div className="mt-6 rounded-[24px] border border-dashed border-white/10 bg-white/5 p-5 text-sm text-[rgb(158,183,211)]">
-                  No code changes available for review yet.
-                </div>
-              ) : (
-                <div className="mt-6 space-y-4">
-                  <div className="grid gap-3">
-                    {fileGroups.map((group) => (
-                      <button
-                        key={group.file}
-                        type="button"
-                        onClick={() => setSelectedFile(group.file)}
-                        className={`flex w-full items-center justify-between rounded-3xl border px-4 py-3 text-left transition ${
-                          selectedFileGroup?.file === group.file
-                            ? "border-[rgba(63,188,255,0.75)] bg-slate-900"
-                            : "border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10"
-                        }`}
-                      >
-                        <div>
-                          <p className="text-sm font-semibold text-white">
-                            {group.file}
-                          </p>
-                          <p className="mt-1 text-xs text-[rgb(158,183,211)]">
-                            {group.activities.length} edit
-                            {group.activities.length === 1 ? "" : "s"} •{" "}
-                            {formatTimestamp(group.activities[0].timestamp)}
-                          </p>
-                        </div>
-                        <Badge className="border-white/10 text-[rgb(158,183,211)]">
-                          {group.activities.length}x
-                        </Badge>
-                      </button>
-                    ))}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-semibold text-[rgb(200,215,230)] group-hover:text-white transition-colors">
+                      {group.file}
+                    </p>
+                    <p className="mt-0.5 flex items-center gap-1.5 text-[9px] text-[rgb(100,120,150)] uppercase font-bold tracking-wider">
+                      <Clock className="h-2.5 w-2.5" />
+                      {formatTimestamp(group.lastTimestamp)}
+                    </p>
                   </div>
-
-                  {showCodeReview && selectedFileGroup ? (
-                    selectedFileGroup.activities[0]?.details?.code ? (
-                      <div className="space-y-4 rounded-[28px] border border-white/10 bg-slate-900 p-5">
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                          <div>
-                            <p className="text-xs uppercase tracking-[0.24em] text-[rgb(158,183,211)]">
-                              {selectedFileGroup.file}
-                            </p>
-                            <p className="mt-1 text-sm text-[rgb(158,183,211)]">
-                              Latest update{" "}
-                              {formatTimestamp(
-                                selectedFileGroup.activities[0].timestamp,
-                              )}
-                            </p>
-                          </div>
-                          <div className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium text-[rgb(148,163,184)]">
-                            {selectedFileGroup.activities.length} edit
-                            {selectedFileGroup.activities.length === 1
-                              ? ""
-                              : "s"}
-                          </div>
-                        </div>
-                        <CodeBlock
-                          language={
-                            selectedFileGroup.activities[0].details?.language ||
-                            "text"
-                          }
-                          filename={selectedFileGroup.file}
-                          code={selectedFileGroup.activities[0].details.code}
-                          highlightLines={
-                            selectedFileGroup.activities[0].details
-                              ?.highlightLines
-                          }
-                        />
-                      </div>
-                    ) : (
-                      <div className="rounded-[24px] border border-dashed border-white/10 bg-white/5 p-5 text-sm text-[rgb(158,183,211)]">
-                        No editable code preview is available for this selected
-                        file.
-                      </div>
-                    )
-                  ) : null}
+                  <div className="ml-3 flex items-center gap-2">
+                    <span className="rounded-md bg-white/[0.04] px-1.5 py-0.5 text-[9px] font-bold text-[rgb(148,163,184)]">
+                      {group.count}
+                    </span>
+                    <ChevronRight className="h-3 w-3 text-white/20 group-hover:text-white/40" />
+                  </div>
                 </div>
-              )}
-            </div>
+              ))
+            ) : (
+              <div className="rounded-xl border border-dashed border-white/[0.08] bg-white/[0.01] p-6 text-center">
+                <p className="text-[11px] font-medium text-[rgb(100,120,150)]">No activity recorded</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Footer Actions */}
+        <div className="border-t border-white/[0.06] bg-white/[0.01] px-5 py-4">
+          <div className="flex gap-2">
+            {fileGroups.length > 0 && (
+              <Link
+                href={`/rooms/${roomId}/review/${member.user_id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex-[2]"
+              >
+                <Button className="w-full py-6 text-sm font-bold group" size="sm">
+                  <div className="flex items-center justify-center gap-2 whitespace-nowrap">
+                    Review Changes
+                    <ArrowUpRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+                  </div>
+                </Button>
+              </Link>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onClose}
+              className={`flex-1 py-6 text-sm font-bold text-[rgb(148,163,184)] border-white/[0.12] hover:bg-white/5 ${fileGroups.length === 0 ? "w-full" : ""}`}
+            >
+              Close
+            </Button>
           </div>
         </div>
       </div>
     </div>
   );
+
+  if (!mounted) return null;
+
+  return createPortal(modalContent, document.body);
 }

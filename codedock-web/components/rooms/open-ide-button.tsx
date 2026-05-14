@@ -1,7 +1,8 @@
 // components/rooms/open-ide-button.tsx
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useLaunchIDE } from "@/hooks/use-launch";
@@ -33,6 +34,12 @@ export default function OpenIDEButton({
   const [launchError, setLaunchError] = useState<string | null>(null);
   const [launchingEditor, setLaunchingEditor] =
     useState<CodeDockEditorTarget | null>(null);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+    return () => setMounted(false);
+  }, []);
 
   const disabled = loading || (!isHost && !launchAllowed);
 
@@ -160,115 +167,133 @@ export default function OpenIDEButton({
       </Card>
 
       {/* IDE Selection Modal */}
-      {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <Card className="w-full max-w-2xl mx-4">
-            <div className="flex items-start justify-between">
-              <div>
-                <h2 className="text-2xl font-bold text-white">
-                  Choose your IDE
-                </h2>
-                <p className="mt-2 text-sm text-[rgb(158,183,211)]">
-                  Open this CodeDock room in the editor where you installed the
-                  CodeDock extension.
-                </p>
-              </div>
-              <button
-                onClick={() => {
-                  setShowModal(false);
-                  setLaunchError(null);
-                }}
-                className="text-[rgb(158,183,211)] hover:text-white transition-colors"
-                aria-label="Close modal"
-              >
-                <svg
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  className="h-6 w-6"
-                  stroke="currentColor"
-                  strokeWidth="2"
+      {showModal && mounted && createPortal(
+        <div 
+          className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/60 p-4"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowModal(false);
+          }}
+        >
+          <div className="w-full max-w-2xl overflow-hidden rounded-[32px] border border-white/[0.12] bg-[rgba(8,18,36,0.98)] shadow-[0_32px_64px_-12px_rgba(0,0,0,0.8)] animate-in fade-in zoom-in-95 duration-200">
+            <div className="absolute inset-0 bg-gradient-to-br from-sky-500/5 to-transparent pointer-events-none" />
+            
+            <div className="relative p-8">
+              <div className="flex items-start justify-between">
+                <div>
+                  <h2 className="text-2xl font-bold text-white tracking-tight">
+                    Choose your IDE
+                  </h2>
+                  <p className="mt-2 text-sm font-medium text-[rgb(158,183,211)]">
+                    Open this CodeDock room in the editor where you installed the
+                    CodeDock extension.
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    setShowModal(false);
+                    setLaunchError(null);
+                  }}
+                  className="flex h-8 w-8 items-center justify-center rounded-xl bg-white/[0.05] border border-white/[0.08] text-[rgb(148,163,184)] transition-all hover:bg-white/[0.1] hover:text-white"
+                  aria-label="Close modal"
                 >
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
-            </div>
-
-            {/* Editor Options */}
-            <div className="mt-8 grid gap-4 md:grid-cols-2">
-              {[EDITOR_TARGETS.VSCODE, EDITOR_TARGETS.ANTIGRAVITY].map(
-                (editor) => (
-                  <div
-                    key={editor}
-                    onClick={() => setSelectedEditor(editor)}
-                    className={`relative rounded-lg border-2 p-4 cursor-pointer transition-all ${
-                      selectedEditor === editor
-                        ? "border-[rgb(36,166,242)] bg-[rgba(36,166,242,0.1)]"
-                        : "border-[rgba(158,183,211,0.2)] hover:border-[rgb(158,183,211)]"
-                    }`}
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    className="h-5 w-5"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
                   >
-                    <h3 className="font-semibold text-white">
-                      {EDITOR_LABELS[editor]}
-                    </h3>
-                    <p className="mt-1 text-xs text-[rgb(158,183,211)]">
-                      {EDITOR_DESCRIPTIONS[editor]}
-                    </p>
-                  </div>
-                ),
-              )}
-            </div>
-
-            {/* Error Message */}
-            {launchError && (
-              <div className="mt-4 flex items-start gap-3 rounded-[12px] border border-[rgba(255,90,107,0.25)] bg-[rgba(255,90,107,0.08)] px-4 py-3">
-                <p className="text-sm text-[rgb(255,160,170)]">{launchError}</p>
+                    <line x1="18" y1="6" x2="6" y2="18" />
+                    <line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
               </div>
-            )}
 
-            {/* Actions */}
-            <div className="mt-6 space-y-3">
-              {selectedEditor && (
-                <>
-                  <Button
-                    disabled={launchingEditor !== null}
-                    onClick={() => {
-                      void handleLaunchEditor(selectedEditor);
-                    }}
-                    className="w-full"
-                  >
-                    {launchingEditor === selectedEditor
-                      ? "Opening…"
-                      : `Open in ${EDITOR_LABELS[selectedEditor]}`}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    disabled={launchingEditor !== null}
-                    onClick={() => {
-                      void handleCopyLink(selectedEditor);
-                    }}
-                    className="w-full"
-                  >
-                    {copiedEditor === selectedEditor
-                      ? "Link copied!"
-                      : `Copy ${EDITOR_LABELS[selectedEditor]} link`}
-                  </Button>
-                </>
+              {/* Editor Options */}
+              <div className="mt-8 grid gap-4 md:grid-cols-2">
+                {[EDITOR_TARGETS.VSCODE, EDITOR_TARGETS.ANTIGRAVITY].map(
+                  (editor) => (
+                    <div
+                      key={editor}
+                      onClick={() => setSelectedEditor(editor)}
+                      className={`group relative rounded-2xl border-2 p-5 cursor-pointer transition-all duration-200 ${
+                        selectedEditor === editor
+                          ? "border-[rgb(36,166,242)] bg-[rgba(36,166,242,0.1)] shadow-[0_8px_20px_rgba(36,166,242,0.15)]"
+                          : "border-white/[0.08] bg-white/[0.02] hover:border-white/20 hover:bg-white/[0.04]"
+                      }`}
+                    >
+                      <h3 className={`font-bold transition-colors ${selectedEditor === editor ? 'text-white' : 'text-[rgb(200,215,230)]'}`}>
+                        {EDITOR_LABELS[editor]}
+                      </h3>
+                      <p className="mt-1 text-[11px] font-medium leading-relaxed text-[rgb(120,140,165)]">
+                        {EDITOR_DESCRIPTIONS[editor]}
+                      </p>
+                      {selectedEditor === editor && (
+                        <div className="absolute top-2 right-2 h-2 w-2 rounded-full bg-[rgb(36,166,242)] shadow-[0_0_8px_rgba(36,166,242,0.8)]" />
+                      )}
+                    </div>
+                  ),
+                )}
+              </div>
+
+              {/* Error Message */}
+              {launchError && (
+                <div className="mt-6 flex items-start gap-3 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3">
+                  <p className="text-sm font-medium text-red-400">{launchError}</p>
+                </div>
               )}
-              <Button
-                variant="outline"
-                disabled={launchingEditor !== null}
-                onClick={() => {
-                  setShowModal(false);
-                  setLaunchError(null);
-                  setSelectedEditor(null);
-                }}
-                className="w-full"
-              >
-                Cancel
-              </Button>
+
+              {/* Actions */}
+              <div className="mt-8 space-y-3">
+                {selectedEditor ? (
+                  <>
+                    <Button
+                      disabled={launchingEditor !== null}
+                      onClick={() => {
+                        void handleLaunchEditor(selectedEditor);
+                      }}
+                      className="w-full py-6 text-sm font-bold shadow-lg"
+                    >
+                      {launchingEditor === selectedEditor
+                        ? "Opening Session…"
+                        : `Launch ${EDITOR_LABELS[selectedEditor]}`}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      disabled={launchingEditor !== null}
+                      onClick={() => {
+                        void handleCopyLink(selectedEditor);
+                      }}
+                      className="w-full py-6 text-sm font-bold border-white/[0.12]"
+                    >
+                      {copiedEditor === selectedEditor
+                        ? "Deep Link Copied!"
+                        : `Copy ${EDITOR_LABELS[selectedEditor]} Protocol Link`}
+                    </Button>
+                  </>
+                ) : (
+                  <div className="h-[120px] flex items-center justify-center rounded-2xl border border-dashed border-white/[0.08] bg-white/[0.01]">
+                    <p className="text-xs font-bold uppercase tracking-widest text-[rgb(100,120,150)]">Select an editor to continue</p>
+                  </div>
+                )}
+                <Button
+                  variant="ghost"
+                  disabled={launchingEditor !== null}
+                  onClick={() => {
+                    setShowModal(false);
+                    setLaunchError(null);
+                    setSelectedEditor(null);
+                  }}
+                  className="w-full py-6 text-sm font-bold text-[rgb(148,163,184)] hover:text-white"
+                >
+                  Go Back
+                </Button>
+              </div>
             </div>
-          </Card>
-        </div>
+          </div>
+        </div>,
+        document.body
       )}
     </>
   );

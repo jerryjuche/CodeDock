@@ -1,0 +1,29 @@
+works fine, i wanted the code review to be on a new page, it redirects them to a  new page then they check necessary files edited, and the moday is too big, took more space on my page, reduce and reduce, make it profressional
+
+also for the edited coded, host wont know whick files were edited.. you can highlight the new codes or a color to indicate this was the edited text, make it professional
+
+Session Activity
+
+7 contributions
+Captured this member’s collaboration footprint for the current session, including file edits and presence events.
+
+how did you come about this? cuz i edited more than 7 lines, i dont know how that 7 came to play..
+
+Code contributions
+7 edits
+1 file modified across this session. --- same here
+
+Recent code review
+
+Inspect the latest changed files and preview updated content with contextual line highlighting.
+
+
+Review changes
+styles.css
+7 edits • May 13, 4:31 PM
+7x
+button containing this chould link to a new page showing rendered ui fir the code block
+
+make it professional, dont break login and avoid bugs
+
+lets plan beofore coding 
