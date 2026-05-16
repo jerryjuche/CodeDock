@@ -140,6 +140,9 @@ func (h *RoomHandler) GetRoomDetails(w http.ResponseWriter, r *http.Request) {
 	details, err := h.Services.GetRoomDetails(roomID, claims.UserID, connectedUserIDs)
 	if err != nil {
 		switch {
+		case errors.Is(err, services.ErrRoomNotActivated):
+			http.Error(w, "room_not_activated", http.StatusForbidden)
+			return
 		case errors.Is(err, services.ErrRoomForbidden):
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return

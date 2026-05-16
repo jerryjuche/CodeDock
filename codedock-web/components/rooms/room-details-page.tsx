@@ -119,6 +119,32 @@ export default function RoomDetailsPageClient({ roomId }: { roomId: string }) {
   }
 
   if (error || !details) {
+    const isWaitingRoom = error?.trim() === "room_not_activated";
+
+    if (isWaitingRoom) {
+      return (
+        <main className="mx-auto max-w-4xl px-6 py-10 sm:px-8">
+          <Card className="text-center p-12">
+            <h1 className="text-2xl font-semibold text-white">Waiting Room</h1>
+            <p className="mt-3 text-sm text-[rgb(158,183,211)]">
+              The host has not activated this room for guests yet. Please wait...
+            </p>
+            <div className="mt-6 flex justify-center">
+              <div className="h-2 w-24 overflow-hidden rounded-full bg-white/10">
+                <div className="h-full w-1/2 animate-[progress_1s_ease-in-out_infinite] bg-[rgb(42,211,139)] rounded-full" />
+              </div>
+            </div>
+            <style jsx>{`
+              @keyframes progress {
+                0% { transform: translateX(-100%); }
+                100% { transform: translateX(200%); }
+              }
+            `}</style>
+          </Card>
+        </main>
+      );
+    }
+
     const friendly = error?.toLowerCase().includes("forbidden")
       ? "You no longer have access to this room."
       : error?.toLowerCase().includes("not found")
@@ -127,7 +153,7 @@ export default function RoomDetailsPageClient({ roomId }: { roomId: string }) {
 
     return (
       <main className="mx-auto max-w-4xl px-6 py-10 sm:px-8">
-        <Card className="text-center">
+        <Card className="text-center p-12">
           <h1 className="text-2xl font-semibold text-white">Session ended</h1>
           <p className="mt-3 text-sm text-[rgb(158,183,211)]">{friendly}</p>
           <div className="mt-6">

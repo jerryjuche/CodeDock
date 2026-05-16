@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gorilla/websocket"
 	"github.com/jerryjuche/CodeDock/internal/auth"
 	"github.com/jerryjuche/CodeDock/internal/hub"
+	"github.com/jerryjuche/CodeDock/internal/services"
 )
 
 // upgrader converts an HTTP connection into a WebSocket connection.
@@ -67,6 +69,10 @@ func ServeWS(h *hub.Hub, access RoomAccessChecker, allowedOrigins []string) http
 		}
 
 		if err := access.CanConnectToRoom(roomID, claims.UserID); err != nil {
+			if errors.Is(err, services.ErrRoomNotActivated) {
+				http.Error(w, "room_not_activated", http.StatusForbidden)
+				return
+			}
 			http.Error(w, "room unavailable", http.StatusForbidden)
 			return
 		}

@@ -18,7 +18,7 @@ func LogActivity(db *sql.DB, roomID, userID, activityType, filePath string, deta
 	var detailsJSON []byte
 	var err error
 
-	if details != nil && len(details) > 0 {
+	if len(details) > 0 {
 		detailsJSON, err = json.Marshal(details)
 		if err != nil {
 			return err

@@ -27,6 +27,13 @@ export function useRoomSync(roomId: string) {
       socket = new WebSocket(url);
       socket.binaryType = "arraybuffer";
 
+      socket.onopen = () => {
+        // Recover from any cached errors the moment the socket connects
+        queryClient.invalidateQueries({ queryKey: ["room-details", roomId] });
+        queryClient.invalidateQueries({ queryKey: ["room-presence", roomId] });
+        queryClient.invalidateQueries({ queryKey: ["room-activities", roomId] });
+      };
+
       socket.onmessage = (event) => {
         if (!(event.data instanceof ArrayBuffer)) return;
         
@@ -45,8 +52,9 @@ export function useRoomSync(roomId: string) {
         reconnectTimeout = setTimeout(connect, 3000);
       };
 
-      socket.onerror = (err) => {
-        console.error("Room sync socket error:", err);
+      socket.onerror = () => {
+        // Suppress console.error to prevent Next.js dev overlays when the room is simply deactivated.
+        // The onclose handler will automatically retry the connection.
       };
     }
 

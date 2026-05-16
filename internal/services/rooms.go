@@ -16,6 +16,7 @@ var (
 	ErrRoomForbidden    = errors.New("forbidden")
 	ErrInvalidSource    = errors.New("invalid source type")
 	ErrInvalidRoomState = errors.New("invalid room state")
+	ErrRoomNotActivated = errors.New("room not activated")
 )
 
 const (
@@ -153,7 +154,7 @@ func (s *RoomService) CreateRoomWithOptions(userID string, input CreateRoomInput
 			primary_join_code,
 			is_active
 		)
-		VALUES ($1, $2, $3, $3, $4, $5, $6, FALSE)
+		VALUES ($1, $2, $3, $3, $4, $5, $6, TRUE)
 		RETURNING
 			id,
 			name,
@@ -261,7 +262,17 @@ func (s *RoomService) GetRoomDetails(roomID, userID string, connectedUserIDs map
 		return nil, err
 	}
 
-	room, _ = s.GetRoom(roomID)
+	if role != "host" {
+		var meta map[string]any
+		if err := json.Unmarshal(room.SourceMetadata, &meta); err == nil {
+			if activated, ok := meta["activated"].(bool); ok && !activated {
+				return nil, ErrRoomNotActivated
+			}
+		} else {
+			return nil, ErrRoomNotActivated
+		}
+	}
+
 	s.broadcastRoomUpdate(roomID)
 
 	return &RoomDetails{
@@ -455,10 +466,9 @@ func (s *RoomService) ToggleRoomActivation(roomID, userID string, connectedUserI
 	if _, err := tx.Exec(`
 		UPDATE rooms 
 		SET source_metadata = $1, 
-		    is_active = $2,
 		    updated_at = NOW() 
-		WHERE id = $3
-	`, metadataBytes, newActivated, roomID); err != nil {
+		WHERE id = $2
+	`, metadataBytes, roomID); err != nil {
 		return nil, err
 	}
 
@@ -848,23 +858,33 @@ func ensureJSON(data []byte) json.RawMessage {
 }
 
 func (s *RoomService) CanConnectToRoom(roomID, userID string) error {
-	var exists bool
+	var role string
+	var sourceMetadata []byte
 
 	err := s.DB.QueryRow(`
-		SELECT EXISTS (
-			SELECT 1
-			FROM room_members rm
-			INNER JOIN rooms r ON r.id = rm.room_id
-			WHERE rm.room_id = $1
-			  AND rm.user_id = $2
-			  AND r.is_active = TRUE
-		)
-	`, roomID, userID).Scan(&exists)
+		SELECT rm.role, r.source_metadata
+		FROM room_members rm
+		INNER JOIN rooms r ON r.id = rm.room_id
+		WHERE rm.room_id = $1
+		  AND rm.user_id = $2
+		  AND r.is_active = TRUE
+	`, roomID, userID).Scan(&role, &sourceMetadata)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrRoomForbidden
+	}
 	if err != nil {
 		return err
 	}
-	if !exists {
-		return ErrRoomForbidden
+
+	if role != "host" {
+		var meta map[string]any
+		if err := json.Unmarshal(sourceMetadata, &meta); err == nil {
+			if activated, ok := meta["activated"].(bool); ok && !activated {
+				return ErrRoomNotActivated
+			}
+		} else {
+			return ErrRoomNotActivated
+		}
 	}
 
 	return nil
