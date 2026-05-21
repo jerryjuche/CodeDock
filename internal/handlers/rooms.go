@@ -221,6 +221,9 @@ func (h *RoomHandler) BindLocalWorkspace(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if h.Hub != nil {
+		h.Hub.SetClientBound(roomID, claims.UserID)
+	}
 	connectedUserIDs := h.Hub.ConnectedUserIDs(roomID)
 	details, err := h.Services.MarkLocalWorkspaceBound(roomID, claims.UserID, req.WorkspaceLabel, connectedUserIDs)
 	if err == nil && h.Hub != nil {

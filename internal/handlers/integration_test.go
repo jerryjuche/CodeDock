@@ -1019,14 +1019,18 @@ func TestGetRoomPresence_ReturnsConnectedMembers(t *testing.T) {
 	guestUserID := guestAUserIDFromToken(t, guest.Token)
 
 	app.realtimeHub.Register(&hub.Client{
-		Send:   make(chan []byte, 1),
-		RoomID: room.ID,
-		UserID: hostUserID,
+		Send:       make(chan []byte, 1),
+		RoomID:     room.ID,
+		UserID:     hostUserID,
+		ClientType: "vscode",
+		Bound:      true,
 	})
 	app.realtimeHub.Register(&hub.Client{
-		Send:   make(chan []byte, 1),
-		RoomID: room.ID,
-		UserID: guestUserID,
+		Send:       make(chan []byte, 1),
+		RoomID:     room.ID,
+		UserID:     guestUserID,
+		ClientType: "vscode",
+		Bound:      true,
 	})
 
 	presenceResp := performJSONRequest(t, app.mux, http.MethodGet, "/rooms/"+room.ID+"/presence", nil, host.Token)

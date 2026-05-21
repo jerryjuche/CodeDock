@@ -22,7 +22,7 @@ export function useRoomSync(roomId: string) {
         ? process.env.NEXT_PUBLIC_API_URL.replace(/^https?:\/\//, "") 
         : "localhost:8080";
         
-      const url = `${protocol}//${host}/ws?room_id=${roomId}&token=${token}`;
+      const url = `${protocol}//${host}/ws?room_id=${roomId}&token=${token}&client=web`;
       
       socket = new WebSocket(url);
       socket.binaryType = "arraybuffer";

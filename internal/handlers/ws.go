@@ -81,7 +81,8 @@ func ServeWS(h *hub.Hub, access RoomAccessChecker, allowedOrigins []string) http
 		u.CheckOrigin = func(r *http.Request) bool {
 			origin := r.Header.Get("Origin")
 			if origin == "" {
-				return false
+				// Allow non-browser clients (like the VS Code extension) which don't send Origin
+				return true
 			}
 			_, ok := allowed[origin]
 			return ok
@@ -92,11 +93,14 @@ func ServeWS(h *hub.Hub, access RoomAccessChecker, allowedOrigins []string) http
 			return
 		}
 
+		clientType := r.URL.Query().Get("client")
+
 		client := &hub.Client{
-			Conn:   conn,
-			Send:   make(chan []byte, 256),
-			RoomID: roomID,
-			UserID: claims.UserID,
+			Conn:       conn,
+			Send:       make(chan []byte, 256),
+			RoomID:     roomID,
+			UserID:     claims.UserID,
+			ClientType: clientType,
 		}
 		h.Register(client)
 

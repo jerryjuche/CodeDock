@@ -27,10 +27,14 @@ type snapshotKey struct {
 const snapshotThreshold = 50
 
 type Client struct {
-	Conn   *websocket.Conn
-	Send   chan []byte
-	RoomID string
-	UserID string
+	Conn       *websocket.Conn
+	Send       chan []byte
+	RoomID     string
+	UserID     string
+	ClientType string
+	// Bound indicates the client has successfully bound a workspace (local or hydrated).
+	// The UI should consider the client "connected" only after this is true.
+	Bound bool
 }
 
 type Hub struct {
@@ -187,6 +191,7 @@ func (h *Hub) BroadcastAll(roomID string, message []byte) {
 	}
 }
 
+// ConnectedUserIDs returns IDs of users with a bound workspace.
 func (h *Hub) ConnectedUserIDs(roomID string) map[string]bool {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -194,16 +199,43 @@ func (h *Hub) ConnectedUserIDs(roomID string) map[string]bool {
 	connected := make(map[string]bool)
 
 	for client := range h.rooms[roomID] {
-		if client.UserID == "" {
+		if client.UserID == "" || client.ClientType != "vscode" {
 			continue
 		}
-		connected[client.UserID] = true
+		if client.Bound {
+			connected[client.UserID] = true
+		}
 	}
 
 	return connected
 }
 
+// SetClientBound marks a client as having bound its workspace.
+func (h *Hub) SetClientBound(roomID, userID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if room, ok := h.rooms[roomID]; ok {
+		for client := range room {
+			if client.UserID == userID && client.ClientType == "vscode" {
+				client.Bound = true
+			}
+		}
+	}
+}
+
 func (h *Hub) Route(msg Message) {
+	if msg.Sender != nil {
+		h.mu.Lock()
+		wasBound := msg.Sender.Bound
+		msg.Sender.Bound = true
+		h.mu.Unlock()
+
+		if !wasBound {
+			h.BroadcastAll(msg.Sender.RoomID, []byte{MessageTypeRoomUpdate})
+		}
+	}
+
 	switch msg.Type {
 	case MessageTypeSync:
 		h.Broadcast(msg.Sender, msg.Sender.RoomID, append([]byte{MessageTypeSync}, msg.Payload...))
