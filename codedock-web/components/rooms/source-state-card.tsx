@@ -133,7 +133,6 @@ export default function SourceStateCard({
         <div className="mt-6 space-y-1 divide-y divide-white/[0.03]">
           <BoolRow label="Host Workspace" value={sourceState.host_bound} />
           <BoolRow label="Room Activated" value={sourceState.activated} />
-          <BoolRow label="Network Access" value={sourceState.launch_allowed} />
         </div>
 
         {/* Manual Activation Toggle for Host */}
