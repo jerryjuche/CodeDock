@@ -7,6 +7,7 @@ import {
   FileActivityPayload,
 } from "./types";
 
+
 export const MessageType = {
   SYNC: 0x01,
   AWARENESS: 0x02,
@@ -17,6 +18,7 @@ export const MessageType = {
   FILE_BOOTSTRAP_REQUEST: 0x07,
   FILE_BOOTSTRAP_RESPONSE: 0x08,
   FILE_ACTIVITY: 0x09,
+  FILE_ACTIVITY_INCREMENTAL: 0x0b,
 } as const;
 
 export type MessageTypeValue = typeof MessageType[keyof typeof MessageType];
@@ -273,6 +275,28 @@ export function decodeFileActivityPayload(
   );
 }
 
+export interface FileActivityIncrementalPayload {
+  filePath: string;
+  start: number;
+  deleteCount: number;
+  insert: string;
+}
+
+export function encodeFileActivityIncrementalPayload(
+  payload: FileActivityIncrementalPayload,
+): Uint8Array {
+  return encodeJsonPayload(MessageType.FILE_ACTIVITY_INCREMENTAL, payload);
+}
+
+export function decodeFileActivityIncrementalPayload(
+  buffer: Uint8Array,
+): FileActivityIncrementalPayload | null {
+  return decodeJsonPayload<FileActivityIncrementalPayload>(
+    buffer,
+    MessageType.FILE_ACTIVITY_INCREMENTAL,
+  );
+}
+
 export function isValidMessageType(byte: number): byte is MessageTypeValue {
   return (
     byte === MessageType.SYNC ||
@@ -283,6 +307,7 @@ export function isValidMessageType(byte: number): byte is MessageTypeValue {
     byte === MessageType.WORKSPACE_MANIFEST_RESPONSE ||
     byte === MessageType.FILE_BOOTSTRAP_REQUEST ||
     byte === MessageType.FILE_BOOTSTRAP_RESPONSE ||
-    byte === MessageType.FILE_ACTIVITY
+    byte === MessageType.FILE_ACTIVITY ||
+    byte === MessageType.FILE_ACTIVITY_INCREMENTAL
   );
 }

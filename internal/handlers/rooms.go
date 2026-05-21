@@ -266,6 +266,10 @@ func (h *RoomHandler) ToggleRoomActivation(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Mark the host's dashboard client as bound so presence reflects Connected immediately.
+	if h.Hub != nil {
+		h.Hub.SetClientBound(roomID, claims.UserID)
+	}
 	connectedUserIDs := h.Hub.ConnectedUserIDs(roomID)
 	details, err := h.Services.ToggleRoomActivation(roomID, claims.UserID, connectedUserIDs)
 	if err == nil && h.Hub != nil {

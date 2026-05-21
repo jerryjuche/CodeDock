@@ -192,6 +192,7 @@ func (h *Hub) BroadcastAll(roomID string, message []byte) {
 }
 
 // ConnectedUserIDs returns IDs of users with a bound workspace.
+// Counts both VS Code clients (vscode) and host dashboard clients (host).
 func (h *Hub) ConnectedUserIDs(roomID string) map[string]bool {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -199,7 +200,10 @@ func (h *Hub) ConnectedUserIDs(roomID string) map[string]bool {
 	connected := make(map[string]bool)
 
 	for client := range h.rooms[roomID] {
-		if client.UserID == "" || client.ClientType != "vscode" {
+		if client.UserID == "" {
+			continue
+		}
+		if client.ClientType != "vscode" && client.ClientType != "host" {
 			continue
 		}
 		if client.Bound {
@@ -211,13 +215,14 @@ func (h *Hub) ConnectedUserIDs(roomID string) map[string]bool {
 }
 
 // SetClientBound marks a client as having bound its workspace.
+// Applies to both VS Code and host dashboard clients.
 func (h *Hub) SetClientBound(roomID, userID string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	if room, ok := h.rooms[roomID]; ok {
 		for client := range room {
-			if client.UserID == userID && client.ClientType == "vscode" {
+			if client.UserID == userID && (client.ClientType == "vscode" || client.ClientType == "host") {
 				client.Bound = true
 			}
 		}
@@ -242,6 +247,7 @@ func (h *Hub) Route(msg Message) {
 		h.trackSnapshot(msg)
 
 	case MessageTypeFileActivity:
+		// Legacy full-text activity payload.
 		var payload struct {
 			FilePath string `json:"filePath"`
 			Content  string `json:"content"`
@@ -258,6 +264,34 @@ func (h *Hub) Route(msg Message) {
 						msg.Sender.UserID,
 						"file_edited",
 						payload.FilePath,
+						details,
+					)
+				}()
+			}
+		}
+
+	case MessageTypeFileActivityIncr:
+		// Incremental activity payload: only the changed range.
+		var inc struct {
+			FilePath    string `json:"filePath"`
+			Start       int    `json:"start"`
+			DeleteCount int    `json:"deleteCount"`
+			Insert      string `json:"insert"`
+		}
+		if err := json.Unmarshal(msg.Payload, &inc); err == nil {
+			if h.activities != nil && msg.Sender.UserID != "" {
+				details := map[string]interface{}{
+					"start":       inc.Start,
+					"deleteCount": inc.DeleteCount,
+					"insert":      inc.Insert,
+					"language":    detectLanguage(inc.FilePath),
+				}
+				go func() {
+					_ = h.activities.LogActivity(
+						msg.Sender.RoomID,
+						msg.Sender.UserID,
+						"file_edited_incremental",
+						inc.FilePath,
 						details,
 					)
 				}()
