@@ -112,10 +112,10 @@ func (h *Hub) Register(client *Client) {
 
 func (h *Hub) Unregister(client *Client) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 
 	room, ok := h.rooms[client.RoomID]
 	if !ok {
+		h.mu.Unlock()
 		return
 	}
 
@@ -124,8 +124,16 @@ func (h *Hub) Unregister(client *Client) {
 		close(client.Send)
 	}
 
-	if len(room) == 0 {
+	remaining := len(room)
+	if remaining == 0 {
 		delete(h.rooms, client.RoomID)
+	}
+
+	h.mu.Unlock()
+
+	// Notify remaining clients so dashboards re-fetch presence/details
+	if remaining > 0 {
+		h.BroadcastAll(client.RoomID, []byte{MessageTypeRoomUpdate})
 	}
 }
 

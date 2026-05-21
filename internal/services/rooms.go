@@ -443,14 +443,6 @@ func (s *RoomService) ToggleRoomActivation(roomID, userID string, connectedUserI
 	currentlyActivated := metadata["activated"] == true
 	newActivated := !currentlyActivated
 	metadata["activated"] = newActivated
-	
-	// Also sync ready status
-	metadata["ready"] = newActivated
-	if newActivated {
-		metadata["status"] = "ready"
-	} else {
-		metadata["status"] = "inactive"
-	}
 
 	metadataBytes, err := json.Marshal(metadata)
 	if err != nil {
@@ -664,6 +656,7 @@ func buildRoomSourceState(room *Room, role string, connectedUserIDs map[string]b
 			state.Ready = false
 			state.HostBound = false
 			state.LaunchAllowed = false
+			state.LaunchReason = "The repository information is missing. The host must configure the GitHub repository."
 			return state
 		}
 
@@ -671,6 +664,7 @@ func buildRoomSourceState(room *Room, role string, connectedUserIDs map[string]b
 			state.Status = "paused"
 			state.Ready = false
 			state.LaunchAllowed = false
+			state.LaunchReason = "The room is currently deactivated. Please wait for the host to activate access."
 			return state
 		}
 
@@ -703,6 +697,7 @@ func buildRoomSourceState(room *Room, role string, connectedUserIDs map[string]b
 			state.Status = "waiting_for_host_workspace"
 			state.Ready = false
 			state.LaunchAllowed = false
+			state.LaunchReason = "The host has not connected their local workspace editor yet. Please wait for the host to bind a folder in the VS Code editor."
 			return state
 		}
 
@@ -710,6 +705,7 @@ func buildRoomSourceState(room *Room, role string, connectedUserIDs map[string]b
 			state.Status = "paused"
 			state.Ready = false
 			state.LaunchAllowed = false
+			state.LaunchReason = "The room is currently deactivated. Please wait for the host to activate access."
 			return state
 		}
 
@@ -723,6 +719,7 @@ func buildRoomSourceState(room *Room, role string, connectedUserIDs map[string]b
 		state.Ready = false
 		state.HostBound = false
 		state.LaunchAllowed = false
+		state.LaunchReason = "The source type is not supported by this room."
 		return state
 	}
 }

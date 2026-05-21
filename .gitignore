@@ -331,3 +331,6 @@ extension/out/
 
 # OS
 .DS_Store
+
+# ai instructions
+.continue/*

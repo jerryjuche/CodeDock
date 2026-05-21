@@ -28,6 +28,7 @@ import {
   FileActivityPayload,
 } from "./types";
 
+
 const PENDING_HYDRATED_ROOM_ID_KEY = "codedock.pendingHydrated.roomId";
 const PENDING_HYDRATED_ROOT_KEY = "codedock.pendingHydrated.rootPath";
 
@@ -318,6 +319,8 @@ export class YjsSync {
     }
   }
 
+  private loggedInitialFiles: Set<string> = new Set();
+
   private bindDocument(document: vscode.TextDocument): void {
     const fileKey = this.getCanonicalFileKey(document);
     if (!fileKey) {
@@ -329,6 +332,11 @@ export class YjsSync {
 
     if (this.bindings.has(fileKey)) {
       this.log(`bind skipped: already bound (${fileKey})`);
+      // Ensure we still have up‑to‑date activity for already bound files
+      if (!this.loggedInitialFiles.has(fileKey)) {
+        this.loggedInitialFiles.add(fileKey);
+        this.scheduleActivityUpdate(fileKey, document);
+      }
       this.markFileDirty(fileKey);
       this.scheduleReconcile(fileKey);
       return;
@@ -402,6 +410,11 @@ export class YjsSync {
     this.bindings.set(fileKey, { documentChangeDisposable });
 
     this.markFileDirty(fileKey);
+    // Record initial activity for newly bound file if not already done
+    if (!this.loggedInitialFiles.has(fileKey)) {
+      this.loggedInitialFiles.add(fileKey);
+      this.scheduleActivityUpdate(fileKey, document);
+    }
     this.scheduleReconcile(fileKey);
   }
 
