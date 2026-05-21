@@ -1,7 +1,10 @@
+"use client";
+
 import type { ReactNode } from "react";
 import Link from "next/link";
 import BrandLogo from "@/components/brand/logo";
 import { LinkButton } from "@/components/ui/link-button";
+import { useAuth } from "@/hooks/use-auth";
 
 export default function MarketingShell({
   children,
@@ -10,6 +13,8 @@ export default function MarketingShell({
   children: ReactNode;
   showNav?: boolean;
 }) {
+  const { token, hydrated } = useAuth();
+
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,rgba(36,166,242,0.14),transparent_24%),radial-gradient(circle_at_top_right,rgba(239,102,46,0.10),transparent_18%),linear-gradient(180deg,rgba(4,22,49,1)_0%,rgba(1,26,61,1)_100%)] text-[rgb(234,244,255)]">
       <div className="mx-auto flex min-h-screen max-w-7xl flex-col px-6 py-10 sm:px-8 lg:px-10">
@@ -20,12 +25,20 @@ export default function MarketingShell({
 
           {showNav ? (
             <nav className="hidden items-center gap-3 md:flex">
-              <LinkButton href="/login" variant="outline" size="default">
-                Log in
-              </LinkButton>
-              <LinkButton href="/register" variant="default" size="default">
-                Create account
-              </LinkButton>
+              {hydrated && token ? (
+                <LinkButton href="/dashboard" variant="default" size="default">
+                  Go to Dashboard
+                </LinkButton>
+              ) : (
+                <>
+                  <LinkButton href="/login" variant="outline" size="default">
+                    Log in
+                  </LinkButton>
+                  <LinkButton href="/register" variant="default" size="default">
+                    Create account
+                  </LinkButton>
+                </>
+              )}
             </nav>
           ) : (
             <Link

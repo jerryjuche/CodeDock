@@ -92,7 +92,7 @@ export class WebSocketManager {
       this.serverUrl
         .replace(/^https:\/\//, "wss://")
         .replace(/^http:\/\//, "ws://") +
-      `/ws?token=${encodeURIComponent(token)}&room_id=${encodeURIComponent(roomId)}`;
+      `/ws?token=${encodeURIComponent(token)}&room_id=${encodeURIComponent(roomId)}&client=vscode`;
 
     this.outputChannel.appendLine(
       `CodeDock[ws]: connecting (room=${roomId}, handlers=${this.messageHandlers.size})`,

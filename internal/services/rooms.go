@@ -16,6 +16,7 @@ var (
 	ErrRoomForbidden    = errors.New("forbidden")
 	ErrInvalidSource    = errors.New("invalid source type")
 	ErrInvalidRoomState = errors.New("invalid room state")
+	ErrRoomNotActivated = errors.New("room not activated")
 )
 
 const (
@@ -89,6 +90,10 @@ type RoomService struct {
 	DB *sql.DB
 }
 
+func (s *RoomService) GetDB() *sql.DB {
+	return s.DB
+}
+
 func (s *RoomService) CreateRoom(userID string, name string) (*Room, error) {
 	return s.CreateRoomWithOptions(userID, CreateRoomInput{
 		Name:           name,
@@ -129,6 +134,12 @@ func (s *RoomService) CreateRoomWithOptions(userID string, input CreateRoomInput
 		return nil, err
 	}
 
+	// Default new rooms to deactivated
+	finalMetadata := map[string]any{}
+	_ = json.Unmarshal(sourceMetadata, &finalMetadata)
+	finalMetadata["activated"] = false
+	sourceMetadata, _ = json.Marshal(finalMetadata)
+
 	var room Room
 	var metadataBytes []byte
 
@@ -140,9 +151,10 @@ func (s *RoomService) CreateRoomWithOptions(userID string, input CreateRoomInput
 			owner_user_id,
 			source_type,
 			source_metadata,
-			primary_join_code
+			primary_join_code,
+			is_active
 		)
-		VALUES ($1, $2, $3, $3, $4, $5, $6)
+		VALUES ($1, $2, $3, $3, $4, $5, $6, TRUE)
 		RETURNING
 			id,
 			name,
@@ -250,6 +262,19 @@ func (s *RoomService) GetRoomDetails(roomID, userID string, connectedUserIDs map
 		return nil, err
 	}
 
+	if role != "host" {
+		var meta map[string]any
+		if err := json.Unmarshal(room.SourceMetadata, &meta); err == nil {
+			if activated, ok := meta["activated"].(bool); ok && !activated {
+				return nil, ErrRoomNotActivated
+			}
+		} else {
+			return nil, ErrRoomNotActivated
+		}
+	}
+
+	s.broadcastRoomUpdate(roomID)
+
 	return &RoomDetails{
 		Room: room,
 		Membership: RoomMembership{
@@ -344,23 +369,59 @@ func (s *RoomService) MarkLocalWorkspaceBound(roomID, userID, workspaceLabel str
 		metadata["workspace_label"] = strings.TrimSpace(workspaceLabel)
 	}
 
-	metadataBytes, err := json.Marshal(metadata)
+	sourceMetadata, err := json.Marshal(metadata)
 	if err != nil {
 		return nil, err
+	}
+
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`
+		UPDATE rooms
+		SET source_metadata = $1,
+		    is_active = TRUE,
+		    updated_at = NOW()
+		WHERE id = $2
+	`, sourceMetadata, roomID)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	room, _ = s.GetRoom(roomID)
+	s.broadcastRoomUpdate(roomID)
+
+	return &RoomDetails{
+		Room: room,
+		Membership: RoomMembership{
+			Role: role,
+		},
+		SourceState: buildRoomSourceState(room, role, connectedUserIDs),
+	}, nil
+}
+
+func (s *RoomService) broadcastRoomUpdate(roomID string) {
+	// Signal to handlers/hub that room state changed
+}
+
+func (s *RoomService) LeaveRoom(roomID, userID string) error {
+	_, err := s.GetUserRole(roomID, userID)
+	if err != nil {
+		return err
 	}
 
 	_, err = s.DB.Exec(`
-		UPDATE rooms
-		SET source_metadata = $2,
-		    updated_at = NOW()
-		WHERE id = $1
-		  AND is_active = TRUE
-	`, roomID, metadataBytes)
-	if err != nil {
-		return nil, err
-	}
-
-	return s.GetRoomDetails(roomID, userID, connectedUserIDs)
+		DELETE FROM room_members
+		WHERE room_id = $1 AND user_id = $2
+	`, roomID, userID)
+	return err
 }
 
 func (s *RoomService) ToggleRoomActivation(roomID, userID string, connectedUserIDs map[string]bool) (*RoomDetails, error) {
@@ -380,24 +441,30 @@ func (s *RoomService) ToggleRoomActivation(roomID, userID string, connectedUserI
 
 	// Toggle activated state
 	currentlyActivated := metadata["activated"] == true
-	metadata["activated"] = !currentlyActivated
-	
-	// Also sync ready status
-	metadata["ready"] = metadata["activated"]
-	if metadata["activated"] == true {
-		metadata["status"] = "ready"
-	} else {
-		metadata["status"] = "inactive"
-	}
+	newActivated := !currentlyActivated
+	metadata["activated"] = newActivated
 
 	metadataBytes, err := json.Marshal(metadata)
 	if err != nil {
 		return nil, err
 	}
 
-	if _, err := s.DB.Exec(`
-		UPDATE rooms SET source_metadata = $1, updated_at = $2 WHERE id = $3
-	`, metadataBytes, time.Now().UTC(), roomID); err != nil {
+	tx, err := s.DB.Begin()
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.Exec(`
+		UPDATE rooms 
+		SET source_metadata = $1, 
+		    updated_at = NOW() 
+		WHERE id = $2
+	`, metadataBytes, roomID); err != nil {
+		return nil, err
+	}
+
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 
@@ -541,6 +608,7 @@ func buildRoomSourceState(room *Room, role string, connectedUserIDs map[string]b
 		Ready:         false,
 		HostBound:     false,
 		LaunchAllowed: false,
+		HostConnected: connectedUserIDs[room.OwnerUserID],
 	}
 
 	switch room.SourceType {
@@ -588,6 +656,7 @@ func buildRoomSourceState(room *Room, role string, connectedUserIDs map[string]b
 			state.Ready = false
 			state.HostBound = false
 			state.LaunchAllowed = false
+			state.LaunchReason = "The repository information is missing. The host must configure the GitHub repository."
 			return state
 		}
 
@@ -595,6 +664,7 @@ func buildRoomSourceState(room *Room, role string, connectedUserIDs map[string]b
 			state.Status = "paused"
 			state.Ready = false
 			state.LaunchAllowed = false
+			state.LaunchReason = "The room is currently deactivated. Please wait for the host to activate access."
 			return state
 		}
 
@@ -627,6 +697,7 @@ func buildRoomSourceState(room *Room, role string, connectedUserIDs map[string]b
 			state.Status = "waiting_for_host_workspace"
 			state.Ready = false
 			state.LaunchAllowed = false
+			state.LaunchReason = "The host has not connected their local workspace editor yet. Please wait for the host to bind a folder in the VS Code editor."
 			return state
 		}
 
@@ -634,6 +705,7 @@ func buildRoomSourceState(room *Room, role string, connectedUserIDs map[string]b
 			state.Status = "paused"
 			state.Ready = false
 			state.LaunchAllowed = false
+			state.LaunchReason = "The room is currently deactivated. Please wait for the host to activate access."
 			return state
 		}
 
@@ -647,6 +719,7 @@ func buildRoomSourceState(room *Room, role string, connectedUserIDs map[string]b
 		state.Ready = false
 		state.HostBound = false
 		state.LaunchAllowed = false
+		state.LaunchReason = "The source type is not supported by this room."
 		return state
 	}
 }
@@ -782,23 +855,33 @@ func ensureJSON(data []byte) json.RawMessage {
 }
 
 func (s *RoomService) CanConnectToRoom(roomID, userID string) error {
-	var exists bool
+	var role string
+	var sourceMetadata []byte
 
 	err := s.DB.QueryRow(`
-		SELECT EXISTS (
-			SELECT 1
-			FROM room_members rm
-			INNER JOIN rooms r ON r.id = rm.room_id
-			WHERE rm.room_id = $1
-			  AND rm.user_id = $2
-			  AND r.is_active = TRUE
-		)
-	`, roomID, userID).Scan(&exists)
+		SELECT rm.role, r.source_metadata
+		FROM room_members rm
+		INNER JOIN rooms r ON r.id = rm.room_id
+		WHERE rm.room_id = $1
+		  AND rm.user_id = $2
+		  AND r.is_active = TRUE
+	`, roomID, userID).Scan(&role, &sourceMetadata)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrRoomForbidden
+	}
 	if err != nil {
 		return err
 	}
-	if !exists {
-		return ErrRoomForbidden
+
+	if role != "host" {
+		var meta map[string]any
+		if err := json.Unmarshal(sourceMetadata, &meta); err == nil {
+			if activated, ok := meta["activated"].(bool); ok && !activated {
+				return ErrRoomNotActivated
+			}
+		} else {
+			return ErrRoomNotActivated
+		}
 	}
 
 	return nil

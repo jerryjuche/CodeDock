@@ -1,7 +1,9 @@
 package hub
 
 import (
+	"encoding/json"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,6 +15,10 @@ type SnapshotStore interface {
 	Get(roomID, filePath string) ([]byte, error)
 }
 
+type ActivityStore interface {
+	LogActivity(roomID, userID, activityType, filePath string, details map[string]interface{}) error
+}
+
 type snapshotKey struct {
 	roomID   string
 	filePath string
@@ -21,18 +27,23 @@ type snapshotKey struct {
 const snapshotThreshold = 50
 
 type Client struct {
-	Conn   *websocket.Conn
-	Send   chan []byte
-	RoomID string
-	UserID string
+	Conn       *websocket.Conn
+	Send       chan []byte
+	RoomID     string
+	UserID     string
+	ClientType string
+	// Bound indicates the client has successfully bound a workspace (local or hydrated).
+	// The UI should consider the client "connected" only after this is true.
+	Bound bool
 }
 
 type Hub struct {
-	rooms     map[string]map[*Client]bool
-	mu        sync.RWMutex
-	snapshots SnapshotStore
-	counts    map[snapshotKey]int
-	countsMu  sync.Mutex
+	rooms      map[string]map[*Client]bool
+	mu         sync.RWMutex
+	snapshots  SnapshotStore
+	activities ActivityStore
+	counts     map[snapshotKey]int
+	countsMu   sync.Mutex
 }
 
 func New(store SnapshotStore) *Hub {
@@ -41,6 +52,56 @@ func New(store SnapshotStore) *Hub {
 		snapshots: store,
 		counts:    make(map[snapshotKey]int),
 	}
+}
+
+func NewWithActivityStore(store SnapshotStore, activityStore ActivityStore) *Hub {
+	return &Hub{
+		rooms:      make(map[string]map[*Client]bool),
+		snapshots:  store,
+		activities: activityStore,
+		counts:     make(map[snapshotKey]int),
+	}
+}
+
+// detectLanguage infers the programming language from file extension
+func detectLanguage(filePath string) string {
+	if strings.HasSuffix(filePath, ".go") {
+		return "go"
+	}
+	if strings.HasSuffix(filePath, ".js") || strings.HasSuffix(filePath, ".ts") {
+		return "javascript"
+	}
+	if strings.HasSuffix(filePath, ".py") {
+		return "python"
+	}
+	if strings.HasSuffix(filePath, ".rs") {
+		return "rust"
+	}
+	if strings.HasSuffix(filePath, ".java") {
+		return "java"
+	}
+	if strings.HasSuffix(filePath, ".cpp") || strings.HasSuffix(filePath, ".cc") || strings.HasSuffix(filePath, ".cxx") {
+		return "cpp"
+	}
+	if strings.HasSuffix(filePath, ".c") {
+		return "c"
+	}
+	if strings.HasSuffix(filePath, ".html") {
+		return "html"
+	}
+	if strings.HasSuffix(filePath, ".css") {
+		return "css"
+	}
+	if strings.HasSuffix(filePath, ".json") {
+		return "json"
+	}
+	if strings.HasSuffix(filePath, ".md") {
+		return "markdown"
+	}
+	if strings.HasSuffix(filePath, ".sql") {
+		return "sql"
+	}
+	return "text"
 }
 
 func (h *Hub) Register(client *Client) {
@@ -55,10 +116,10 @@ func (h *Hub) Register(client *Client) {
 
 func (h *Hub) Unregister(client *Client) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 
 	room, ok := h.rooms[client.RoomID]
 	if !ok {
+		h.mu.Unlock()
 		return
 	}
 
@@ -67,8 +128,38 @@ func (h *Hub) Unregister(client *Client) {
 		close(client.Send)
 	}
 
-	if len(room) == 0 {
+	remaining := len(room)
+	if remaining == 0 {
 		delete(h.rooms, client.RoomID)
+	}
+
+	h.mu.Unlock()
+
+	// Notify remaining clients so dashboards re-fetch presence/details
+	if remaining > 0 {
+		h.BroadcastAll(client.RoomID, []byte{MessageTypeRoomUpdate})
+	}
+}
+
+func (h *Hub) CloseUserInRoom(roomID, userID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	room, ok := h.rooms[roomID]
+	if !ok {
+		return
+	}
+
+	for client := range room {
+		if client.UserID == userID {
+			delete(room, client)
+			close(client.Send)
+			_ = client.Conn.Close()
+		}
+	}
+
+	if len(room) == 0 {
+		delete(h.rooms, roomID)
 	}
 }
 
@@ -100,6 +191,8 @@ func (h *Hub) BroadcastAll(roomID string, message []byte) {
 	}
 }
 
+// ConnectedUserIDs returns IDs of users with a bound workspace.
+// Counts both VS Code clients (vscode) and host dashboard clients (host).
 func (h *Hub) ConnectedUserIDs(roomID string) map[string]bool {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
@@ -110,17 +203,100 @@ func (h *Hub) ConnectedUserIDs(roomID string) map[string]bool {
 		if client.UserID == "" {
 			continue
 		}
-		connected[client.UserID] = true
+		if client.ClientType != "vscode" && client.ClientType != "host" {
+			continue
+		}
+		if client.Bound {
+			connected[client.UserID] = true
+		}
 	}
 
 	return connected
 }
 
+// SetClientBound marks a client as having bound its workspace.
+// Applies to both VS Code and host dashboard clients.
+func (h *Hub) SetClientBound(roomID, userID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if room, ok := h.rooms[roomID]; ok {
+		for client := range room {
+			if client.UserID == userID && (client.ClientType == "vscode" || client.ClientType == "host") {
+				client.Bound = true
+			}
+		}
+	}
+}
+
 func (h *Hub) Route(msg Message) {
+	if msg.Sender != nil {
+		h.mu.Lock()
+		wasBound := msg.Sender.Bound
+		msg.Sender.Bound = true
+		h.mu.Unlock()
+
+		if !wasBound {
+			h.BroadcastAll(msg.Sender.RoomID, []byte{MessageTypeRoomUpdate})
+		}
+	}
+
 	switch msg.Type {
 	case MessageTypeSync:
 		h.Broadcast(msg.Sender, msg.Sender.RoomID, append([]byte{MessageTypeSync}, msg.Payload...))
-		h.trackAndSnapshot(msg)
+		h.trackSnapshot(msg)
+
+	case MessageTypeFileActivity:
+		// Legacy full-text activity payload.
+		var payload struct {
+			FilePath string `json:"filePath"`
+			Content  string `json:"content"`
+		}
+		if err := json.Unmarshal(msg.Payload, &payload); err == nil {
+			if h.activities != nil && msg.Sender.UserID != "" {
+				details := map[string]interface{}{
+					"code":     payload.Content,
+					"language": detectLanguage(payload.FilePath),
+				}
+				go func() {
+					_ = h.activities.LogActivity(
+						msg.Sender.RoomID,
+						msg.Sender.UserID,
+						"file_edited",
+						payload.FilePath,
+						details,
+					)
+				}()
+			}
+		}
+
+	case MessageTypeFileActivityIncr:
+		// Incremental activity payload: only the changed range.
+		var inc struct {
+			FilePath    string `json:"filePath"`
+			Start       int    `json:"start"`
+			DeleteCount int    `json:"deleteCount"`
+			Insert      string `json:"insert"`
+		}
+		if err := json.Unmarshal(msg.Payload, &inc); err == nil {
+			if h.activities != nil && msg.Sender.UserID != "" {
+				details := map[string]interface{}{
+					"start":       inc.Start,
+					"deleteCount": inc.DeleteCount,
+					"insert":      inc.Insert,
+					"language":    detectLanguage(inc.FilePath),
+				}
+				go func() {
+					_ = h.activities.LogActivity(
+						msg.Sender.RoomID,
+						msg.Sender.UserID,
+						"file_edited_incremental",
+						inc.FilePath,
+						details,
+					)
+				}()
+			}
+		}
 
 	case MessageTypeAwareness:
 		h.BroadcastAll(msg.Sender.RoomID, append([]byte{MessageTypeAwareness}, msg.Payload...))
@@ -145,11 +321,7 @@ func (h *Hub) Route(msg Message) {
 	}
 }
 
-func (h *Hub) trackAndSnapshot(msg Message) {
-	if h.snapshots == nil {
-		return
-	}
-
+func (h *Hub) trackSnapshot(msg Message) {
 	if len(msg.Payload) < 4 {
 		return
 	}
@@ -162,6 +334,11 @@ func (h *Hub) trackAndSnapshot(msg Message) {
 
 	filePath := string(msg.Payload[2 : 2+filePathLen])
 	yjsUpdate := msg.Payload[2+filePathLen:]
+
+	// Save snapshot
+	if h.snapshots == nil {
+		return
+	}
 
 	key := snapshotKey{roomID: msg.Sender.RoomID, filePath: filePath}
 

@@ -342,16 +342,20 @@ async function handleLaunchUri(
       true,
     );
   } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "unknown error";
     outputChannel.appendLine(
-      `CodeDock: launch exchange failed -> ${
-        error instanceof Error ? error.message : "unknown error"
-      }`,
+      `CodeDock: launch exchange failed -> ${errorMessage}`,
     );
-    vscode.window.showErrorMessage(
-      `CodeDock: Launch failed — ${
-        error instanceof Error ? error.message : "unknown error"
-      }`,
-    );
+
+    if (errorMessage.includes("Unexpected HTML response")) {
+      vscode.window.showErrorMessage(
+        `CodeDock: Launch failed — Incorrect server URL. Verify your codedock.serverUrl is pointed at the backend server.`,
+      );
+      return;
+    }
+
+    vscode.window.showErrorMessage(`CodeDock: Launch failed — ${errorMessage}`);
   }
 }
 
@@ -481,6 +485,12 @@ async function ensureManagedWorkspace(
   launchContext: LaunchContext,
   outputChannel: vscode.OutputChannel,
 ): Promise<vscode.Uri> {
+  // Validate room_slug to prevent path traversal
+  const slugRegex = /^[a-z0-9-]+$/;
+  if (!slugRegex.test(launchContext.room_slug)) {
+    throw new Error(`Invalid room slug: "${launchContext.room_slug}". Slugs must be alphanumeric and contain no path traversal characters.`);
+  }
+
   const baseDir = path.join(os.homedir(), ".codedock", "rooms");
   const roomDir = path.join(baseDir, launchContext.room_slug);
 

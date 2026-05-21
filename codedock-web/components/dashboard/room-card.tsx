@@ -14,8 +14,8 @@ export default function RoomCard({ room }: { room: Room }) {
             <span
               className="mt-0.5 inline-block h-1.5 w-1.5 flex-shrink-0 rounded-full"
               style={{
-                background: room.is_active ? "rgb(42,211,139)" : "rgb(158,183,211)",
-                boxShadow: room.is_active ? "0 0 6px rgba(42,211,139,0.5)" : "none",
+                background: room.source_metadata?.activated ? "rgb(42,211,139)" : "rgb(249,145,53)",
+                boxShadow: room.source_metadata?.activated ? "0 0 6px rgba(42,211,139,0.5)" : "0 0 6px rgba(249,145,53,0.5)",
               }}
             />
             <h3 className="truncate text-base font-semibold text-white">

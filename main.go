@@ -12,9 +12,11 @@ import (
 	"github.com/jerryjuche/CodeDock/internal/auth"
 	"github.com/jerryjuche/CodeDock/internal/handlers"
 	"github.com/jerryjuche/CodeDock/internal/hub"
+	"github.com/jerryjuche/CodeDock/internal/middleware"
 	"github.com/jerryjuche/CodeDock/internal/observability"
 	"github.com/jerryjuche/CodeDock/internal/services"
 	"github.com/joho/godotenv"
+	"time"
 	_ "github.com/lib/pq"
 )
 
@@ -37,7 +39,8 @@ func main() {
 	log.Println("connected to database successfully")
 
 	snapshotStore := &services.DBSnapshotStore{DB: db}
-	h := hub.New(snapshotStore)
+	activityStore := &services.DBActivityStore{DB: db}
+	h := hub.NewWithActivityStore(snapshotStore, activityStore)
 
 	authHandler := &handlers.AuthHandler{DB: db}
 
@@ -53,49 +56,54 @@ func main() {
 		Hub:      h,
 	}
 
+	// Rate limiters
+	authLimiter := middleware.NewRateLimiter(10, time.Minute)
+	wsLimiter := middleware.NewRateLimiter(100, time.Minute)
+
+	allowedOrigins := getAllowedOrigins()
+
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/health", handlers.Health)
 	mux.HandleFunc("/ready", handlers.Ready(db))
 
 	// Auth routes
-	mux.HandleFunc("POST /auth/register", authHandler.Register)
-	mux.HandleFunc("POST /auth/login", authHandler.Login)
+	mux.Handle("POST /auth/register", authLimiter.Limit(http.HandlerFunc(authHandler.Register)))
+	mux.Handle("POST /auth/login", authLimiter.Limit(http.HandlerFunc(authHandler.Login)))
 	mux.Handle("GET /auth/me", auth.RequireAuth(http.HandlerFunc(authHandler.Me)))
 
 	// Legacy route kept temporarily as explicit deprecation response.
 	mux.HandleFunc("POST /auth/exchange", authHandler.ExchangeCode)
 
 	// Room routes
-	mux.Handle("POST /rooms", auth.RequireAuth(http.HandlerFunc(roomHandler.CreateRoom)))
-	mux.Handle("GET /rooms", auth.RequireAuth(http.HandlerFunc(roomHandler.GetUserRooms)))
-	mux.Handle("GET /rooms/{roomId}", auth.RequireAuth(http.HandlerFunc(roomHandler.GetRoom)))
-	mux.Handle("GET /rooms/{roomId}/details", auth.RequireAuth(http.HandlerFunc(roomHandler.GetRoomDetails)))
-	mux.Handle("GET /rooms/{roomId}/presence", auth.RequireAuth(http.HandlerFunc(roomHandler.GetRoomPresence)))
-	mux.Handle("POST /rooms/{roomId}/source/local/bind", auth.RequireAuth(http.HandlerFunc(roomHandler.BindLocalWorkspace)))
-	mux.Handle("POST /rooms/{roomId}/activation/toggle", auth.RequireAuth(http.HandlerFunc(roomHandler.ToggleRoomActivation)))
-	mux.Handle("DELETE /rooms/{roomId}", auth.RequireAuth(http.HandlerFunc(roomHandler.DeleteRoom)))
+	mux.Handle("/rooms", auth.RequireAuth(http.HandlerFunc(roomHandler.RoomsRouter)))
+	
+	// Use more explicit patterns to ensure no conflicts
+	mux.Handle("/rooms/{roomId}", auth.RequireAuth(http.HandlerFunc(roomHandler.RoomSpecificRouter)))
+	mux.Handle("/rooms/{roomId}/details", auth.RequireAuth(http.HandlerFunc(roomHandler.GetRoomDetails)))
+	mux.Handle("/rooms/{roomId}/presence", auth.RequireAuth(http.HandlerFunc(roomHandler.GetRoomPresence)))
+	mux.Handle("/rooms/{roomId}/source/local/bind", auth.RequireAuth(http.HandlerFunc(roomHandler.BindLocalWorkspace)))
+	mux.Handle("/rooms/{roomId}/activation/toggle", auth.RequireAuth(http.HandlerFunc(roomHandler.ToggleRoomActivation)))
+	mux.Handle("/rooms/{roomId}/leave", auth.RequireAuth(http.HandlerFunc(roomHandler.LeaveRoom)))
+	mux.Handle("/rooms/{roomId}/activities", auth.RequireAuth(http.HandlerFunc(roomHandler.GetRoomActivities)))
 
 	// Web control-plane routes
-	mux.Handle("POST /join-code/resolve", auth.RequireAuth(http.HandlerFunc(inviteHandler.ResolveJoinCode)))
-	mux.Handle("GET /rooms/{roomId}/invites", auth.RequireAuth(http.HandlerFunc(inviteHandler.ListRoomInvites)))
-	mux.Handle("POST /rooms/{roomId}/invites", auth.RequireAuth(http.HandlerFunc(inviteHandler.CreateRoomInvite)))
-	mux.Handle("POST /rooms/{roomId}/invites/{inviteId}/revoke", auth.RequireAuth(http.HandlerFunc(inviteHandler.RevokeRoomInvite)))
+	mux.Handle("/join-code/resolve", authLimiter.Limit(auth.RequireAuth(http.HandlerFunc(inviteHandler.ResolveJoinCode))))
+	mux.Handle("/rooms/{roomId}/invites", auth.RequireAuth(http.HandlerFunc(inviteHandler.ListRoomInvites)))
+	mux.Handle("/rooms/{roomId}/invites/{inviteId}/revoke", auth.RequireAuth(http.HandlerFunc(inviteHandler.RevokeRoomInvite)))
 
 	// IDE launch routes
-	mux.Handle("POST /rooms/{roomId}/open-in-vscode", auth.RequireAuth(http.HandlerFunc(launchHandler.OpenInVSCode)))
-	mux.Handle("POST /rooms/{roomId}/open-ide", auth.RequireAuth(http.HandlerFunc(launchHandler.OpenIDE)))
-	mux.HandleFunc("POST /vscode/launch/exchange", launchHandler.ExchangeLaunchToken)
+	mux.Handle("/rooms/{roomId}/open-in-vscode", auth.RequireAuth(http.HandlerFunc(launchHandler.OpenInVSCode)))
+	mux.Handle("/rooms/{roomId}/open-ide", auth.RequireAuth(http.HandlerFunc(launchHandler.OpenIDE)))
+	mux.HandleFunc("/vscode/launch/exchange", launchHandler.ExchangeLaunchToken)
 
 	// WebSocket route
-	mux.HandleFunc("/ws", handlers.ServeWS(h, roomService))
+	mux.Handle("/ws", wsLimiter.Limit(http.HandlerFunc(handlers.ServeWS(h, roomService, allowedOrigins))))
 
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
-
-	allowedOrigins := getAllowedOrigins()
 
 	log.Printf("codedock server starting on port: %s", port)
 	log.Printf("allowed web origins: %s", strings.Join(allowedOrigins, ", "))

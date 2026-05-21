@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gorilla/websocket"
 	"github.com/jerryjuche/CodeDock/internal/auth"
 	"github.com/jerryjuche/CodeDock/internal/hub"
+	"github.com/jerryjuche/CodeDock/internal/services"
 )
 
 // upgrader converts an HTTP connection into a WebSocket connection.
@@ -15,7 +17,8 @@ var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		return true
+		// This will be overridden by the instance-specific check in ServeWS
+		return false
 	},
 }
 
@@ -40,7 +43,12 @@ type RoomAccessChecker interface {
 //  4. Register client with Hub
 //  5. Launch readPump and writePump goroutines
 
-func ServeWS(h *hub.Hub, access RoomAccessChecker) http.HandlerFunc {
+func ServeWS(h *hub.Hub, access RoomAccessChecker, allowedOrigins []string) http.HandlerFunc {
+	allowed := make(map[string]struct{}, len(allowedOrigins))
+	for _, origin := range allowedOrigins {
+		allowed[origin] = struct{}{}
+	}
+
 	return func(w http.ResponseWriter, r *http.Request) {
 		tokenStr := r.URL.Query().Get("token")
 		if tokenStr == "" {
@@ -61,20 +69,38 @@ func ServeWS(h *hub.Hub, access RoomAccessChecker) http.HandlerFunc {
 		}
 
 		if err := access.CanConnectToRoom(roomID, claims.UserID); err != nil {
+			if errors.Is(err, services.ErrRoomNotActivated) {
+				http.Error(w, "room_not_activated", http.StatusForbidden)
+				return
+			}
 			http.Error(w, "room unavailable", http.StatusForbidden)
 			return
 		}
 
-		conn, err := upgrader.Upgrade(w, r, nil)
+		u := upgrader
+		u.CheckOrigin = func(r *http.Request) bool {
+			origin := r.Header.Get("Origin")
+			if origin == "" {
+				// Allow non-browser clients (like the VS Code extension) which don't send Origin
+				return true
+			}
+			_, ok := allowed[origin]
+			return ok
+		}
+
+		conn, err := u.Upgrade(w, r, nil)
 		if err != nil {
 			return
 		}
 
+		clientType := r.URL.Query().Get("client")
+
 		client := &hub.Client{
-			Conn:   conn,
-			Send:   make(chan []byte, 256),
-			RoomID: roomID,
-			UserID: claims.UserID,
+			Conn:       conn,
+			Send:       make(chan []byte, 256),
+			RoomID:     roomID,
+			UserID:     claims.UserID,
+			ClientType: clientType,
 		}
 		h.Register(client)
 

@@ -17,6 +17,10 @@ export function getRoomPresence(token: string, roomId: string) {
   return apiRequest<RoomPresence>(`/rooms/${roomId}/presence`, { token });
 }
 
+export function getRoomActivities(token: string, roomId: string) {
+  return apiRequest<any[]>(`/rooms/${roomId}/activities`, { token });
+}
+
 export function createRoom(
   token: string,
   payload: {
@@ -67,6 +71,13 @@ export function bindRoomSource(
 
 export function toggleRoomActivation(token: string, roomId: string) {
   return apiRequest<RoomDetails>(`/rooms/${roomId}/activation/toggle`, {
+    method: "POST",
+    token,
+  });
+}
+
+export function leaveRoom(token: string, roomId: string) {
+  return apiRequest<{ success: boolean }>(`/rooms/${roomId}/leave`, {
     method: "POST",
     token,
   });

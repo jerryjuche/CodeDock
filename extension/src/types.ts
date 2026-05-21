@@ -75,6 +75,11 @@ export interface FileBootstrapResponse {
   content: string;
 }
 
+export interface FileActivityPayload {
+  filePath: string;
+  content: string;
+}
+
 export class ApiError extends Error {
   constructor(
     public readonly status: number,

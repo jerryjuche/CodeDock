@@ -48,10 +48,12 @@ func (m *mockSnapshotStore) Get(roomID, filePath string) ([]byte, error) {
 
 func newHubTestClient(roomID, userID string, buffer int) *Client {
 	return &Client{
-		Conn:   nil,
-		Send:   make(chan []byte, buffer),
-		RoomID: roomID,
-		UserID: userID,
+		Conn:       nil,
+		Send:       make(chan []byte, buffer),
+		RoomID:     roomID,
+		UserID:     userID,
+		ClientType: "vscode",
+		Bound:      true,
 	}
 }
 
@@ -379,7 +381,7 @@ func TestRoute_UnknownTypeDoesNothing(t *testing.T) {
 	mustNotReceiveHubMessage(t, receiver.Send, 50*time.Millisecond)
 }
 
-func TestTrackAndSnapshot_DoesNothingForInvalidPayloads(t *testing.T) {
+func TestTrackSnapshot_DoesNothingForInvalidPayloads(t *testing.T) {
 	store := newMockSnapshotStore()
 	h := New(store)
 	sender := newHubTestClient("room-1", "sender", 1)
@@ -395,7 +397,7 @@ func TestTrackAndSnapshot_DoesNothingForInvalidPayloads(t *testing.T) {
 
 	for _, payload := range invalidPayloads {
 		for i := 0; i < snapshotThreshold+2; i++ {
-			h.trackAndSnapshot(Message{
+			h.trackSnapshot(Message{
 				Type:    MessageTypeSync,
 				Payload: payload,
 				Sender:  sender,
@@ -410,7 +412,7 @@ func TestTrackAndSnapshot_DoesNothingForInvalidPayloads(t *testing.T) {
 	}
 }
 
-func TestTrackAndSnapshot_ResetsAfterThreshold(t *testing.T) {
+func TestTrackSnapshot_ResetsAfterThreshold(t *testing.T) {
 	store := newMockSnapshotStore()
 	h := New(store)
 	sender := newHubTestClient("room-1", "sender", 1)
@@ -418,7 +420,7 @@ func TestTrackAndSnapshot_ResetsAfterThreshold(t *testing.T) {
 	payload := buildSnapshotPayload("index.html", []byte("state"))
 
 	for i := 0; i < snapshotThreshold; i++ {
-		h.trackAndSnapshot(Message{
+		h.trackSnapshot(Message{
 			Type:    MessageTypeSync,
 			Payload: payload,
 			Sender:  sender,
@@ -431,7 +433,7 @@ func TestTrackAndSnapshot_ResetsAfterThreshold(t *testing.T) {
 	}
 
 	for i := 0; i < snapshotThreshold-1; i++ {
-		h.trackAndSnapshot(Message{
+		h.trackSnapshot(Message{
 			Type:    MessageTypeSync,
 			Payload: payload,
 			Sender:  sender,
@@ -444,7 +446,7 @@ func TestTrackAndSnapshot_ResetsAfterThreshold(t *testing.T) {
 	case <-time.After(75 * time.Millisecond):
 	}
 
-	h.trackAndSnapshot(Message{
+	h.trackSnapshot(Message{
 		Type:    MessageTypeSync,
 		Payload: payload,
 		Sender:  sender,
@@ -465,5 +467,65 @@ func mustReceiveSnapshotSave(t *testing.T, ch <-chan saveCall, timeout time.Dura
 	case <-time.After(timeout):
 		t.Fatal("timed out waiting for snapshot save")
 		return saveCall{}
+	}
+}
+
+func TestConnectedUserIDs_OnlyReturnsBoundClients(t *testing.T) {
+	h := New(nil)
+
+	clientA := newHubTestClient("room-1", "user-a", 1)
+	clientB := newHubTestClient("room-1", "user-b", 1)
+	clientA.Bound = false
+	clientB.Bound = false
+
+	h.Register(clientA)
+	h.Register(clientB)
+
+	// Initially, neither is bound.
+	connected := h.ConnectedUserIDs("room-1")
+	if len(connected) != 0 {
+		t.Fatalf("expected no connected users, got %v", connected)
+	}
+
+	// Set clientA as bound.
+	h.SetClientBound("room-1", "user-a")
+
+	connected = h.ConnectedUserIDs("room-1")
+	if len(connected) != 1 || !connected["user-a"] {
+		t.Fatalf("expected user-a to be connected, got %v", connected)
+	}
+}
+
+func TestRoute_MarksBoundAndBroadcasts(t *testing.T) {
+	h := New(nil)
+
+	sender := newHubTestClient("room-1", "sender", 2)
+	receiver := newHubTestClient("room-1", "receiver", 2)
+	sender.Bound = false
+	receiver.Bound = false
+
+	h.Register(sender)
+	h.Register(receiver)
+
+	// Since we are routing a message, sender should be marked bound and receiver should receive MessageTypeRoomUpdate.
+	h.Route(Message{
+		Type:    MessageTypeChat,
+		Payload: []byte("hello"),
+		Sender:  sender,
+	})
+
+	h.mu.RLock()
+	isBound := sender.Bound
+	h.mu.RUnlock()
+
+	if !isBound {
+		t.Fatal("expected sender to be marked bound after routing message")
+	}
+
+	// The receiver should have received the MessageTypeRoomUpdate (0x0A) broadcasted to everyone, and also the chat message (for other clients).
+	// Because BroadcastAll is called for MessageTypeRoomUpdate, both receiver and sender get it.
+	updateMsg := mustReceiveHubMessage(t, receiver.Send, 100*time.Millisecond)
+	if len(updateMsg) != 1 || updateMsg[0] != MessageTypeRoomUpdate {
+		t.Fatalf("expected room update message, got %v", updateMsg)
 	}
 }

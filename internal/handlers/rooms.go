@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 
 	"github.com/jerryjuche/CodeDock/internal/auth"
@@ -13,6 +14,28 @@ import (
 type RoomHandler struct {
 	Services *services.RoomService
 	Hub      *hub.Hub
+}
+
+func (h *RoomHandler) RoomsRouter(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		h.GetUserRooms(w, r)
+	case http.MethodPost:
+		h.CreateRoom(w, r)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (h *RoomHandler) RoomSpecificRouter(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		h.GetRoom(w, r)
+	case http.MethodDelete:
+		h.DeleteRoom(w, r)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 type createRoomRequest struct {
@@ -97,6 +120,10 @@ func (h *RoomHandler) GetRoom(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *RoomHandler) GetRoomDetails(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	claims, ok := auth.GetUserFromContext(r)
 	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -113,6 +140,9 @@ func (h *RoomHandler) GetRoomDetails(w http.ResponseWriter, r *http.Request) {
 	details, err := h.Services.GetRoomDetails(roomID, claims.UserID, connectedUserIDs)
 	if err != nil {
 		switch {
+		case errors.Is(err, services.ErrRoomNotActivated):
+			http.Error(w, "room_not_activated", http.StatusForbidden)
+			return
 		case errors.Is(err, services.ErrRoomForbidden):
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
@@ -129,6 +159,10 @@ func (h *RoomHandler) GetRoomDetails(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *RoomHandler) GetRoomPresence(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	claims, ok := auth.GetUserFromContext(r)
 	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -165,6 +199,10 @@ func (h *RoomHandler) GetRoomPresence(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *RoomHandler) BindLocalWorkspace(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	claims, ok := auth.GetUserFromContext(r)
 	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -183,8 +221,14 @@ func (h *RoomHandler) BindLocalWorkspace(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	if h.Hub != nil {
+		h.Hub.SetClientBound(roomID, claims.UserID)
+	}
 	connectedUserIDs := h.Hub.ConnectedUserIDs(roomID)
 	details, err := h.Services.MarkLocalWorkspaceBound(roomID, claims.UserID, req.WorkspaceLabel, connectedUserIDs)
+	if err == nil && h.Hub != nil {
+		h.Hub.BroadcastAll(roomID, []byte{hub.MessageTypeRoomUpdate})
+	}
 	if err != nil {
 		switch {
 		case errors.Is(err, services.ErrRoomForbidden):
@@ -206,6 +250,10 @@ func (h *RoomHandler) BindLocalWorkspace(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *RoomHandler) ToggleRoomActivation(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	claims, ok := auth.GetUserFromContext(r)
 	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -218,8 +266,15 @@ func (h *RoomHandler) ToggleRoomActivation(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Mark the host's dashboard client as bound so presence reflects Connected immediately.
+	if h.Hub != nil {
+		h.Hub.SetClientBound(roomID, claims.UserID)
+	}
 	connectedUserIDs := h.Hub.ConnectedUserIDs(roomID)
 	details, err := h.Services.ToggleRoomActivation(roomID, claims.UserID, connectedUserIDs)
+	if err == nil && h.Hub != nil {
+		h.Hub.BroadcastAll(roomID, []byte{hub.MessageTypeRoomUpdate})
+	}
 	if err != nil {
 		switch {
 		case errors.Is(err, services.ErrRoomForbidden):
@@ -250,8 +305,88 @@ func (h *RoomHandler) GetUserRooms(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	
 	writeJSON(w, http.StatusOK, rooms)
+}
+
+func (h *RoomHandler) GetRoomActivities(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	claims, ok := auth.GetUserFromContext(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	roomID := r.PathValue("roomId")
+	if roomID == "" {
+		http.Error(w, "room ID cannot be empty", http.StatusBadRequest)
+		return
+	}
+
+	// Check if user is a room member
+	member, err := h.Services.IsRoomMember(roomID, claims.UserID)
+	if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+	if !member {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	// Get activities for the room
+	activities, err := services.GetRoomActivities(h.Services.GetDB(), roomID, 100)
+	if err != nil {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, activities)
+}
+
+func (h *RoomHandler) LeaveRoom(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	claims, ok := auth.GetUserFromContext(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	roomID := r.PathValue("roomId")
+	log.Printf("codedock: LeaveRoom request received for roomID=%s method=%s path=%s", roomID, r.Method, r.URL.Path)
+	if roomID == "" {
+		http.Error(w, "room ID cannot be empty", http.StatusBadRequest)
+		return
+	}
+
+	err := h.Services.LeaveRoom(roomID, claims.UserID)
+	if err != nil {
+		switch {
+		case errors.Is(err, services.ErrRoomForbidden):
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		case errors.Is(err, services.ErrRoomNotFound):
+			http.Error(w, "room not found", http.StatusNotFound)
+			return
+		default:
+			http.Error(w, "internal server error", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	if h.Hub != nil {
+		h.Hub.BroadcastAll(roomID, []byte{hub.MessageTypeRoomUpdate})
+		// Force close the connection for this user in this room
+		h.Hub.CloseUserInRoom(roomID, claims.UserID)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
 func (h *RoomHandler) DeleteRoom(w http.ResponseWriter, r *http.Request) {

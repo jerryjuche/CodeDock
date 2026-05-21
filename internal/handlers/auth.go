@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
 
 	"github.com/jerryjuche/CodeDock/internal/auth"
 	"github.com/jerryjuche/CodeDock/internal/services"
@@ -30,6 +31,8 @@ type meResponse struct {
 	Email string `json:"email"`
 }
 
+var emailRegex = regexp.MustCompile(`^[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,15}$`)
+
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 	var req registerRequest
 
@@ -40,6 +43,16 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 	if req.Email == "" || req.Password == "" {
 		http.Error(w, "email and password are required", http.StatusBadRequest)
+		return
+	}
+
+	if !emailRegex.MatchString(req.Email) {
+		http.Error(w, "invalid email format", http.StatusBadRequest)
+		return
+	}
+
+	if len(req.Password) < 8 {
+		http.Error(w, "password must be at least 8 characters long", http.StatusBadRequest)
 		return
 	}
 

@@ -4,7 +4,7 @@
 import { useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { useLaunch } from "@/hooks/use-launch";
+import { useLaunchIDE } from "@/hooks/use-launch";
 
 export default function OpenInVSCodeButton({
   roomId,
@@ -17,14 +17,14 @@ export default function OpenInVSCodeButton({
   launchReason?: string;
   isHost?: boolean;
 }) {
-  const { openRoom, loading } = useLaunch(roomId);
+  const { launchIDE, loading } = useLaunchIDE(roomId);
   const [error, setError] = useState<string | null>(null);
   const disabled = loading || (!isHost && !launchAllowed);
 
   async function handleOpen() {
     setError(null);
     try {
-      await openRoom();
+      await launchIDE("vscode");
     } catch (err) {
       setError(
         err instanceof Error

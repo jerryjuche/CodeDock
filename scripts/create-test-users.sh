@@ -4,10 +4,10 @@ set -Eeuo pipefail
 BASE_URL="${1:-http://127.0.0.1:8080}"
 
 USER1_EMAIL="${2:-user1@codedock.com}"
-USER1_PASSWORD="${3:-123}"
+USER1_PASSWORD="${3:-codedock123}"
 
 USER2_EMAIL="${4:-user2@codedock.com}"
-USER2_PASSWORD="${5:-123}"
+USER2_PASSWORD="${5:-codedock123}"
 
 echo "Using backend: $BASE_URL"
 echo

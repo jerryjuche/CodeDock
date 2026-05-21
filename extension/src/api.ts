@@ -111,6 +111,13 @@ export class ApiClient {
 
       if (!response.ok) {
         const body = await response.text();
+        const trimmed = body.trim();
+        if (trimmed.toLowerCase().startsWith("<!doctype html") || trimmed.toLowerCase().startsWith("<html")) {
+          throw new ApiError(
+            response.status,
+            `Unexpected HTML response from ${this.baseUrl}${path}. Verify your codedock.serverUrl points to the backend server, not the web app URL.`,
+          );
+        }
         throw new ApiError(response.status, body || `HTTP ${response.status}`);
       }
 

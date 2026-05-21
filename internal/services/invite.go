@@ -90,15 +90,7 @@ func (s *InviteService) ResolveJoinCodeForUser(code string, userID string) (*Joi
 		return nil, err
 	}
 
-	if joined && invite.MaxUses != nil {
-		if _, err := tx.Exec(`
-			UPDATE room_invite_tokens
-			SET uses_count = uses_count + 1
-			WHERE id = $1
-		`, invite.ID); err != nil {
-			return nil, err
-		}
-	} else if joined && invite.MaxUses == nil {
+	if joined {
 		if _, err := tx.Exec(`
 			UPDATE room_invite_tokens
 			SET uses_count = uses_count + 1

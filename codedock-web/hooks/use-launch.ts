@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { openInVSCode, createEditorLaunch } from "@/lib/api/launch";
+import { createEditorLaunch } from "@/lib/api/launch";
 import { useAuth } from "@/hooks/use-auth";
 import type { LaunchTokenResponse, CodeDockEditorTarget } from "@/types/launch";
 
@@ -16,7 +16,7 @@ export function useLaunch(roomId: string) {
 
     setLoading(true);
     try {
-      const response = await openInVSCode(token, roomId);
+      const response = await createEditorLaunch(roomId, token, "vscode");
       window.location.assign(response.deep_link);
     } finally {
       setLoading(false);

@@ -655,6 +655,7 @@ func setupTestApp(t *testing.T) *testApp {
 	mux.Handle("GET /rooms/{roomId}/details", auth.RequireAuth(http.HandlerFunc(app.roomHandler.GetRoomDetails)))
 	mux.Handle("GET /rooms/{roomId}/presence", auth.RequireAuth(http.HandlerFunc(app.roomHandler.GetRoomPresence)))
 	mux.Handle("POST /rooms/{roomId}/source/local/bind", auth.RequireAuth(http.HandlerFunc(app.roomHandler.BindLocalWorkspace)))
+	mux.Handle("POST /rooms/{roomId}/activation/toggle", auth.RequireAuth(http.HandlerFunc(app.roomHandler.ToggleRoomActivation)))
 	mux.Handle("DELETE /rooms/{roomId}", auth.RequireAuth(http.HandlerFunc(app.roomHandler.DeleteRoom)))
 
 	mux.Handle("GET /auth/me", auth.RequireAuth(http.HandlerFunc(app.authHandler.Me)))
@@ -906,6 +907,10 @@ func TestGetRoomDetails_ReturnsMembershipAndSourceState(t *testing.T) {
 	}, guest.Token)
 	assertStatus(t, joinResp, http.StatusOK)
 
+	// Activate room as host so guest can access details
+	toggleResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms/"+room.ID+"/activation/toggle", nil, host.Token)
+	assertStatus(t, toggleResp, http.StatusOK)
+
 	detailsResp := performJSONRequest(t, app.mux, http.MethodGet, "/rooms/"+room.ID+"/details", nil, guest.Token)
 	assertStatus(t, detailsResp, http.StatusOK)
 
@@ -1014,14 +1019,18 @@ func TestGetRoomPresence_ReturnsConnectedMembers(t *testing.T) {
 	guestUserID := guestAUserIDFromToken(t, guest.Token)
 
 	app.realtimeHub.Register(&hub.Client{
-		Send:   make(chan []byte, 1),
-		RoomID: room.ID,
-		UserID: hostUserID,
+		Send:       make(chan []byte, 1),
+		RoomID:     room.ID,
+		UserID:     hostUserID,
+		ClientType: "vscode",
+		Bound:      true,
 	})
 	app.realtimeHub.Register(&hub.Client{
-		Send:   make(chan []byte, 1),
-		RoomID: room.ID,
-		UserID: guestUserID,
+		Send:       make(chan []byte, 1),
+		RoomID:     room.ID,
+		UserID:     guestUserID,
+		ClientType: "vscode",
+		Bound:      true,
 	})
 
 	presenceResp := performJSONRequest(t, app.mux, http.MethodGet, "/rooms/"+room.ID+"/presence", nil, host.Token)
@@ -1067,6 +1076,10 @@ func TestBindLocalWorkspace_UpdatesSourceState(t *testing.T) {
 		"code": room.PrimaryJoinCode,
 	}, guest.Token)
 	assertStatus(t, joinResp, http.StatusOK)
+
+	// Activate room as host so guest can access details before workspace bind
+	toggleResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms/"+room.ID+"/activation/toggle", nil, host.Token)
+	assertStatus(t, toggleResp, http.StatusOK)
 
 	beforeResp := performJSONRequest(t, app.mux, http.MethodGet, "/rooms/"+room.ID+"/details", nil, guest.Token)
 	assertStatus(t, beforeResp, http.StatusOK)

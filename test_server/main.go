@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -665,7 +666,7 @@ func dashboardHandler(w http.ResponseWriter, r *http.Request) {
 </div>
 
 <script>
-const suite = %s;
+const suite = JSON.parse(atob("%s"));
 
 function getCategory(name) {
   if (name.toLowerCase().includes('register') || name.toLowerCase().includes('login')) return 'Auth';
@@ -687,18 +688,36 @@ suite.results.forEach((t, i) => {
   item.className = 'test-item ' + (t.passed ? 'pass' : 'fail');
   item.style.animationDelay = (i * 0.04) + 's';
 
-  const errorHtml = (!t.passed && t.output)
-    ? '<div class="test-error">' + t.output.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>'
-    : '';
+  const icon = document.createElement('div');
+  icon.className = 'test-icon';
+  icon.textContent = t.passed ? '✓' : '✗';
+  item.appendChild(icon);
+ 
+  const inner = document.createElement('div');
+  inner.className = 'test-item-inner';
+   
+  const name = document.createElement('div');
+  name.className = 'test-name';
+  name.textContent = t.name;
+  inner.appendChild(name);
+ 
+  if (!t.passed && t.output) {
+    const error = document.createElement('div');
+    error.className = 'test-error';
+    error.textContent = t.output;
+    inner.appendChild(error);
+  }
+  item.appendChild(inner);
 
-  item.innerHTML =
-    '<div class="test-icon">' + (t.passed ? '✓' : '✗') + '</div>' +
-    '<div class="test-item-inner">' +
-      '<div class="test-name">' + t.name + '</div>' +
-      errorHtml +
-    '</div>' +
-    '<span class="test-category">' + getCategory(t.name) + '</span>' +
-    '<span class="test-duration">' + formatDuration(t.duration) + '</span>';
+  const category = document.createElement('div');
+  category.className = 'test-category';
+  category.textContent = getCategory(t.name);
+  item.appendChild(category);
+ 
+  const duration = document.createElement('div');
+  duration.className = 'test-duration';
+  duration.textContent = formatDuration(t.duration);
+  item.appendChild(duration);
 
   list.appendChild(item);
 });
@@ -721,7 +740,7 @@ if (suite.results.length === 0) {
 		suite.Duration.Round(time.Millisecond).String(),
 		passRate,
 		suite.Total,
-		string(suiteJSON),
+		base64.StdEncoding.EncodeToString(suiteJSON),
 	)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
