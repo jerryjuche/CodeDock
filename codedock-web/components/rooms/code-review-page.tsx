@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { Card } from "@/components/ui/card";
 import { DiffView } from "@/components/ui/diff-view";
 import { useRoomActivities } from "@/hooks/use-room-activities";
 import { ArrowLeft, FileText, Activity, GitBranch } from "lucide-react";
@@ -11,7 +10,8 @@ import { ArrowLeft, FileText, Activity, GitBranch } from "lucide-react";
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
-const formatTimestamp = (timestamp: string) => {
+const formatTimestamp = (timestamp?: string) => {
+  if (!timestamp) return "-";
   const date = new Date(timestamp);
   return date.toLocaleString(undefined, {
     month: "short",
@@ -41,8 +41,9 @@ export default function CodeReviewPageClient({
   roomId: string;
   userId: string;
 }) {
-  const { activities, loading, error } = useRoomActivities(roomId);
+  const { activities, loading } = useRoomActivities(roomId);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
 
   const memberActivities = useMemo(() => {
     return activities
@@ -100,9 +101,22 @@ export default function CodeReviewPageClient({
     );
   }, [memberActivities]);
 
-  const activeFile = selectedFile
-    ? fileGroups.find((g) => g.file === selectedFile) || fileGroups[0]
-    : fileGroups[0];
+  const filteredFileGroups = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    if (!q) return fileGroups;
+    return fileGroups.filter((g) => g.file.toLowerCase().includes(q));
+  }, [fileGroups, searchTerm]);
+
+  const activeFile = useMemo(() => {
+    if (!filteredFileGroups || filteredFileGroups.length === 0) return null;
+    if (selectedFile)
+      return (
+        filteredFileGroups.find((g) => g.file === selectedFile) ||
+        filteredFileGroups[0]
+      );
+    return filteredFileGroups[0];
+  }, [filteredFileGroups, selectedFile]);
+
   const memberEmail = memberActivities[0]?.email || userId;
 
   if (loading)
@@ -114,37 +128,36 @@ export default function CodeReviewPageClient({
 
   return (
     <main className="mx-auto max-w-[1400px] px-4 py-8">
-      <div className="flex flex-col gap-5">
-        {/* Navigation */}
+      <div className="flex flex-col gap-6">
         <div className="flex items-center justify-between">
           <Link
             href={`/rooms/${roomId}`}
-            className="flex items-center gap-2 text-xs font-semibold text-slate-400 hover:text-white transition-colors"
+            className="flex items-center gap-3 text-sm text-slate-400 hover:text-white"
           >
             <ArrowLeft className="h-4 w-4" />
             Back to session
           </Link>
         </div>
 
-        {/* Header */}
-        <div className="rounded-lg border border-white/5 bg-white/[0.02] px-6 py-5">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-3">
+        <header className="rounded-lg border border-white/6 bg-white/[0.02] px-6 py-5">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
               <div
-                className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded text-xs font-semibold text-white"
+                className="h-10 w-10 rounded-md flex items-center justify-center text-sm font-semibold text-white"
                 style={{ background: colorFromEmail(memberEmail) }}
               >
                 {memberEmail.slice(0, 2).toUpperCase()}
               </div>
               <div>
-                <h1 className="text-base font-semibold text-white">
+                <div className="text-lg font-semibold text-white">
                   {memberEmail}
-                </h1>
-                <p className="text-xs text-slate-500 mt-1">
+                </div>
+                <div className="text-sm text-slate-400">
                   Code Contribution Review
-                </p>
+                </div>
               </div>
             </div>
+
             <div className="flex items-center gap-3">
               <StatPill
                 icon={<Activity className="h-4 w-4 text-slate-400" />}
@@ -156,64 +169,86 @@ export default function CodeReviewPageClient({
               />
             </div>
           </div>
-        </div>
+        </header>
 
-        {fileGroups.length === 0 ? (
-          <div className="py-20 text-center opacity-40">
-            <GitBranch className="mx-auto h-8 w-8 mb-4" />
-            <p className="text-sm font-medium">No code changes recorded yet</p>
-          </div>
-        ) : (
-          <div className="grid gap-5 lg:grid-cols-[260px_1fr]">
-            {/* Sidebar */}
-            <aside className="space-y-2">
-              <p className="px-2 text-xs font-semibold text-slate-500">Files</p>
-              <nav className="space-y-1 scrollbar-hide">
-                {fileGroups.map((group) => {
+        <div className="grid gap-6 lg:grid-cols-[300px_1fr]">
+          <aside className="space-y-3">
+            <div className="sticky top-24 space-y-3">
+              <div>
+                <label htmlFor="file-search" className="sr-only">
+                  Search files
+                </label>
+                <input
+                  id="file-search"
+                  aria-label="Search files"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="Search files"
+                  className="w-full rounded-md bg-white/[0.02] border border-white/6 px-3 py-2 text-sm text-slate-300 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                />
+              </div>
+
+              <nav className="space-y-1 max-h-[calc(100vh-300px)] overflow-y-auto scrollbar-hide">
+                {filteredFileGroups.map((group) => {
                   const isActive = activeFile?.file === group.file;
                   return (
                     <button
                       key={group.file}
                       onClick={() => setSelectedFile(group.file)}
-                      className={`flex w-full items-center gap-2 rounded px-2 py-2 text-left text-xs transition-colors ${
-                        isActive
-                          ? "bg-slate-700/50 text-white font-medium"
-                          : "text-slate-400 hover:bg-white/5 hover:text-slate-300"
-                      }`}
+                      className={`flex w-full items-start gap-3 rounded-md px-3 py-2 text-sm transition-colors ${isActive ? "bg-sky-600/20 text-white font-medium" : "text-slate-300 hover:bg-white/5"}`}
+                      aria-current={isActive ? "true" : undefined}
                     >
-                      <FileText className="h-3.5 w-3.5 flex-shrink-0" />
-                      <span className="truncate">{group.file}</span>
+                      <FileText className="h-4 w-4 flex-shrink-0 text-slate-400 mt-1" />
+                      <div className="min-w-0">
+                        <div className="truncate">{group.file}</div>
+                        <div className="text-[12px] text-slate-500">
+                          {group.snapshots.length} variants •{" "}
+                          {formatTimestamp(group.lastTimestamp)}
+                        </div>
+                      </div>
                     </button>
                   );
                 })}
               </nav>
-            </aside>
+            </div>
+          </aside>
 
-            {/* Main Content: Unified Diff */}
-            <section className="min-w-0 space-y-4 max-h-[calc(100vh-280px)] overflow-y-auto overflow-x-hidden scrollbar-hide hover:overflow-y-auto">
-              {activeFile && (
-                <>
-                  <div className="flex items-center justify-between rounded-lg border border-white/5 bg-white/[0.02] px-4 py-3">
-                    <span className="text-sm font-medium text-white">
+          <section className="min-w-0 space-y-4 max-h-[calc(100vh-220px)] overflow-y-auto overflow-x-hidden scrollbar-hide hover:overflow-y-auto">
+            {activeFile ? (
+              <>
+                <div className="flex items-center justify-between rounded-md border border-white/6 bg-white/[0.02] px-4 py-3">
+                  <div>
+                    <div className="text-base font-medium text-white truncate">
                       {activeFile.file}
-                    </span>
-                    <span className="text-xs text-slate-500 font-medium">
-                      {activeFile.language}
-                    </span>
+                    </div>
+                    <div className="text-[13px] text-slate-400">
+                      {activeFile.language} •{" "}
+                      {formatTimestamp(activeFile.lastTimestamp)}
+                    </div>
                   </div>
+                  <div className="text-sm text-slate-500">
+                    {activeFile.snapshots.length} variants
+                  </div>
+                </div>
 
-                  <div className="overflow-hidden rounded-lg border border-white/5">
-                    <DiffView
-                      oldCode={activeFile.earliestCode}
-                      newCode={activeFile.latestCode}
-                      language={activeFile.language}
-                    />
-                  </div>
-                </>
-              )}
-            </section>
-          </div>
-        )}
+                <div className="overflow-hidden rounded-md border border-white/6">
+                  <DiffView
+                    oldCode={activeFile.earliestCode}
+                    newCode={activeFile.latestCode}
+                    language={activeFile.language}
+                  />
+                </div>
+              </>
+            ) : (
+              <div className="py-20 text-center opacity-40">
+                <GitBranch className="mx-auto h-8 w-8 mb-4" />
+                <p className="text-sm font-medium">
+                  No files match your search
+                </p>
+              </div>
+            )}
+          </section>
+        </div>
       </div>
     </main>
   );
@@ -221,9 +256,9 @@ export default function CodeReviewPageClient({
 
 function StatPill({ icon, label }: { icon: React.ReactNode; label: string }) {
   return (
-    <div className="flex items-center gap-2 rounded px-2.5 py-1.5 bg-white/[0.03] border border-white/5">
+    <div className="flex items-center gap-2 rounded px-2.5 py-1.5 bg-white/[0.03] border border-white/6">
       {icon}
-      <span className="text-xs text-slate-400">{label}</span>
+      <span className="text-sm text-slate-400">{label}</span>
     </div>
   );
 }
