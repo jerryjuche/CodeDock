@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { DiffView } from "@/components/ui/diff-view";
+import { getDiffStrategy, getFileExtension } from "@/lib/diff/diff-strategy";
 import { useRoomActivities } from "@/hooks/use-room-activities";
 import { ArrowLeft, FileText, Activity, GitBranch } from "lucide-react";
 
@@ -57,7 +58,7 @@ export default function CodeReviewPageClient({
         email: a.email || a.user_id,
         timestamp: a.created_at || a.timestamp || new Date().toISOString(),
         file_path: a.file_path,
-        code: a.details?.code,
+        code: typeof a.details?.code === "string" ? a.details.code : undefined,
         language: a.details?.language,
       }))
       .sort(
@@ -71,12 +72,19 @@ export default function CodeReviewPageClient({
     memberActivities.forEach((activity) => {
       const file = activity.file_path || "Unknown file";
       const existing = groups.get(file);
+
       if (existing) {
         if (activity.code) {
           existing.snapshots.push({
             code: activity.code,
             timestamp: activity.timestamp,
           });
+
+          if (!existing.hasCode) {
+            existing.earliestCode = activity.code;
+            existing.hasCode = true;
+          }
+
           existing.latestCode = activity.code;
           existing.lastTimestamp = activity.timestamp;
         }
@@ -89,16 +97,40 @@ export default function CodeReviewPageClient({
             : [],
           latestCode: activity.code || "",
           earliestCode: activity.code || "",
+          hasCode: Boolean(activity.code),
+          firstTimestamp: activity.timestamp,
           lastTimestamp: activity.timestamp,
         });
       }
     });
 
-    return Array.from(groups.values()).sort(
-      (a, b) =>
-        new Date(b.lastTimestamp).getTime() -
-        new Date(a.lastTimestamp).getTime(),
-    );
+    return Array.from(groups.values())
+      .filter((group) => {
+        if (!group.hasCode) {
+          return false;
+        }
+
+        if (
+          typeof group.earliestCode !== "string" ||
+          typeof group.latestCode !== "string"
+        ) {
+          throw new Error(
+            `computeDiff received non-string inputs for file ${group.file}`,
+          );
+        }
+
+        const extension = getFileExtension(group.file);
+        const chunks = getDiffStrategy(extension)(
+          group.earliestCode,
+          group.latestCode,
+        );
+        return chunks.some((chunk) => chunk.type !== "context");
+      })
+      .sort(
+        (a, b) =>
+          new Date(b.lastTimestamp).getTime() -
+          new Date(a.lastTimestamp).getTime(),
+      );
   }, [memberActivities]);
 
   const filteredFileGroups = useMemo(() => {
@@ -139,7 +171,7 @@ export default function CodeReviewPageClient({
           </Link>
         </div>
 
-        <header className="rounded-lg border border-white/6 bg-white/[0.02] px-6 py-5">
+        <header className="rounded-3xl border border-slate-800/70 bg-slate-950/80 px-6 py-5 shadow-sm shadow-slate-950/50">
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-4">
               <div
@@ -184,7 +216,7 @@ export default function CodeReviewPageClient({
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   placeholder="Search files"
-                  className="w-full rounded-md bg-white/[0.02] border border-white/6 px-3 py-2 text-sm text-slate-300 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500"
+                  className="w-full rounded-md bg-slate-950/80 border border-slate-800/70 px-3 py-2 text-sm text-slate-300 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-sky-500"
                 />
               </div>
 
@@ -195,7 +227,7 @@ export default function CodeReviewPageClient({
                     <button
                       key={group.file}
                       onClick={() => setSelectedFile(group.file)}
-                      className={`flex w-full items-start gap-3 rounded-md px-3 py-2 text-sm transition-colors ${isActive ? "bg-sky-600/20 text-white font-medium" : "text-slate-300 hover:bg-white/5"}`}
+                      className={`flex w-full items-start gap-3 rounded-md px-3 py-2 text-sm transition-colors ${isActive ? "bg-slate-800/80 text-white font-medium" : "text-slate-300 hover:bg-slate-900/70"}`}
                       aria-current={isActive ? "true" : undefined}
                     >
                       <FileText className="h-4 w-4 flex-shrink-0 text-slate-400 mt-1" />
@@ -216,7 +248,7 @@ export default function CodeReviewPageClient({
           <section className="min-w-0 space-y-4 max-h-[calc(100vh-220px)] overflow-y-auto overflow-x-hidden scrollbar-hide hover:overflow-y-auto">
             {activeFile ? (
               <>
-                <div className="flex items-center justify-between rounded-md border border-white/6 bg-white/[0.02] px-4 py-3">
+                <div className="flex items-center justify-between rounded-md border border-slate-800/70 bg-slate-950/80 px-4 py-3">
                   <div>
                     <div className="text-base font-medium text-white truncate">
                       {activeFile.file}
@@ -231,8 +263,9 @@ export default function CodeReviewPageClient({
                   </div>
                 </div>
 
-                <div className="overflow-hidden rounded-md border border-white/6">
+                <div className="overflow-hidden rounded-3xl border border-slate-800/70">
                   <DiffView
+                    filePath={activeFile.file}
                     oldCode={activeFile.earliestCode}
                     newCode={activeFile.latestCode}
                     language={activeFile.language}
@@ -256,7 +289,7 @@ export default function CodeReviewPageClient({
 
 function StatPill({ icon, label }: { icon: React.ReactNode; label: string }) {
   return (
-    <div className="flex items-center gap-2 rounded px-2.5 py-1.5 bg-white/[0.03] border border-white/6">
+    <div className="flex items-center gap-2 rounded px-2.5 py-1.5 bg-slate-900/80 border border-slate-800/70">
       {icon}
       <span className="text-sm text-slate-400">{label}</span>
     </div>
