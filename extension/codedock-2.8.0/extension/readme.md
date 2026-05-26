@@ -4,9 +4,9 @@
 
 # CodeDock
 
-**Self-hosted real-time collaborative coding for VS Code**
+**Self-hosted room-based collaboration for VS Code, with launch support for VS Code and Antigravity.**
 
-Bring live collaboration directly into the editor — built for engineering teams that want speed, control, and full infrastructure ownership.
+Create shared sessions from your CodeDock backend, join with a short invite code, and open your workspace when the session is ready.
 
 [![Install from Marketplace](https://img.shields.io/badge/Install-VS%20Code%20Marketplace-0078D4?style=for-the-badge&logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=jerryjuche.codedock)
 &nbsp;
@@ -18,82 +18,37 @@ Bring live collaboration directly into the editor — built for engineering team
 &nbsp;
 ![Self-Hosted](https://img.shields.io/badge/Self--Hosted-Yes-0F172A?style=flat-square)
 &nbsp;
-![Real-Time](https://img.shields.io/badge/Real--Time-Collaboration-06B6D4?style=flat-square)
+![Launch Targets](https://img.shields.io/badge/Launch-VS%20Code%20%7C%20Antigravity-06B6D4?style=flat-square)
 &nbsp;
-![Version](https://img.shields.io/badge/Version-0.1.4-7C3AED?style=flat-square)
+![Version](https://img.shields.io/badge/Version-2.8.0-7C3AED?style=flat-square)
 
 </div>
 
 ---
 
-## What is CodeDock?
+## Overview
 
-CodeDock is a VS Code extension that enables real-time collaborative coding sessions without giving up control of your infrastructure.
+CodeDock is a VS Code extension that connects your editor to a self-hosted CodeDock backend. It provides room-based collaboration, invite-driven joins, and ready-state workspace launch flows.
 
-It connects the editor to a self-hosted CodeDock backend — a Go server that handles rooms, presence, WebSocket sync, and session management. Your code and collaboration data stay on infrastructure you control, not a third-party cloud you depend on.
+The extension supports both **VS Code** and **Antigravity** launch targets through the shared room workflow.
 
-The workflow is simple:
+## Highlights
 
-1. A host creates a **room** from the CodeDock web control plane
-2. Teammates join using a **6-character invite code**
-3. Everyone opens the room in VS Code with a **one-click launch link**
-4. The extension handles the rest — real-time sync, cursor presence, and chat
-
----
-
-## Why CodeDock?
-
-Most real-time collaboration tools bolt collaboration onto existing editors as an afterthought, or they require routing your code and session data through a third-party server you do not control.
-
-CodeDock is built from the opposite direction:
-
-| | CodeDock | Cloud-first tools |
-|---|---|---|
-| **Infrastructure** | You own it | Vendor-controlled |
-| **Data routing** | Through your server | Third-party cloud |
-| **Session persistence** | Your deployment | Vendor-managed |
-| **Editor integration** | Native VS Code | Extension / plugin |
-| **Team workflow** | Room-based, structured | Ad-hoc |
-
-**The result:** fast, structured collaboration that stays inside the engineering environment you already work in.
-
----
+- Self-hosted collaboration using your own CodeDock backend
+- Room-based workflow with host/guest separation
+- Invite-code based join flow
+- Launch rooms to **VS Code** or **Antigravity**
+- Secure auth token storage in VS Code secret storage
+- Live session state and workspace readiness checks
 
 ## Features
 
-### Available now
-
-- **Authentication** — Log in to your CodeDock account from inside the editor. Your session is stored securely and persists across editor restarts.
-
-- **Room management** — Create new collaboration rooms or join existing ones using a short invite code, directly from the VS Code command palette.
-
-- **Integrated chat** — Open a dedicated chat panel inside the editor to communicate with room members without leaving VS Code.
-
-- **Session control** — Connect to a room, see your active session state, and disconnect cleanly when done.
-
-- **Self-hosted backend** — Point the extension at any CodeDock server you run. No mandatory cloud accounts or third-party routing.
-
-- **Configurable server URL** — Set your backend URL once in VS Code settings and the extension connects automatically.
-
-### Built-in technical capabilities
-
-The extension ships with a full real-time collaboration engine underneath the current UI surface:
-
-- **Yjs / CRDT document sync** — Conflict-free document state synchronization across all connected clients using the Yjs CRDT framework
-- **WebSocket connection manager** — Persistent, auto-reconnecting WebSocket connection to the CodeDock server
-- **Cursor presence** — Shared cursor and selection state across room members
-- **Snapshot persistence** — Document state snapshots are stored server-side, so sessions survive disconnects
-- **Protocol layer** — Typed message protocol for all client–server communication
-
-### On the roadmap
-
-- Live multi-user editing with visible cursor decorations
-- Room member list with online/offline presence indicators
-- Source-aware session launch (GitHub repo and local workspace modes)
-- Richer chat panel with message history
-- Notification support for room events
-
----
+- **Create and join rooms** from the VS Code command palette
+- **Open rooms only when ready** so guests land in a hydrated session
+- **Launch target selection** for VS Code or Antigravity editors
+- **Integrated chat, presence, and session controls**
+- **Backend configuration** via extension settings
+- **Built for self-hosted deployments** and private teams
 
 ## Getting Started
 
@@ -120,7 +75,7 @@ Or search **CodeDock** in the Extensions panel (`Ctrl+Shift+X`).
 **Manual install from `.vsix`:**
 
 ```bash
-code --install-extension codedock-0.1.4.vsix
+code --install-extension codedock-3.0.0.vsix
 ```
 
 ---
@@ -129,7 +84,7 @@ code --install-extension codedock-0.1.4.vsix
 
 After installing, configure your backend URL in VS Code settings.
 
-Open `settings.json` (`Ctrl+Shift+P` → *Preferences: Open User Settings (JSON)*) and add:
+Open `settings.json` (`Ctrl+Shift+P` → _Preferences: Open User Settings (JSON)_) and add:
 
 ```json
 {
@@ -137,8 +92,8 @@ Open `settings.json` (`Ctrl+Shift+P` → *Preferences: Open User Settings (JSON)
 }
 ```
 
-| Setting | Type | Default | Description |
-|---------|------|---------|-------------|
+| Setting              | Type     | Default                    | Description                              |
+| -------------------- | -------- | -------------------------- | ---------------------------------------- |
 | `codedock.serverUrl` | `string` | `https://codedock.fly.dev` | Base URL of your CodeDock backend server |
 
 > If you are running the backend locally for development, set this to `http://localhost:8080`.
@@ -199,30 +154,37 @@ Ends your WebSocket connection and leaves the active session cleanly.
 
 ---
 
-## How It Works
+## Support
 
-```
-┌──────────────────────────────┐
-│       VS Code + Extension    │
-│                              │
-│  Auth · Rooms · Chat · Sync  │
-└──────────┬───────────────────┘
-           │ WebSocket + REST
-           │
+- Web App: https://code-dock-beige.vercel.app
+- GitHub: https://github.com/jerryjuche/CodeDock
+- Issues: https://github.com/jerryjuche/CodeDock/issues
+- Marketplace: https://marketplace.visualstudio.com/items?itemName=jerryjuche.codedock
+
+---
+
+### Notes for marketplace listing
+
+- Supports launch targets: **VS Code** and **Antigravity**
+- Designed for **self-hosted backend deployments**
+- Ideal for teams that need structured, invite-based collaboration
+
+---
+
+## License
+
+MIT
+
+<div align="center">
+Built by [jerryjuche](https://github.com/jerryjuche) · [GitHub](https://github.com/jerryjuche/CodeDock)
+</div>
+
 ┌──────────▼───────────────────┐
-│     CodeDock Backend (Go)    │
-│                              │
-│  Auth · Rooms · WebSocket    │
-│  Invite tokens · Snapshots   │
-│  CRDT relay · Launch tokens  │
-└──────────┬───────────────────┘
-           │ SQL
-           │
-┌──────────▼───────────────────┐
-│        PostgreSQL             │
-│  Users · Rooms · Members     │
-│  Snapshots · Invite tokens   │
+│ PostgreSQL │
+│ Users · Rooms · Members │
+│ Snapshots · Invite tokens │
 └──────────────────────────────┘
+
 ```
 
 The extension maintains a persistent WebSocket connection to the CodeDock server for real-time events. REST calls handle authentication, room management, and invite operations. Document state is synchronized using Yjs CRDTs, giving conflict-free merging of edits across all connected clients. Snapshots are periodically persisted server-side so sessions can survive client disconnects.
@@ -307,3 +269,4 @@ See [CHANGELOG.md](https://github.com/jerryjuche/CodeDock/blob/staging/extension
 Built by [jerryjuche](https://github.com/jerryjuche) &nbsp;·&nbsp; [GitHub](https://github.com/jerryjuche/CodeDock) &nbsp;·&nbsp; [Report Issue](https://github.com/jerryjuche/CodeDock/issues)
 
 </div>
+```

@@ -4,9 +4,9 @@
 
 # CodeDock
 
-**Self-hosted real-time collaborative coding for VS Code**
+**Self-hosted room-based collaboration for VS Code, with launch support for VS Code and Antigravity.**
 
-Built for developers and teams that need a simple room-based workflow, reliable launch flow, and native VS Code collaboration.
+Create shared sessions from your CodeDock backend, join with a short invite code, and open your workspace when the session is ready.
 
 [![Install from Marketplace](https://img.shields.io/badge/Install-VS%20Code%20Marketplace-0078D4?style=for-the-badge&logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=jerryjuche.codedock)
 &nbsp;
@@ -18,141 +18,126 @@ Built for developers and teams that need a simple room-based workflow, reliable 
 &nbsp;
 ![Self-Hosted](https://img.shields.io/badge/Self--Hosted-Yes-0F172A?style=flat-square)
 &nbsp;
-![Real-Time](https://img.shields.io/badge/Real--Time-Collaboration-06B6D4?style=flat-square)
+![Launch Targets](https://img.shields.io/badge/Launch-VS%20Code%20%7C%20Antigravity-06B6D4?style=flat-square)
 &nbsp;
-![Version](https://img.shields.io/badge/Version-0.1.4-7C3AED?style=flat-square)
+![Version](https://img.shields.io/badge/Version-2.8.0-7C3AED?style=flat-square)
 
 </div>
 
-[Open CodeDock](https://code-dock-beige.vercel.app) 
-· [Create Account](https://code-dock-beige.vercel.app/register) · [Install from Marketplace](https://marketplace.visualstudio.com/items?itemName=jerryjuche.codedock) · [View on GitHub](https://github.com/jerryjuche/CodeDock) · [Report an Issue](https://github.com/jerryjuche/CodeDock/issues)
-
 ---
 
-## What is CodeDock?
+## Overview
 
-CodeDock is a VS Code extension plus a web control plane for room-based collaboration.
+CodeDock is a VS Code extension that connects your editor to a self-hosted CodeDock backend. It provides room-based collaboration, invite-driven joins, and ready-state workspace launch flows.
 
-It helps hosts create rooms, share workspace sessions, and lets guests open the room in VS Code only when the session is ready.
+The extension supports both **VS Code** and **Antigravity** launch targets through the shared room workflow.
 
-The extension handles launch tokens, workspace binding, and live room state for the editor.
+## Highlights
 
----
-
-## Quick Start
-
-1. Install the extension: Marketplace
-2. Open the web app: https://code-dock-beige.vercel.app
-3. Register: https://code-dock-beige.vercel.app/register
-4. Log in: https://code-dock-beige.vercel.app/login
-5. Create a room and share the invite code
-6. Open the room in VS Code with Open IDE
-
----
+- Self-hosted collaboration using your own CodeDock backend
+- Room-based workflow with host/guest separation
+- Invite-code based join flow
+- Launch rooms to **VS Code** or **Antigravity**
+- Secure auth token storage in VS Code secret storage
+- Live session state and workspace readiness checks
 
 ## Features
 
-- Room-based collaboration with host/guest separation
-- Invite-code join flow
-- Web app launches VS Code through the extension
-- Guests wait until the host source is ready
-- Configurable backend and web app URL
-- Periodic update checks for the extension
+- **Create and join rooms** from the VS Code command palette
+- **Open rooms only when ready** so guests land in a hydrated session
+- **Launch target selection** for VS Code or Antigravity editors
+- **Integrated chat, presence, and session controls**
+- **Backend configuration** via extension settings
+- **Built for self-hosted deployments** and private teams
 
----
+## Getting Started
 
-## VS Code Commands
+1. Install CodeDock from the VS Code Marketplace or manually install the generated `.vsix`.
+2. Configure `codedock.serverUrl` in VS Code settings.
+3. Run `CodeDock: Login` and sign in with your CodeDock account.
+4. Create a room or join an existing room using an invite code.
+5. Open the room and choose **VS Code** or **Antigravity** when launching.
 
-- `codedock.login` — sign in
-- `codedock.logout` — sign out
-- `codedock.joinRoom` — join a room
-- `codedock.createRoom` — create a room
-- `codedock.openWebApp` — open the web app
-- `codedock.disconnectRoom` — leave the room
+## Commands
 
----
+Available from the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
 
-## Important Links
+- `CodeDock: Login`
+- `CodeDock: Logout`
+- `CodeDock: Join Room`
+- `CodeDock: Create Room`
+- `CodeDock: Open Chat`
+- `CodeDock: Disconnect from Room`
+- `CodeDock: Show Actions`
+- `CodeDock: Open CodeDock Web App`
+- `CodeDock: Show CodeDock Logs`
 
-- Web App: https://code-dock-beige.vercel.app
-- Register: https://code-dock-beige.vercel.app/register
-- Login: https://code-dock-beige.vercel.app/login
-- Marketplace: https://marketplace.visualstudio.com/items?itemName=jerryjuche.codedock
-- GitHub: https://github.com/jerryjuche/CodeDock
-- Issues: https://github.com/jerryjuche/CodeDock/issues
+## Settings
 
----
+| Setting              | Description                           |
+| -------------------- | ------------------------------------- |
+| `codedock.serverUrl` | Base URL of the CodeDock backend API  |
+| `codedock.webAppUrl` | URL of the CodeDock web control plane |
+
+**Example:**
+
+```json
+{
+  "codedock.serverUrl": "https://your-codedock-server.example.com",
+  "codedock.webAppUrl": "https://code-dock-beige.vercel.app/"
+}
+```
 
 ## Requirements
 
-- VS Code 1.85 or newer
-- CodeDock extension installed
-- CodeDock account from the web app
-- Access to your CodeDock backend or hosted service
+- VS Code **1.85** or newer
+- A running CodeDock backend
+- A CodeDock account registered on the backend
+
+## Installation
+
+### Marketplace install
+
+Search for **CodeDock** in the VS Code Extensions view, or run:
+
+```bash
+ext install jerryjuche.codedock
+```
+
+### Manual install from `.vsix`
+
+```bash
+code --install-extension codedock-3.0.0.vsix
+```
+
+## Troubleshooting
+
+- If launch fails, verify `codedock.serverUrl` and `codedock.webAppUrl`
+- Ensure the backend is reachable from your editor environment
+- Check the **CodeDock** output channel for detailed logs
+- Report bugs at [github.com/jerryjuche/CodeDock/issues](https://github.com/jerryjuche/CodeDock/issues)
+
+## Support
+
+- Web App: https://code-dock-beige.vercel.app
+- GitHub: https://github.com/jerryjuche/CodeDock
+- Issues: https://github.com/jerryjuche/CodeDock/issues
+- Marketplace: https://marketplace.visualstudio.com/items?itemName=jerryjuche.codedock
 
 ---
 
-## Configuration
+### Notes for marketplace listing
 
-Settings under `codedock`:
-
-- `serverUrl` — backend API endpoint
-- `webAppUrl` — web app URL opened by the extension
-- `autoUpdate` — enable release checks
-- `updateCheckIntervalMinutes` — how often checks run
+- Supports launch targets: **VS Code** and **Antigravity**
+- Designed for **self-hosted backend deployments**
+- Ideal for teams that need structured, invite-based collaboration
 
 ---
 
 ## License
 
 MIT
-| VS Code 1.85+ | ✅ Supported |
-| VS Code Insiders | ✅ Supported |
-| Cursor | Should work — untested |
-| Windows | ✅ |
-| macOS | ✅ |
-| Linux | ✅ |
-
----
-
-## Known Limitations
-
-- Live co-editing decorations (visible remote cursors) are part of the underlying engine but not yet surfaced in the UI — this is the primary active development area
-- The extension requires a network-accessible CodeDock backend — it does not work offline or in air-gapped environments without a locally running server
-- Room creation from inside VS Code creates the room on the server but the full room setup flow (invites, source configuration) is managed from the web control plane
-
----
-
-## Feedback & Issues
-
-Found a bug or want to request a feature?
-
-Open an issue on GitHub: [github.com/jerryjuche/CodeDock/issues](https://github.com/jerryjuche/CodeDock/issues)
-
-Please include:
-
-- Your VS Code version
-- Your CodeDock extension version
-- What you expected to happen
-- What actually happened
-- Any relevant output from the **Output panel** → `CodeDock` channel
-
----
-
-## Changelog
-
-See [CHANGELOG.md](https://github.com/jerryjuche/CodeDock/blob/staging/extension/CHANGELOG.md) for the full version history.
-
----
-
-## License
-
-[MIT](https://github.com/jerryjuche/CodeDock/blob/staging/extension/LICENSE)
-
----
 
 <div align="center">
-
-Built by [jerryjuche](https://github.com/jerryjuche) &nbsp;·&nbsp; [GitHub](https://github.com/jerryjuche/CodeDock) &nbsp;·&nbsp; [Report Issue](https://github.com/jerryjuche/CodeDock/issues)
-
+Built by [jerryjuche](https://github.com/jerryjuche) · [GitHub](https://github.com/jerryjuche/CodeDock)
 </div>
