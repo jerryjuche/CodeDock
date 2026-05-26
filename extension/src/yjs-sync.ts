@@ -28,7 +28,6 @@ import {
   FileActivityPayload,
 } from "./types";
 
-
 const PENDING_HYDRATED_ROOM_ID_KEY = "codedock.pendingHydrated.roomId";
 const PENDING_HYDRATED_ROOT_KEY = "codedock.pendingHydrated.rootPath";
 
@@ -150,7 +149,8 @@ export class YjsSync {
   private patchStates: Map<string, PatchState> = new Map();
   private hydrationTimers: Map<string, ReturnType<typeof setTimeout>> =
     new Map();
-  private activityTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+  private activityTimers: Map<string, ReturnType<typeof setTimeout>> =
+    new Map();
   private pendingFileBootstrapRequests: Set<string> = new Set();
 
   private workspaceManifestReceived = false;
@@ -332,11 +332,6 @@ export class YjsSync {
 
     if (this.bindings.has(fileKey)) {
       this.log(`bind skipped: already bound (${fileKey})`);
-      // Ensure we still have up‑to‑date activity for already bound files
-      if (!this.loggedInitialFiles.has(fileKey)) {
-        this.loggedInitialFiles.add(fileKey);
-        this.scheduleActivityUpdate(fileKey, document);
-      }
       this.markFileDirty(fileKey);
       this.scheduleReconcile(fileKey);
       return;
@@ -410,11 +405,6 @@ export class YjsSync {
     this.bindings.set(fileKey, { documentChangeDisposable });
 
     this.markFileDirty(fileKey);
-    // Record initial activity for newly bound file if not already done
-    if (!this.loggedInitialFiles.has(fileKey)) {
-      this.loggedInitialFiles.add(fileKey);
-      this.scheduleActivityUpdate(fileKey, document);
-    }
     this.scheduleReconcile(fileKey);
   }
 
@@ -831,7 +821,9 @@ export class YjsSync {
     this.wsManager.send(payload);
   }
 
-  private async handleWorkspaceManifestRequest(data: Uint8Array): Promise<void> {
+  private async handleWorkspaceManifestRequest(
+    data: Uint8Array,
+  ): Promise<void> {
     const request = decodeWorkspaceManifestRequest(data);
     if (!request) {
       this.log("workspace manifest request ignored: invalid payload");
@@ -906,7 +898,9 @@ export class YjsSync {
 
     const targetUri = this.resolveWorkspacePath(rootUri, request.path);
     if (!targetUri) {
-      this.log(`file bootstrap request ignored: invalid path (${request.path})`);
+      this.log(
+        `file bootstrap request ignored: invalid path (${request.path})`,
+      );
       return;
     }
 
@@ -974,7 +968,9 @@ export class YjsSync {
 
     const targetUri = this.resolveWorkspacePath(rootUri, response.path);
     if (!targetUri) {
-      this.log(`file bootstrap response ignored: invalid path (${response.path})`);
+      this.log(
+        `file bootstrap response ignored: invalid path (${response.path})`,
+      );
       await this.maybeOfferOpenHydratedProject();
       return;
     }
@@ -1132,7 +1128,9 @@ export class YjsSync {
   ): Promise<void> {
     const rootUri = this.getMaterializationRoot();
     if (!rootUri) {
-      this.log("workspace manifest materialization skipped: no materialization root");
+      this.log(
+        "workspace manifest materialization skipped: no materialization root",
+      );
       return;
     }
 

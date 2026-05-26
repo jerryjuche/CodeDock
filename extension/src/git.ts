@@ -4,7 +4,10 @@ import * as path from "path";
 import * as vscode from "vscode";
 
 export class GitError extends Error {
-  constructor(message: string, public readonly code?: number) {
+  constructor(
+    message: string,
+    public readonly code?: number,
+  ) {
     super(message);
     this.name = "GitError";
   }
@@ -27,6 +30,30 @@ function toHttpsUrl(url: string): string {
   return url;
 }
 
+function isValidRepositoryUrl(repoUrl: string): boolean {
+  const url = repoUrl.trim();
+  if (url === "") {
+    return false;
+  }
+
+  if (/^git@github\.com:[^/]+\/.+(\.git)?$/.test(url)) {
+    return true;
+  }
+
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:") {
+      return false;
+    }
+
+    return (
+      parsed.hostname === "github.com" || parsed.hostname === "www.github.com"
+    );
+  } catch {
+    return false;
+  }
+}
+
 async function runGitCommand(
   args: string[],
   cwd: string,
@@ -37,10 +64,12 @@ async function runGitCommand(
 
     const child = spawn("git", args, {
       cwd,
+      shell: false,
       env: {
         ...process.env,
         GIT_TERMINAL_PROMPT: "0",
-        GIT_SSH_COMMAND: "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new",
+        GIT_SSH_COMMAND:
+          "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new",
       },
     });
 
@@ -65,7 +94,9 @@ async function runGitCommand(
       if (code === 0) {
         resolve();
       } else {
-        reject(new GitError(`git ${args[0]} failed: ${stderr}`, code ?? undefined));
+        reject(
+          new GitError(`git ${args[0]} failed: ${stderr}`, code ?? undefined),
+        );
       }
     });
   });
@@ -80,6 +111,7 @@ async function getGitRemoteOrigin(
 
     const child = spawn("git", ["remote", "get-url", "origin"], {
       cwd,
+      shell: false,
     });
 
     let stdout = "";
@@ -101,7 +133,12 @@ async function getGitRemoteOrigin(
       if (code === 0) {
         resolve(stdout.trim());
       } else {
-        reject(new GitError(`git remote get-url failed: ${stderr}`, code ?? undefined));
+        reject(
+          new GitError(
+            `git remote get-url failed: ${stderr}`,
+            code ?? undefined,
+          ),
+        );
       }
     });
   });
@@ -113,7 +150,12 @@ export async function ensureGitRepo(
   targetPath: string,
   outputChannel: vscode.OutputChannel,
 ): Promise<void> {
-  const safeRepoUrl = toHttpsUrl(repoUrl);
+  const sanitizedRepoUrl = repoUrl.trim();
+  if (!isValidRepositoryUrl(sanitizedRepoUrl)) {
+    throw new GitError(`Unsupported repository URL: ${repoUrl}`);
+  }
+
+  const safeRepoUrl = toHttpsUrl(sanitizedRepoUrl);
   const gitDir = path.join(targetPath, ".git");
 
   let isRepo = false;

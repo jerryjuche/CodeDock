@@ -11,122 +11,72 @@ export interface DiffLine {
   newLineNumber?: number;
 }
 
-/**
- * Computes Longest Common Subsequence using dynamic programming
- * Returns indices of matching lines in both old and new code
- */
-function computeLCS(
-  oldLines: string[],
-  newLines: string[],
-): Array<[number, number]> {
-  const m = oldLines.length;
-  const n = newLines.length;
+import { getDiffStrategy, getFileExtension } from "@/lib/diff/diff-strategy";
+import { DiffResult } from "@/lib/diff/compute-diff";
 
-  // DP table: dp[i][j] = length of LCS of oldLines[0..i-1] and newLines[0..j-1]
-  const dp: number[][] = Array(m + 1)
-    .fill(null)
-    .map(() => Array(n + 1).fill(0));
+export function computeDiff(
+  oldCode: string,
+  newCode: string,
+  filePath: string,
+): DiffLine[] {
+  const extension = getFileExtension(filePath);
+  const chunks: DiffResult[] = getDiffStrategy(extension)(oldCode, newCode);
+  const lines: DiffLine[] = [];
 
-  // Fill DP table
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      if (oldLines[i - 1] === newLines[j - 1]) {
-        dp[i][j] = dp[i - 1][j - 1] + 1;
-      } else {
-        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
-      }
-    }
-  }
+  let oldLine = 1;
+  let newLine = 1;
 
-  // Backtrack to find actual matching pairs
-  const matches: Array<[number, number]> = [];
-  let i = m,
-    j = n;
-  while (i > 0 && j > 0) {
-    if (oldLines[i - 1] === newLines[j - 1]) {
-      matches.unshift([i - 1, j - 1]);
-      i--;
-      j--;
-    } else if (dp[i - 1][j] > dp[i][j - 1]) {
-      i--;
-    } else {
-      j--;
-    }
-  }
+  for (const chunk of chunks) {
+    const kind = chunk.type;
 
-  return matches;
-}
-
-export function computeDiff(oldCode: string, newCode: string): DiffLine[] {
-  const oldLines = oldCode.split("\n");
-  const newLines = newCode.split("\n");
-  const diff: DiffLine[] = [];
-
-  // Find matching lines using LCS
-  const matches = computeLCS(oldLines, newLines);
-  const matchedOldIndices = new Set(matches.map(([oi]) => oi));
-  const matchedNewIndices = new Set(matches.map(([, ni]) => ni));
-
-  let oldIdx = 0;
-  let newIdx = 0;
-  let matchIdx = 0;
-
-  // Merge deletions, unchanged, and additions in order
-  while (oldIdx < oldLines.length || newIdx < newLines.length) {
-    const nextMatch = matches[matchIdx];
-
-    // Process all deletions before next match
-    while (oldIdx < oldLines.length && (!nextMatch || oldIdx < nextMatch[0])) {
-      if (!matchedOldIndices.has(oldIdx)) {
-        diff.push({
-          type: "deletion",
-          content: oldLines[oldIdx],
-          oldLineNumber: oldIdx + 1,
-        });
-      }
-      oldIdx++;
-    }
-
-    // Process all additions before next match
-    while (newIdx < newLines.length && (!nextMatch || newIdx < nextMatch[1])) {
-      if (!matchedNewIndices.has(newIdx)) {
-        diff.push({
+    for (const rawLine of chunk.lines) {
+      if (kind === "add") {
+        lines.push({
           type: "addition",
-          content: newLines[newIdx],
-          newLineNumber: newIdx + 1,
+          content: rawLine,
+          newLineNumber: newLine,
         });
+        newLine++;
+      } else if (kind === "remove") {
+        lines.push({
+          type: "deletion",
+          content: rawLine,
+          oldLineNumber: oldLine,
+        });
+        oldLine++;
+      } else {
+        lines.push({
+          type: "unchanged",
+          content: rawLine,
+          oldLineNumber: oldLine,
+          newLineNumber: newLine,
+        });
+        oldLine++;
+        newLine++;
       }
-      newIdx++;
-    }
-
-    // Add the matched line as unchanged
-    if (nextMatch && oldIdx === nextMatch[0] && newIdx === nextMatch[1]) {
-      diff.push({
-        type: "unchanged",
-        content: oldLines[oldIdx],
-        oldLineNumber: oldIdx + 1,
-        newLineNumber: newIdx + 1,
-      });
-      oldIdx++;
-      newIdx++;
-      matchIdx++;
     }
   }
 
-  return diff;
+  return lines;
 }
 
 interface DiffViewProps {
+  filePath: string;
   oldCode: string;
   newCode: string;
   language: string;
 }
 
-export function DiffView({ oldCode, newCode, language }: DiffViewProps) {
-  const diff = computeDiff(oldCode, newCode);
+export function DiffView({
+  filePath,
+  oldCode,
+  newCode,
+  language,
+}: DiffViewProps) {
+  const diff = computeDiff(oldCode, newCode, filePath);
 
   return (
-    <div className="font-mono text-[13px] leading-6 bg-[#0d1117] overflow-x-auto rounded-xl border border-white/[0.06]">
+    <div className="font-mono text-[13px] leading-6 bg-slate-950 overflow-x-auto rounded-3xl border border-slate-800/70">
       {diff.map((line, idx) => {
         const isAddition = line.type === "addition";
         const isDeletion = line.type === "deletion";
@@ -143,8 +93,8 @@ export function DiffView({ oldCode, newCode, language }: DiffViewProps) {
             }`}
           >
             {/* Line Numbers */}
-            <div className="flex flex-shrink-0 select-none border-r border-white/[0.05] bg-white/[0.02] text-right text-[8px] text-slate-500 w-[50px]">
-              <div className="w-[25px] px-1 py-0.5 border-r border-white/[0.03]">
+            <div className="flex flex-shrink-0 select-none border-r border-slate-800/70 bg-slate-900/70 text-right text-[8px] text-slate-500 w-[50px]">
+              <div className="w-[25px] px-1 py-0.5 border-r border-slate-800/60">
                 {line.oldLineNumber || ""}
               </div>
               <div className="w-[25px] px-1 py-0.5">

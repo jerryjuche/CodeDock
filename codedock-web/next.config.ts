@@ -19,6 +19,9 @@ const nextConfig: NextConfig = {
   // Compression
   compress: true,
 
+  // Turbopack config (Next.js 16 default)
+  turbopack: {},
+
   // Bundle analysis
   webpack: (config, { dev }) => {
     if (!dev) {
