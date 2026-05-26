@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import Link from "next/link";
 import { DiffView } from "@/components/ui/diff-view";
 import { getDiffStrategy, getFileExtension } from "@/lib/diff/diff-strategy";
@@ -45,6 +45,16 @@ export default function CodeReviewPageClient({
   const { activities, loading } = useRoomActivities(roomId);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const fileParam = params.get("file");
+      if (fileParam) {
+        setSelectedFile(fileParam);
+      }
+    }
+  }, []);
 
   const memberActivities = useMemo(() => {
     return activities
@@ -105,18 +115,9 @@ export default function CodeReviewPageClient({
     });
 
     return Array.from(groups.values())
-      .filter((group) => {
+      .map((group) => {
         if (!group.hasCode) {
-          return false;
-        }
-
-        if (
-          typeof group.earliestCode !== "string" ||
-          typeof group.latestCode !== "string"
-        ) {
-          throw new Error(
-            `computeDiff received non-string inputs for file ${group.file}`,
-          );
+          return { ...group, added: 0, removed: 0, hasDiffs: false };
         }
 
         const extension = getFileExtension(group.file);
@@ -124,8 +125,22 @@ export default function CodeReviewPageClient({
           group.earliestCode,
           group.latestCode,
         );
-        return chunks.some((chunk) => chunk.type !== "context");
+        
+        const added = chunks
+          .filter((c) => c.type === "add")
+          .reduce((s, c) => s + c.lines.length, 0);
+        const removed = chunks
+          .filter((c) => c.type === "remove")
+          .reduce((s, c) => s + c.lines.length, 0);
+
+        return {
+          ...group,
+          added,
+          removed,
+          hasDiffs: added > 0 || removed > 0,
+        };
       })
+      .filter((group) => group.hasDiffs)
       .sort(
         (a, b) =>
           new Date(b.lastTimestamp).getTime() -
@@ -227,16 +242,21 @@ export default function CodeReviewPageClient({
                     <button
                       key={group.file}
                       onClick={() => setSelectedFile(group.file)}
-                      className={`flex w-full items-start gap-3 rounded-md px-3 py-2 text-sm transition-colors ${isActive ? "bg-slate-800/80 text-white font-medium" : "text-slate-300 hover:bg-slate-900/70"}`}
+                      className={`flex w-full items-center justify-between gap-3 rounded-md px-3 py-2 text-left text-sm transition-colors ${isActive ? "bg-slate-800/80 text-white font-medium animate-in fade-in duration-100" : "text-slate-300 hover:bg-slate-900/70"}`}
                       aria-current={isActive ? "true" : undefined}
                     >
-                      <FileText className="h-4 w-4 flex-shrink-0 text-slate-400 mt-1" />
-                      <div className="min-w-0">
-                        <div className="truncate">{group.file}</div>
-                        <div className="text-[12px] text-slate-500">
-                          {group.snapshots.length} variants •{" "}
-                          {formatTimestamp(group.lastTimestamp)}
+                      <div className="flex items-start gap-3 min-w-0">
+                        <FileText className="h-4 w-4 flex-shrink-0 text-slate-400 mt-0.5" />
+                        <div className="min-w-0">
+                          <div className="truncate font-semibold">{group.file}</div>
+                          <div className="text-[10px] text-slate-500 font-medium uppercase mt-0.5 tracking-wider">
+                            {formatTimestamp(group.lastTimestamp)}
+                          </div>
                         </div>
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-shrink-0 text-[10px] font-extrabold font-mono ml-2">
+                        {group.added > 0 && <span className="text-emerald-400">+{group.added}</span>}
+                        {group.removed > 0 && <span className="text-rose-400">-{group.removed}</span>}
                       </div>
                     </button>
                   );

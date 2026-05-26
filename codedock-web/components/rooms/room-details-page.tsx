@@ -182,6 +182,7 @@ export default function RoomDetailsPageClient({ roomId }: { roomId: string }) {
               presence={presence}
               loading={presenceLoading}
               error={presenceError}
+              activities={activities}
               onRetry={reloadPresence}
               onMemberClick={(member) => {
                 setSelectedMember(member);

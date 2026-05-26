@@ -178,8 +178,14 @@ function blocksAreIdentical(oldBlock: CssBlock, newBlock: CssBlock): boolean {
   return oldBlock.lines.join("\n") === newBlock.lines.join("\n");
 }
 
+const warnedParseIssues = new Set<string>();
+
 function warnParseIssue(extension: string, error: unknown): void {
-  if (process.env.NODE_ENV !== "production") {
+  if (
+    process.env.NODE_ENV !== "production" &&
+    !warnedParseIssues.has(extension)
+  ) {
+    warnedParseIssues.add(extension);
     console.warn(
       `CSS diff parser failed for ${extension}, falling back to line diff.`,
       error,
