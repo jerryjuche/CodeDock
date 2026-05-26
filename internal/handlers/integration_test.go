@@ -923,12 +923,13 @@ func TestGetRoomDetails_ReturnsMembershipAndSourceState(t *testing.T) {
 			Role string `json:"role"`
 		} `json:"membership"`
 		SourceState struct {
-			Type      string `json:"type"`
-			Ready     bool   `json:"ready"`
-			Status    string `json:"status"`
-			RepoOwner string `json:"repo_owner"`
-			RepoName  string `json:"repo_name"`
-			Branch    string `json:"branch"`
+			Type          string `json:"type"`
+			Ready         bool   `json:"ready"`
+			Status        string `json:"status"`
+			LaunchAllowed bool   `json:"launch_allowed"`
+			RepoOwner     string `json:"repo_owner"`
+			RepoName      string `json:"repo_name"`
+			Branch        string `json:"branch"`
 		} `json:"source_state"`
 	}
 	decodeJSON(t, detailsResp, &details)
@@ -942,8 +943,16 @@ func TestGetRoomDetails_ReturnsMembershipAndSourceState(t *testing.T) {
 	if details.SourceState.Type != services.SourceTypeGitHubRepo {
 		t.Fatalf("expected source_state type %q, got %q", services.SourceTypeGitHubRepo, details.SourceState.Type)
 	}
-	if !details.SourceState.Ready {
-		t.Fatal("expected github source_state ready=true")
+	if details.SourceState.Ready {
+		t.Fatal("expected github source_state ready=false before host hydration")
+	}
+	if details.SourceState.Status != "waiting_for_host_workspace" {
+		t.Fatalf("expected status waiting_for_host_workspace, got %q", details.SourceState.Status)
+	}
+	if !details.SourceState.LaunchAllowed {
+		// launchAllowed should remain false until the host hydrates the repository workspace.
+	} else {
+		t.Fatal("expected launch_allowed=false before host hydration")
 	}
 	if details.SourceState.RepoOwner != "jerryjuche" {
 		t.Fatalf("expected repo_owner jerryjuche, got %q", details.SourceState.RepoOwner)
@@ -953,6 +962,95 @@ func TestGetRoomDetails_ReturnsMembershipAndSourceState(t *testing.T) {
 	}
 	if details.SourceState.Branch != "staging" {
 		t.Fatalf("expected branch staging, got %q", details.SourceState.Branch)
+	}
+}
+
+func TestGetRoomDetails_GitHubRepoRequiresHostHydrationBeforeReady(t *testing.T) {
+	app := setupTestApp(t)
+	resetTestDB(t, app.db)
+
+	host := mustRegisterUser(t, app, "github-hydration-host")
+	guest := mustRegisterUser(t, app, "github-hydration-guest")
+
+	createResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms", map[string]any{
+		"name":        "Repo Room",
+		"source_type": "github_repo",
+		"source_metadata": map[string]any{
+			"repo_owner": "jerryjuche",
+			"repo_name":  "CodeDock",
+			"branch":     "main",
+		},
+	}, host.Token)
+	assertStatus(t, createResp, http.StatusCreated)
+
+	var room roomJSON
+	decodeJSON(t, createResp, &room)
+
+	joinResp := performJSONRequest(t, app.mux, http.MethodPost, "/join-code/resolve", map[string]any{
+		"code": room.PrimaryJoinCode,
+	}, guest.Token)
+	assertStatus(t, joinResp, http.StatusOK)
+
+	// Activate the room, but do not hydrate/bind it yet.
+	toggleResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms/"+room.ID+"/activation/toggle", nil, host.Token)
+	assertStatus(t, toggleResp, http.StatusOK)
+
+	detailsResp := performJSONRequest(t, app.mux, http.MethodGet, "/rooms/"+room.ID+"/details", nil, guest.Token)
+	assertStatus(t, detailsResp, http.StatusOK)
+
+	var details struct {
+		SourceState struct {
+			Type          string `json:"type"`
+			Ready         bool   `json:"ready"`
+			Status        string `json:"status"`
+			LaunchAllowed bool   `json:"launch_allowed"`
+			LaunchReason  string `json:"launch_reason"`
+		} `json:"source_state"`
+	}
+	decodeJSON(t, detailsResp, &details)
+
+	if details.SourceState.Type != services.SourceTypeGitHubRepo {
+		t.Fatalf("expected source_state type %q, got %q", services.SourceTypeGitHubRepo, details.SourceState.Type)
+	}
+	if details.SourceState.Ready {
+		t.Fatal("expected github source_state ready=false before host hydration")
+	}
+	if details.SourceState.LaunchAllowed {
+		t.Fatal("expected launch_allowed=false before host hydration")
+	}
+	if details.SourceState.Status != "waiting_for_host_workspace" {
+		t.Fatalf("expected status waiting_for_host_workspace, got %q", details.SourceState.Status)
+	}
+	if details.SourceState.LaunchReason == "" {
+		t.Fatal("expected a launch reason when waiting for host hydration")
+	}
+
+	bindResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms/"+room.ID+"/source/local/bind", map[string]any{
+		"workspace_label": "github-repo",
+	}, host.Token)
+	assertStatus(t, bindResp, http.StatusOK)
+
+	var boundDetails struct {
+		SourceState struct {
+			Ready         bool   `json:"ready"`
+			HostBound     bool   `json:"host_bound"`
+			Status        string `json:"status"`
+			LaunchAllowed bool   `json:"launch_allowed"`
+		} `json:"source_state"`
+	}
+	decodeJSON(t, bindResp, &boundDetails)
+
+	if !boundDetails.SourceState.Ready {
+		t.Fatal("expected github source_state ready=true after host hydration")
+	}
+	if !boundDetails.SourceState.HostBound {
+		t.Fatal("expected host_bound=true after host hydration")
+	}
+	if boundDetails.SourceState.Status != "ready" {
+		t.Fatalf("expected status=ready after host hydration, got %q", boundDetails.SourceState.Status)
+	}
+	if !boundDetails.SourceState.LaunchAllowed {
+		t.Fatal("expected launch_allowed=true after host hydration")
 	}
 }
 
@@ -1131,5 +1229,39 @@ func TestBindLocalWorkspace_UpdatesSourceState(t *testing.T) {
 	}
 	if boundDetails.SourceState.WorkspaceLabel != "my-project" {
 		t.Fatalf("expected workspace_label=my-project, got %q", boundDetails.SourceState.WorkspaceLabel)
+	}
+}
+
+func TestCreateLocalWorkspaceRoom_IsNotActivatedUntilHostBind(t *testing.T) {
+	app := setupTestApp(t)
+	resetTestDB(t, app.db)
+
+	host := mustRegisterUser(t, app, "host-activation-check")
+
+	createResp := performJSONRequest(t, app.mux, http.MethodPost, "/rooms", map[string]any{
+		"name":        "Host Activation Room",
+		"source_type": "local_workspace",
+	}, host.Token)
+	assertStatus(t, createResp, http.StatusCreated)
+
+	var room roomJSON
+	decodeJSON(t, createResp, &room)
+
+	detailsResp := performJSONRequest(t, app.mux, http.MethodGet, "/rooms/"+room.ID+"/details", nil, host.Token)
+	assertStatus(t, detailsResp, http.StatusOK)
+
+	var details struct {
+		SourceState struct {
+			Activated bool   `json:"activated"`
+			Status    string `json:"status"`
+		} `json:"source_state"`
+	}
+	decodeJSON(t, detailsResp, &details)
+
+	if details.SourceState.Activated {
+		t.Fatal("expected local workspace room to be not activated before host bind")
+	}
+	if details.SourceState.Status != "waiting_for_host_workspace" {
+		t.Fatalf("expected status waiting_for_host_workspace, got %q", details.SourceState.Status)
 	}
 }

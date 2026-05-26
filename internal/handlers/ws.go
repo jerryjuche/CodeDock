@@ -3,6 +3,7 @@ package handlers
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/gorilla/websocket"
 	"github.com/jerryjuche/CodeDock/internal/auth"
@@ -43,6 +44,20 @@ type RoomAccessChecker interface {
 //  4. Register client with Hub
 //  5. Launch readPump and writePump goroutines
 
+func getBearerToken(r *http.Request) string {
+	authHeader := strings.TrimSpace(r.Header.Get("Authorization"))
+	if authHeader == "" {
+		return ""
+	}
+
+	parts := strings.SplitN(authHeader, " ", 2)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+		return ""
+	}
+
+	return strings.TrimSpace(parts[1])
+}
+
 func ServeWS(h *hub.Hub, access RoomAccessChecker, allowedOrigins []string) http.HandlerFunc {
 	allowed := make(map[string]struct{}, len(allowedOrigins))
 	for _, origin := range allowedOrigins {
@@ -50,9 +65,23 @@ func ServeWS(h *hub.Hub, access RoomAccessChecker, allowedOrigins []string) http
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
-		tokenStr := r.URL.Query().Get("token")
+		origin := strings.TrimSpace(r.Header.Get("Origin"))
+		clientType := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("client")))
+
+		tokenStr := getBearerToken(r)
+		tokenFromQuery := false
+		if tokenStr == "" {
+			tokenStr = strings.TrimSpace(r.URL.Query().Get("token"))
+			tokenFromQuery = tokenStr != ""
+		}
+
 		if tokenStr == "" {
 			http.Error(w, "missing token", http.StatusUnauthorized)
+			return
+		}
+
+		if tokenFromQuery && origin != "" && clientType != "vscode" && clientType != "antigravity" && clientType != "extension" {
+			http.Error(w, "invalid token transport", http.StatusUnauthorized)
 			return
 		}
 
@@ -79,10 +108,9 @@ func ServeWS(h *hub.Hub, access RoomAccessChecker, allowedOrigins []string) http
 
 		u := upgrader
 		u.CheckOrigin = func(r *http.Request) bool {
-			origin := r.Header.Get("Origin")
+			origin := strings.TrimSpace(r.Header.Get("Origin"))
 			if origin == "" {
-				// Allow non-browser clients (like the VS Code extension) which don't send Origin
-				return true
+				return tokenFromQuery && (clientType == "vscode" || clientType == "antigravity" || clientType == "extension")
 			}
 			_, ok := allowed[origin]
 			return ok
@@ -92,8 +120,6 @@ func ServeWS(h *hub.Hub, access RoomAccessChecker, allowedOrigins []string) http
 		if err != nil {
 			return
 		}
-
-		clientType := r.URL.Query().Get("client")
 
 		client := &hub.Client{
 			Conn:       conn,

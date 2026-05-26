@@ -44,7 +44,9 @@ export default function CreateRoomForm() {
         const match = repoUrl.trim().match(githubRegex);
 
         if (!match) {
-          throw new Error("Invalid GitHub repository URL. Please use the format: https://github.com/owner/repo");
+          throw new Error(
+            "Invalid GitHub repository URL. Please use the format: https://github.com/owner/repo",
+          );
         }
 
         sourceMetadata = {
@@ -57,14 +59,19 @@ export default function CreateRoomForm() {
       const payload = {
         name,
         source_type: sourceType,
-        source_metadata: sourceType === "github_repo" ? sourceMetadata : undefined,
+        source_metadata:
+          sourceType === "github_repo" ? sourceMetadata : undefined,
       };
 
       const room = await createRoom(token, payload);
       router.push(`/rooms/${room.id}`);
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create room. Please try again.");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Failed to create room. Please try again.",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -130,10 +137,16 @@ export default function CreateRoomForm() {
                 onChange={(e) => setBranch(e.target.value)}
               />
             </div>
+
+            <div className="rounded-[14px] border border-white/8 bg-white/[0.03] p-4 text-sm text-[rgb(158,183,211)]">
+              The host must hydrate the GitHub repository workspace in VS Code
+              before guests can open the room.
+            </div>
           </div>
         ) : (
           <div className="rounded-[14px] border border-white/8 bg-white/[0.03] p-4 text-sm text-[rgb(158,183,211)]">
-            The host will bind a local project folder later from VS Code before guests can launch the room.
+            The host will bind a local project folder later from VS Code before
+            guests can launch the room.
           </div>
         )}
 

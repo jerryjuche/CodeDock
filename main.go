@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 
+	"time"
+
 	sentryhttp "github.com/getsentry/sentry-go/http"
 	"github.com/jerryjuche/CodeDock/internal/auth"
 	"github.com/jerryjuche/CodeDock/internal/handlers"
@@ -16,7 +18,6 @@ import (
 	"github.com/jerryjuche/CodeDock/internal/observability"
 	"github.com/jerryjuche/CodeDock/internal/services"
 	"github.com/joho/godotenv"
-	"time"
 	_ "github.com/lib/pq"
 )
 
@@ -24,6 +25,8 @@ func main() {
 	if err := godotenv.Overload(); err != nil {
 		log.Println("no .env file found, reading from system environment")
 	}
+
+	requireEnv("JWT_SECRET")
 
 	flushSentry := observability.InitSentry()
 	defer flushSentry()
@@ -77,7 +80,7 @@ func main() {
 
 	// Room routes
 	mux.Handle("/rooms", auth.RequireAuth(http.HandlerFunc(roomHandler.RoomsRouter)))
-	
+
 	// Use more explicit patterns to ensure no conflicts
 	mux.Handle("/rooms/{roomId}", auth.RequireAuth(http.HandlerFunc(roomHandler.RoomSpecificRouter)))
 	mux.Handle("/rooms/{roomId}/details", auth.RequireAuth(http.HandlerFunc(roomHandler.GetRoomDetails)))
@@ -124,15 +127,16 @@ func main() {
 }
 
 func connectDB() (*sql.DB, error) {
-	host := os.Getenv("DB_HOST")
-	port := os.Getenv("DB_PORT")
-	user := os.Getenv("DB_USER")
-	password := os.Getenv("DB_PASSWORD")
-	dbname := os.Getenv("DB_NAME")
-	sslmode := os.Getenv("DB_SSLMODE")
+	host := requireEnv("DB_HOST")
+	port := requireEnv("DB_PORT")
+	user := requireEnv("DB_USER")
+	password := requireEnv("DB_PASSWORD")
+	dbname := requireEnv("DB_NAME")
+	sslmode := strings.TrimSpace(os.Getenv("DB_SSLMODE"))
 
 	if sslmode == "" {
 		sslmode = "disable"
+		log.Println("DB_SSLMODE not set; defaulting to disable for local development")
 	}
 
 	connStr := fmt.Sprintf(
@@ -171,9 +175,16 @@ func getAllowedOrigins() []string {
 
 	for _, part := range parts {
 		value := strings.TrimSpace(part)
-		if value != "" {
-			out = append(out, value)
+		if value == "" {
+			continue
 		}
+		if strings.Contains(value, "*") {
+			log.Fatalf("WEB_ALLOWED_ORIGINS must not contain wildcard origins: %s", value)
+		}
+		if !strings.HasPrefix(value, "http://") && !strings.HasPrefix(value, "https://") {
+			log.Fatalf("WEB_ALLOWED_ORIGINS entries must use http or https: %s", value)
+		}
+		out = append(out, value)
 	}
 
 	if len(out) == 0 {
@@ -184,6 +195,14 @@ func getAllowedOrigins() []string {
 	}
 
 	return out
+}
+
+func requireEnv(name string) string {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		log.Fatalf("%s environment variable is required", name)
+	}
+	return value
 }
 
 func withCORS(next http.Handler, allowedOrigins []string) http.Handler {

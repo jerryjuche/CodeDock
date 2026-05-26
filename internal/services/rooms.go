@@ -634,14 +634,8 @@ func buildRoomSourceState(room *Room, role string, connectedUserIDs map[string]b
 		state.RepoName = meta.RepoName
 		state.Branch = meta.Branch
 
-		// For GitHub rooms, valid repo metadata is enough to allow launch.
-		//
-		// The actual clone happens later in the VS Code extension, but the
-		// control plane can safely mark the source as ready because the room has
-		// all information required for the extension to clone deterministically.
 		hasRepoMetadata := meta.RepoOwner != "" && meta.RepoName != ""
-
-		state.HostBound = meta.Ready || meta.CloneReady || hasRepoMetadata
+		state.HostBound = meta.Ready || meta.CloneReady
 		state.Ready = state.HostBound
 		state.LaunchAllowed = state.Ready
 
@@ -657,6 +651,14 @@ func buildRoomSourceState(room *Room, role string, connectedUserIDs map[string]b
 			state.HostBound = false
 			state.LaunchAllowed = false
 			state.LaunchReason = "The repository information is missing. The host must configure the GitHub repository."
+			return state
+		}
+
+		if !state.HostBound {
+			state.Status = "waiting_for_host_workspace"
+			state.Ready = false
+			state.LaunchAllowed = false
+			state.LaunchReason = "The host has not hydrated the GitHub repository workspace yet. Please wait for the host to open the repository in VS Code."
 			return state
 		}
 
@@ -690,7 +692,7 @@ func buildRoomSourceState(room *Room, role string, connectedUserIDs map[string]b
 		if meta.Activated != nil {
 			state.Activated = *meta.Activated
 		} else {
-			state.Activated = room.IsActive
+			state.Activated = false
 		}
 
 		if !state.HostBound {
