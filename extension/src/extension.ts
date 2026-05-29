@@ -47,7 +47,7 @@ export async function activate(
   const serverUrl = config.get<string>("serverUrl", "https://codedock.fly.dev");
   const webAppUrl = config.get<string>(
     "webAppUrl",
-    "https://code-dock-beige.vercel.app/",
+    "https://codedockapp.vercel.app/",
   );
 
   const outputChannel = vscode.window.createOutputChannel("CodeDock");
@@ -286,61 +286,48 @@ async function handleLaunchUri(
       );
     }
 
-    const workspaceUri = await ensureManagedWorkspace(
-      launchContext,
-      outputChannel,
-    );
+    // Determine target fs path (guests and git repos have a predefined managed path)
+    let workspaceFsPath = "";
+    const isActuallyHost =
+      launchContext.role !== "editor" || !launchContext.workspace_path_hint;
+
+    if (launchContext.source_type === "github_repo" || !isActuallyHost) {
+      // Validate room_slug to prevent path traversal
+      const slugRegex = /^[a-z0-9-]+$/;
+      if (!slugRegex.test(launchContext.room_slug)) {
+        throw new Error(`Invalid room slug: "${launchContext.room_slug}". Slugs must be alphanumeric and contain no path traversal characters.`);
+      }
+      const baseDir = path.join(os.homedir(), ".codedock", "rooms");
+      workspaceFsPath = path.join(baseDir, launchContext.room_slug);
+    }
+
     const pending: PendingLaunchContext = {
       ...launchContext,
-      workspace_fs_path: workspaceUri.fsPath,
+      workspace_fs_path: workspaceFsPath,
     };
 
     await context.globalState.update(PENDING_LAUNCH_CONTEXT_KEY, pending);
 
     const currentRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 
-    // PROFESSIONAL DEBUGGING: Log full context
     outputChannel.appendLine(
       `CodeDock: [DEBUG] launch context: ${JSON.stringify(launchContext)}`,
     );
 
-    // Special behavior for host + local_workspace: stay in current window (even if blank) and prompt via resume
-    // We treat ANY role that is not explicitly "editor" AS HOST
-    // ALSO: If it's a local_workspace and there is NO path hint, it's almost certainly a fresh host setup.
-    const isActuallyHost =
-      launchContext.role !== "editor" || !launchContext.workspace_path_hint;
-
-    if (launchContext.source_type === "local_workspace" && isActuallyHost) {
+    if (currentRoot) {
+      // Folder is open, isolate launch by opening a new blank window/workspace
       outputChannel.appendLine(
-        "CodeDock: [LAUNCH] host + local_workspace detected. skipping automatic openFolder to allow manual selection.",
+        "CodeDock: [LAUNCH] Folder is currently open. Opening a new blank workspace window to isolate launch.",
       );
-      outputChannel.appendLine(
-        "IMPORTANT: If you don't see the 'Open Folder' prompt, please RELOAD VS Code to ensure the latest extension build is active.",
-      );
-      await resumePendingLaunch(context, outputChannel);
+      await vscode.commands.executeCommand("workbench.action.newWindow");
       return;
     }
 
-    if (
-      currentRoot &&
-      normalizeFsPath(currentRoot) === normalizeFsPath(workspaceUri.fsPath)
-    ) {
-      outputChannel.appendLine(
-        "CodeDock: launch workspace already open, resuming directly",
-      );
-      await resumePendingLaunch(context, outputChannel);
-      return;
-    }
-
+    // Already in a blank workspace, resume directly
     outputChannel.appendLine(
-      `CodeDock: opening managed workspace (${workspaceUri.fsPath})`,
+      "CodeDock: [LAUNCH] Already in a blank workspace. Resuming directly.",
     );
-
-    await vscode.commands.executeCommand(
-      "vscode.openFolder",
-      workspaceUri,
-      true,
-    );
+    await resumePendingLaunch(context, outputChannel);
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "unknown error";
@@ -374,26 +361,87 @@ async function resumePendingLaunch(
   const currentRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   const isHostLike = pending.role !== "editor";
 
+  // Case 1: No Folder is Open (Blank Workspace Window)
   if (!currentRoot) {
     if (isHostLike && pending.source_type === "local_workspace") {
       outputChannel.appendLine(
-        "CodeDock: host launch pending but no folder open, prompting...",
+        "CodeDock: host launch pending in blank workspace, prompting for folder...",
       );
+      
       const selection = await vscode.window.showInformationMessage(
-        `CodeDock: You are the host of "${pending.room_name}". Please open the project folder you want to share.`,
-        "Open Folder",
+        `CodeDock: You are the host of "${pending.room_name}". Please select the folder you want to share.`,
+        "Select Folder",
+        "Cancel"
       );
-      if (selection === "Open Folder") {
-        await vscode.commands.executeCommand("vscode.openFolder");
+
+      if (selection === "Select Folder") {
+        const selected = await vscode.window.showOpenDialog({
+          canSelectMany: false,
+          canSelectFiles: false,
+          canSelectFolders: true,
+          openLabel: "Share Folder",
+          title: `Select folder to share with room "${pending.room_name}"`,
+        });
+
+        if (selected && selected.length > 0) {
+          const selectedFolderUri = selected[0];
+          pending.workspace_fs_path = selectedFolderUri.fsPath;
+          await context.globalState.update(PENDING_LAUNCH_CONTEXT_KEY, pending);
+
+          outputChannel.appendLine(
+            `CodeDock: Opening selected folder: ${selectedFolderUri.fsPath}`
+          );
+
+          await vscode.commands.executeCommand("vscode.openFolder", selectedFolderUri, {
+            forceReuseWindow: true,
+          });
+        } else {
+          outputChannel.appendLine("CodeDock: Folder selection cancelled by user.");
+          await clearPendingLaunch(context);
+        }
+      } else {
+        outputChannel.appendLine("CodeDock: Launch cancelled by user.");
+        await clearPendingLaunch(context);
       }
     } else {
+      // GitHub repo or Guest of local workspace - we must prepare/clone under progress
       outputChannel.appendLine(
-        "CodeDock: pending launch found but no workspace root is open",
+        `CodeDock: Blank workspace. Initializing managed folder for ${pending.source_type}...`
       );
+
+      try {
+        await vscode.window.withProgress({
+          location: vscode.ProgressLocation.Notification,
+          title: pending.source_type === "github_repo"
+            ? "CodeDock: Cloning GitHub repository..."
+            : "CodeDock: Preparing workspace...",
+          cancellable: false
+        }, async (progress) => {
+          progress.report({ message: "Cloning files and setting up configurations..." });
+          await ensureManagedWorkspace(pending, outputChannel);
+        });
+
+        const workspaceUri = vscode.Uri.file(pending.workspace_fs_path);
+        outputChannel.appendLine(
+          `CodeDock: Opening prepared workspace folder: ${workspaceUri.fsPath}`
+        );
+
+        await vscode.commands.executeCommand("vscode.openFolder", workspaceUri, {
+          forceReuseWindow: true,
+        });
+      } catch (err) {
+        vscode.window.showErrorMessage(
+          `CodeDock: Failed to prepare workspace — ${
+            err instanceof Error ? err.message : "unknown error"
+          }`
+        );
+        await clearPendingLaunch(context);
+      }
     }
     return;
   }
 
+  // Case 2: Folder is Open
   if (
     normalizeFsPath(currentRoot) !== normalizeFsPath(pending.workspace_fs_path)
   ) {
@@ -408,7 +456,9 @@ async function resumePendingLaunch(
       );
       if (selection === "Yes, Share Folder") {
         pending.workspace_fs_path = currentRoot;
+        await context.globalState.update(PENDING_LAUNCH_CONTEXT_KEY, pending);
       } else {
+        await clearPendingLaunch(context);
         return;
       }
     } else {

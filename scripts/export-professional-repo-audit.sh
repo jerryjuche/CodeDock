@@ -206,7 +206,7 @@ section "ROUTES / PUBLIC ENDPOINTS"
 section "DEPLOYMENT CONFIG SEARCH"
 (
   cd "$ROOT"
-  grep -R "fly.toml\|Dockerfile\|vercel\|NEXT_PUBLIC\|DATABASE_URL\|WEB_ALLOWED_ORIGINS\|codedock.fly.dev\|code-dock-beige" -n . \
+  grep -R "fly.toml\|Dockerfile\|vercel\|NEXT_PUBLIC\|DATABASE_URL\|WEB_ALLOWED_ORIGINS\|codedock.fly.dev\|codedockapp" -n . \
     --exclude-dir=.git \
     --exclude-dir=node_modules \
     --exclude-dir=.next \
