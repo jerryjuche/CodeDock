@@ -47,7 +47,7 @@ export async function activate(
   const serverUrl = config.get<string>("serverUrl", "https://codedock.fly.dev");
   const webAppUrl = config.get<string>(
     "webAppUrl",
-    "https://code-dock-beige.vercel.app/",
+    "https://codedockapp.vercel.app/",
   );
 
   const outputChannel = vscode.window.createOutputChannel("CodeDock");

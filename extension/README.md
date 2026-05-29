@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://code-dock-beige.vercel.app/brand/codedock-logo.png" alt="CodeDock" width="140" />
+<img src="https://codedockapp.vercel.app/brand/codedock-logo.png" alt="CodeDock" width="140" />
 
 # CodeDock
 
@@ -10,13 +10,13 @@ Create a room from the web, invite your team, and launch straight into a shared 
 
 ---
 
-[🌐 Web App](https://code-dock-beige.vercel.app) &nbsp;·&nbsp; [📦 VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=jerryjuche.codedock) &nbsp;·&nbsp; [💻 GitHub](https://github.com/jerryjuche/CodeDock) &nbsp;·&nbsp; [🐛 Report Issue](https://github.com/jerryjuche/CodeDock/issues)
+[🌐 Web App](https://codedockapp.vercel.app) &nbsp;·&nbsp; [📦 VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=jerryjuche.codedock) &nbsp;·&nbsp; [💻 GitHub](https://github.com/jerryjuche/CodeDock) &nbsp;·&nbsp; [🐛 Report Issue](https://github.com/jerryjuche/CodeDock/issues)
 
 ---
 
 [![Install from Marketplace](https://img.shields.io/badge/Install-VS%20Code%20Marketplace-0078D4?style=for-the-badge&logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=jerryjuche.codedock)
 &nbsp;
-[![Open Web App](https://img.shields.io/badge/Open-Web%20App-000000?style=for-the-badge&logo=vercel&logoColor=white)](https://code-dock-beige.vercel.app)
+[![Open Web App](https://img.shields.io/badge/Open-Web%20App-000000?style=for-the-badge&logo=vercel&logoColor=white)](https://codedockapp.vercel.app)
 &nbsp;
 [![View on GitHub](https://img.shields.io/badge/Source-GitHub-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/jerryjuche/CodeDock)
 
@@ -48,7 +48,7 @@ CodeDock is a **full-stack collaborative coding platform** that replaces ad-hoc 
 >
 > | Resource | URL |
 > |----------|-----|
-> | Web App | [code-dock-beige.vercel.app](https://code-dock-beige.vercel.app) |
+> | Web App | [codedockapp.vercel.app](https://codedockapp.vercel.app) |
 > | VS Code Marketplace | [marketplace.visualstudio.com](https://marketplace.visualstudio.com/items?itemName=jerryjuche.codedock) |
 > | GitHub Repository | [github.com/jerryjuche/CodeDock](https://github.com/jerryjuche/CodeDock) |
 > | Issue Tracker | [github.com/jerryjuche/CodeDock/issues](https://github.com/jerryjuche/CodeDock/issues) |
@@ -67,7 +67,7 @@ CodeDock is a **full-stack collaborative coding platform** that replaces ad-hoc 
 
 ### Host Flow
 
-1. Sign in at [code-dock-beige.vercel.app](https://code-dock-beige.vercel.app)
+1. Sign in at [codedockapp.vercel.app](https://codedockapp.vercel.app)
 2. Create a new room from the dashboard
 3. Configure the source — local workspace or GitHub repository
 4. Share the invite code with your team
@@ -142,7 +142,7 @@ Open VS Code Settings (`Ctrl+,`) and set:
 ```json
 {
   "codedock.serverUrl": "https://codedock.fly.dev",
-  "codedock.webAppUrl": "https://code-dock-beige.vercel.app/"
+  "codedock.webAppUrl": "https://codedockapp.vercel.app/"
 }
 ```
 
@@ -162,7 +162,7 @@ Enter your CodeDock account credentials. Your auth token is securely stored in V
 
 - **Create:** Open a project folder, then run `CodeDock: Create Room`
 - **Join:** Run `CodeDock: Join Room` and enter the room ID or invite code
-- **From the Web:** Use the web control plane at [code-dock-beige.vercel.app](https://code-dock-beige.vercel.app) to create a room and click **Open IDE**
+- **From the Web:** Use the web control plane at [codedockapp.vercel.app](https://codedockapp.vercel.app) to create a room and click **Open IDE**
 
 ---
 
@@ -191,7 +191,7 @@ All commands are available from the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `codedock.serverUrl` | `https://codedock.fly.dev` | Base URL of the CodeDock backend API |
-| `codedock.webAppUrl` | `https://code-dock-beige.vercel.app/` | URL of the CodeDock web control plane |
+| `codedock.webAppUrl` | `https://codedockapp.vercel.app/` | URL of the CodeDock web control plane |
 
 ---
 
@@ -208,7 +208,7 @@ All commands are available from the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift
 
 ## Web Control Plane
 
-The web app at [code-dock-beige.vercel.app](https://code-dock-beige.vercel.app) is the primary management interface:
+The web app at [codedockapp.vercel.app](https://codedockapp.vercel.app) is the primary management interface:
 
 - **Dashboard** — View all your rooms, their activation status, and connected members
 - **Room Details** — Manage source configuration, invites, member presence, and launch controls
@@ -292,6 +292,6 @@ We welcome contributions! Here's how to get started:
 
 **Built with 🚀 by [@jerryjuche](https://github.com/jerryjuche)**
 
-[Web App](https://code-dock-beige.vercel.app) · [Marketplace](https://marketplace.visualstudio.com/items?itemName=jerryjuche.codedock) · [GitHub](https://github.com/jerryjuche/CodeDock) · [Issues](https://github.com/jerryjuche/CodeDock/issues)
+[Web App](https://codedockapp.vercel.app) · [Marketplace](https://marketplace.visualstudio.com/items?itemName=jerryjuche.codedock) · [GitHub](https://github.com/jerryjuche/CodeDock) · [Issues](https://github.com/jerryjuche/CodeDock/issues)
 
 </div>

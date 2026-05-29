@@ -93,7 +93,7 @@
         },
         "codedock.webAppUrl": {
           "type": "string",
-          "default": "https://code-dock-beige.vercel.app/",
+          "default": "https://codedockapp.vercel.app/",
           "description": "URL of the CodeDock web app for the status bar and open web app command",
           "scope": "application"
         }
