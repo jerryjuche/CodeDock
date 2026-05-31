@@ -92,7 +92,17 @@ func main() {
 
 	// Web control-plane routes
 	mux.Handle("/join-code/resolve", authLimiter.Limit(auth.RequireAuth(http.HandlerFunc(inviteHandler.ResolveJoinCode))))
-	mux.Handle("/rooms/{roomId}/invites", auth.RequireAuth(http.HandlerFunc(inviteHandler.ListRoomInvites)))
+	mux.Handle("/rooms/{roomId}/invites", auth.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			inviteHandler.ListRoomInvites(w, r)
+		case http.MethodPost:
+			inviteHandler.CreateRoomInvite(w, r)
+		default:
+			w.Header().Set("Allow", "GET, POST")
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})))
 	mux.Handle("/rooms/{roomId}/invites/{inviteId}/revoke", auth.RequireAuth(http.HandlerFunc(inviteHandler.RevokeRoomInvite)))
 
 	// IDE launch routes
