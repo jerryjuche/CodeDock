@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://code-dock-beige.vercel.app/brand/codedock-logo.png" alt="CodeDock" width="160" />
+<img src="https://codedockapp.vercel.app/brand/codedock-logo.png" alt="CodeDock" width="160" />
 
 # CodeDock
 
@@ -156,7 +156,7 @@ Ends your WebSocket connection and leaves the active session cleanly.
 
 ## Support
 
-- Web App: https://code-dock-beige.vercel.app
+- Web App: https://codedockapp.vercel.app
 - GitHub: https://github.com/jerryjuche/CodeDock
 - Issues: https://github.com/jerryjuche/CodeDock/issues
 - Marketplace: https://marketplace.visualstudio.com/items?itemName=jerryjuche.codedock

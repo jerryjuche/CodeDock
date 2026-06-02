@@ -2,7 +2,7 @@
   "name": "codedock",
   "displayName": "CodeDock",
   "description": "Self-hosted real-time collaborative coding for VS Code",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "publisher": "jerryjuche",
   "license": "MIT",
   "icon": "images/codedock.jpg",
@@ -93,7 +93,7 @@
         },
         "codedock.webAppUrl": {
           "type": "string",
-          "default": "https://code-dock-beige.vercel.app/",
+          "default": "https://codedockapp.vercel.app/",
           "description": "URL of the CodeDock web app for the status bar and open web app command",
           "scope": "application"
         }

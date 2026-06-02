@@ -209,7 +209,9 @@ code --install-extension codedock-*.vsix
 ```
 
 Once installed, configure the extension in VS Code settings:
-- `codedock.serverUrl` — URL of your running CodeDock backend (default: `https://codedock.fly.dev`)
+- `codedock.serverUrl` — URL of your running CodeDock backend server (default: `https://codedock.fly.dev`)
+  - For local development: `http://localhost:8080`
+  - For production: Update to your deployed backend URL
 
 ---
 
@@ -242,7 +244,7 @@ DB_SSLMODE=require
 
 JWT_SECRET=your-long-random-secret-here
 
-WEB_ALLOWED_ORIGINS=https://your-app.vercel.app,https://codedock.example.com
+WEB_ALLOWED_ORIGINS=https://codedockapp.vercel.app
 ```
 
 > **Never commit `.env`** — it is listed in `.gitignore`.
@@ -253,12 +255,12 @@ WEB_ALLOWED_ORIGINS=https://your-app.vercel.app,https://codedock.example.com
 |----------|----------|---------|-------------|
 | `NEXT_PUBLIC_API_BASE_URL` | Yes | `http://localhost:8080` | Base URL of the CodeDock backend API |
 
-**Example `codedock-web/.env.local`:**
+**Example `codedock-web/.env.local` (for local development):**
 ```dotenv
-NEXT_PUBLIC_API_BASE_URL=https://codedock.fly.dev
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8080
 ```
 
-> Set this in your Vercel project settings under **Environment Variables** for production.
+> For production on Vercel, set `NEXT_PUBLIC_API_BASE_URL` to your deployed backend URL in the Vercel project settings under **Environment Variables**.
 
 ---
 
@@ -390,7 +392,7 @@ flyctl secrets set \
   DB_NAME=... \
   DB_SSLMODE=require \
   JWT_SECRET=... \
-  WEB_ALLOWED_ORIGINS=https://your-app.vercel.app
+  WEB_ALLOWED_ORIGINS=https://codedockapp.vercel.app
 
 # View logs
 flyctl logs
@@ -412,7 +414,10 @@ vercel deploy --prod
 Set the following environment variable in your Vercel project dashboard:
 
 ```
-NEXT_PUBLIC_API_BASE_URL = https://codedock.fly.dev
+NEXT_PUBLIC_API_BASE_URL = https://api.codedockapp.vercel.app
+```
+
+(Replace with your actual deployed backend API URL)
 ```
 
 ### CI/CD
