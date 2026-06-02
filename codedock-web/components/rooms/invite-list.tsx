@@ -44,6 +44,15 @@ function InviteStatusChip({ invite }: { invite: RoomInviteToken }) {
     );
   }
 
+  const expired = invite.expires_at ? new Date(invite.expires_at) < new Date() : false;
+  if (expired) {
+    return (
+      <span className="inline-flex items-center rounded-full bg-[rgba(255,90,107,0.12)] px-2.5 py-0.5 text-[11px] font-medium text-[rgb(255,160,170)]">
+        Expired
+      </span>
+    );
+  }
+
   const exhausted =
     invite.max_uses != null && invite.uses_count >= invite.max_uses;
   if (exhausted) {
@@ -120,42 +129,47 @@ export default function InviteList({
             </p>
           </div>
         ) : (
-          invites.map((invite) => (
-            <div
-              key={invite.id}
-              className="flex items-center justify-between gap-4 rounded-xl border border-white/[0.06] bg-white/[0.03] px-4 py-3.5"
-            >
-              <div className="min-w-0">
-                {/* Token code row */}
-                <div className="flex items-center">
-                  <span className="font-mono text-sm font-semibold tracking-[0.14em] text-white">
-                    {invite.code}
-                  </span>
-                  {!invite.is_revoked && <CopyCodeButton code={invite.code} />}
-                </div>
-                {/* Meta row */}
-                <div className="mt-1 flex items-center gap-2 text-[11px] text-[rgb(158,183,211)]">
-                  <InviteStatusChip invite={invite} />
-                  <span>
-                    {invite.uses_count}
-                    {invite.max_uses != null
-                      ? ` / ${invite.max_uses}`
-                      : ""}{" "}
-                    uses
-                  </span>
-                </div>
-              </div>
-
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={invite.is_revoked}
-                onClick={() => void onRevoke(invite.id)}
+          invites.map((invite) => {
+            const expired = invite.expires_at ? new Date(invite.expires_at) < new Date() : false;
+            const deactivated = invite.is_revoked || expired;
+            return (
+              <div
+                key={invite.id}
+                className="flex items-center justify-between gap-4 rounded-xl border border-white/[0.06] bg-white/[0.03] px-4 py-3.5"
+                style={deactivated ? { opacity: 0.5 } : {}}
               >
-                {invite.is_revoked ? "Revoked" : "Revoke"}
-              </Button>
-            </div>
-          ))
+                <div className="min-w-0">
+                  {/* Token code row */}
+                  <div className="flex items-center">
+                    <span className={`font-mono text-sm font-semibold tracking-[0.14em] ${deactivated ? "text-white/40 line-through select-none" : "text-white"}`}>
+                      {invite.code}
+                    </span>
+                    {!deactivated && <CopyCodeButton code={invite.code} />}
+                  </div>
+                  {/* Meta row */}
+                  <div className="mt-1 flex items-center gap-2 text-[11px] text-[rgb(158,183,211)]">
+                    <InviteStatusChip invite={invite} />
+                    <span>
+                      {invite.uses_count}
+                      {invite.max_uses != null
+                        ? ` / ${invite.max_uses}`
+                        : ""}{" "}
+                      uses
+                    </span>
+                  </div>
+                </div>
+
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  disabled={deactivated}
+                  onClick={() => void onRevoke(invite.id)}
+                >
+                  {invite.is_revoked ? "Revoked" : expired ? "Expired" : "Revoke"}
+                </Button>
+              </div>
+            );
+          })
         )}
       </div>
     </Card>

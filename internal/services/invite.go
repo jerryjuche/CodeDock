@@ -50,6 +50,10 @@ func (s *InviteService) ResolveJoinCodeForUser(code string, userID string) (*Joi
 
 	room, err := getRoomByPrimaryCode(tx, normalizedCode)
 	if err == nil {
+		if room.CreatedAt.Add(5 * time.Minute).Before(time.Now()) {
+			return nil, ErrJoinCodeExpired
+		}
+
 		role, joined, err := ensureMembershipForRoom(tx, room, userID)
 		if err != nil {
 			return nil, err
