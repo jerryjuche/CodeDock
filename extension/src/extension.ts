@@ -5,6 +5,7 @@ import * as vscode from "vscode";
 import { EventEmitter } from "events";
 import { AuthManager } from "./auth";
 import { ApiClient, LaunchContext } from "./api";
+import { CodeDockStatusBar } from "./status-bar";
 import { WebSocketManager } from "./websocket";
 import { CursorManager } from "./cursor-manager";
 import { YjsSync } from "./yjs-sync";
@@ -23,23 +24,32 @@ let wsManager: WebSocketManager;
 let yjsSync: YjsSync;
 let cursorManager: CursorManager | undefined;
 let apiClient: ApiClient;
-let statusBarItem: vscode.StatusBarItem | undefined;
 
 function refreshStatusBar(): void {
-  if (!statusBarItem) {
-    return;
+  try {
+    const sb = CodeDockStatusBar.get();
+    const connectionState = wsManager?.getConnectionState?.() ?? "disconnected";
+    const roomId = wsManager?.getRoomId?.();
+    const detail = roomId ? `Room: ${roomId.slice(0, 8)}` : undefined;
+
+    if (connectionState === "connected") {
+      sb.setState("connected", detail);
+    } else if (connectionState === "disconnected" || connectionState === "connecting") {
+      sb.setState(
+        "disconnected",
+        connectionState === "connecting"
+          ? (detail ? `Connecting…\n${detail}` : "Connecting…")
+          : detail,
+      );
+    } else {
+      sb.setState(
+        "issue",
+        detail ? `${connectionState} — ${detail}` : connectionState,
+      );
+    }
+  } catch {
+    // Status bar not initialized yet — ignore.
   }
-
-  const connectionState = wsManager?.getConnectionState?.() ?? "disconnected";
-  const roomId = wsManager?.getRoomId?.();
-  const roomLabel = roomId ? ` • ${roomId.slice(0, 8)}` : "";
-
-  statusBarItem.text = roomId
-    ? `$(rocket) CodeDock ${connectionState}${roomLabel}`
-    : "$(rocket) CodeDock";
-  statusBarItem.tooltip = roomId
-    ? `CodeDock — ${connectionState.toUpperCase()}${roomLabel}\nClick for room and web app actions`
-    : `CodeDock — ${connectionState.toUpperCase()}\nClick for room and web app actions`;
 }
 
 export async function activate(
@@ -62,6 +72,9 @@ export async function activate(
   wsManager = new WebSocketManager(serverUrl, outputChannel);
   cursorManager = new CursorManager(wsManager);
   yjsSync = new YjsSync(wsManager, outputChannel, context.globalState);
+
+  // Initialize the CodeDock status bar singleton — must be after outputChannel
+  CodeDockStatusBar.init(context);
 
   context.subscriptions.push(
     wsManager.onClose((code, reason) => {
@@ -103,16 +116,12 @@ export async function activate(
     refreshStatusBar();
   });
 
-  statusBarItem = vscode.window.createStatusBarItem(
-    vscode.StatusBarAlignment.Right,
-    100,
+  // Mirror WebSocket state changes to the status bar
+  context.subscriptions.push(
+    wsManager.onStateChange((state) => {
+      refreshStatusBar();
+    }),
   );
-  statusBarItem.command = "codedock.showMenu";
-  statusBarItem.text = "$(rocket) CodeDock";
-  statusBarItem.tooltip =
-    "CodeDock — click for session actions and web app access";
-  statusBarItem.show();
-  context.subscriptions.push(statusBarItem);
   refreshStatusBar();
 
   async function showCodeDockMenu(): Promise<void> {
@@ -765,4 +774,9 @@ function normalizeFsPath(fsPath: string): string {
 export function deactivate(): void {
   wsManager?.disconnect("extension_deactivated");
   yjsSync?.dispose();
+  try {
+    CodeDockStatusBar.reset();
+  } catch {
+    // noop
+  }
 }

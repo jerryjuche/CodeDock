@@ -46,12 +46,17 @@ The CodeDock repository is organized as a **monorepo** with three main applicati
 
 - **codedock-web/app/page.tsx** — Landing page with marketing content
 - **codedock-web/app/layout.tsx** — Root layout
+- **codedock-web/app/(app)/dashboard/page.tsx** — Workspace/Room dashboard page
+- **codedock-web/app/(app)/rooms/[roomId]/page.tsx** — Specific Room details page (client-side rendered via room-details-page component)
+- **codedock-web/app/(app)/rooms/[roomId]/review/[userId]/page.tsx** — Standing code review route for specific teammates' edits
+- **codedock-web/app/(app)/activity/page.tsx** — Session activity timeline logs page
+- **codedock-web/app/(app)/join/page.tsx** — Resolving and joining rooms via code
 - **codedock-web/package.json** — Scripts: `dev` (port 3000), `build`, `test`, `lint`
 
 ### Extension
 
-- **extension/src/extension.ts** — Extension activation/deactivation, command registration
-- **extension/package.json** — Defines commands, contributes, VS Code engine requirement (^1.85.0)
+- **extension/src/extension.ts** — Extension activation/deactivation, command registration, VS Code URI scheme callback handlers
+- **extension/package.json** — Defines commands, status bar menu items, contributes settings, engine constraints
 
 ### Test Dashboard
 
@@ -71,6 +76,7 @@ The CodeDock repository is organized as a **monorepo** with three main applicati
 | **LaunchService** | Generate launch tokens for IDE deep-links, exchange for room context |
 | **SnapshotStore** | Persist Yjs document state (CRDT snapshots)                          |
 | **ActivityStore** | Track user activities (edits, joins, leaves) with metadata           |
+| **CreateUser**    | Helper function in `users.go` for database user record insertion & password hashing |
 
 ### Backend Handlers ([internal/handlers/](internal/handlers/))
 
@@ -81,25 +87,29 @@ The CodeDock repository is organized as a **monorepo** with three main applicati
 | **InviteHandler** | `/join-code/resolve`, `/rooms/{roomId}/invites`, `/rooms/{roomId}/invites/{inviteId}/revoke`                                                                |
 | **LaunchHandler** | `/rooms/{roomId}/open-in-vscode`, `/rooms/{roomId}/open-ide`, `/vscode/launch/exchange`                                                                     |
 | **WSHandler**     | `GET /ws` — WebSocket gateway for real-time collaboration                                                                                                   |
+| **HealthHandler** | `GET /health` (liveness), `GET /ready` (readiness with DB connectivity validation)                                                                          |
 
 ### Backend Core Modules ([internal/](internal/))
 
 - **[internal/auth/](internal/auth/)** — JWT middleware (`RequireAuth`), token generation/validation
-- **[internal/hub/](internal/hub/)** — WebSocket connection hub, message relay, CRDT sync coordination
+- **[internal/hub/](internal/hub/)** — WebSocket connection hub, message relay, CRDT sync coordination (`client.go`, `hub.go`, `message.go`)
 - **[internal/middleware/](internal/middleware/)** — Rate limiting, CORS handling
 - **[internal/observability/](internal/observability/)** — Sentry integration, error tracking
 
 ### Frontend Components ([codedock-web/components/](codedock-web/components/))
 
-| Component Group | Purpose                                                |
-| --------------- | ------------------------------------------------------ |
-| **auth/**       | Login/register forms, auth state management            |
-| **dashboard/**  | Room list, room details, invite management UI          |
-| **rooms/**      | Room creation, workspace binding, invite generation    |
-| **layout/**     | Navigation, sidebar, main content wrapper              |
-| **ui/**         | Reusable: buttons, modals, inputs, tables, cards       |
-| **fancy/**      | Advanced UI: text rotation, animations, visual effects |
-| **marketing/**  | Landing page components, feature showcase              |
+| Component Group | Purpose                                                                               |
+| --------------- | ------------------------------------------------------------------------------------- |
+| **auth/**       | Login/register forms, auth state management                                           |
+| **dashboard/**  | Room list, room details, invite management UI                                         |
+| **rooms/**      | Room creation, workspace binding, invite generation, code reviews, status indicators |
+| **layout/**     | Navigation, sidebar, main content wrapper                                             |
+| **ui/**         | Reusable: buttons, modals, inputs, tables, cards, diff views                          |
+| **fancy/**      | Advanced UI: text rotation, animations, visual effects                                |
+| **marketing/**  | Landing page components, feature showcase                                             |
+| **brand/**      | Logo, brand SVG rendering assets                                                      |
+| **backgrounds/**| Complex visual components (e.g. grid patterns, animated particles)                    |
+| **reactbits/**  | Low-level animation & micro-interaction building blocks                               |
 
 ### Frontend Hooks ([codedock-web/hooks/](codedock-web/hooks/))
 
@@ -116,19 +126,23 @@ The CodeDock repository is organized as a **monorepo** with three main applicati
 | `useRoomActivities(roomId)` | Fetch activity log for audit/presence                |
 | `useReviewFiles(roomId)`    | File diff generation and review UI                   |
 | `useRoomDetails(roomId)`    | Room metadata, source workspace info                 |
+| `useErrorHandler()`         | Centralized React error normalization and reporting  |
 
 ### Extension Features ([extension/src/](extension/src/))
 
-| Module                | Purpose                                     |
-| --------------------- | ------------------------------------------- |
-| **auth.ts**           | VS Code credential store, token persistence |
-| **api.ts**            | REST client for backend communication       |
-| **websocket.ts**      | WebSocket connection manager                |
-| **yjs-sync.ts**       | CRDT document synchronization               |
-| **cursor-manager.ts** | Render teammate cursors, track selections   |
-| **chat.ts**           | Integrated chat panel                       |
-| **git.ts**            | Git repo initialization/management          |
-| **protocol.ts**       | Message protocol definitions                |
+| Module                | Purpose                                                                                |
+| --------------------- | -------------------------------------------------------------------------------------- |
+| **auth.ts**           | VS Code credential store, token persistence                                            |
+| **api.ts**            | REST client for backend communication                                                  |
+| **websocket.ts**      | WebSocket connection manager, state transition dispatching                             |
+| **yjs-sync.ts**       | CRDT document synchronization                                                          |
+| **cursor-manager.ts** | Render teammate cursors, track selections                                              |
+| **chat.ts**           | Integrated chat panel                                                                  |
+| **git.ts**            | Git repo initialization/management                                                     |
+| **protocol.ts**       | Message protocol definitions                                                           |
+| **status-bar.ts**     | Native theme-aware status bar connection indicators (connected, disconnected, issue)  |
+| **types.ts**          | Shared type interfaces for communication layers                                        |
+| **utils.ts**          | Helper subroutines and path normalization utilities                                    |
 
 ---
 

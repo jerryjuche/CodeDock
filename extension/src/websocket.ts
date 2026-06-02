@@ -13,13 +13,14 @@ export type ConnectionState =
 
 type MessageHandler = (data: Uint8Array) => void;
 type CloseHandler = (code: number, reason: string) => void;
+type StateChangeHandler = (state: ConnectionState) => void;
 
 const BASE_BACKOFF_MS = 1000;
 const MAX_BACKOFF_MS = 30000;
 
 export class WebSocketManager {
   private socket: WebSocket | null = null;
-  private state: ConnectionState = "disconnected";
+  private _state: ConnectionState = "disconnected";
   private queue: Uint8Array[] = [];
   private reconnectTimer: ReturnType<typeof nodeSetTimeout> | undefined;
   private attemptCount = 0;
@@ -29,11 +30,57 @@ export class WebSocketManager {
 
   private readonly messageHandlers = new Set<MessageHandler>();
   private readonly closeHandlers = new Set<CloseHandler>();
+  private readonly stateChangeHandlers = new Set<StateChangeHandler>();
 
   constructor(
     private readonly serverUrl: string,
     private readonly outputChannel: vscode.OutputChannel,
   ) {}
+
+  public get state(): ConnectionState {
+    return this._state;
+  }
+
+  private set state(value: ConnectionState) {
+    if (this._state === value) {
+      return;
+    }
+    this._state = value;
+    try {
+      this.outputChannel.appendLine(`CodeDock[ws] state -> ${value}`);
+    } catch {
+      // ignore
+    }
+    this.emitStateChange();
+  }
+
+  private emitStateChange(): void {
+    for (const handler of this.stateChangeHandlers) {
+      try {
+        handler(this._state);
+      } catch (error) {
+        this.outputChannel.appendLine(
+          `CodeDock[ws]: state change handler failure -> ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
+      }
+    }
+  }
+
+  onStateChange(handler: StateChangeHandler): vscode.Disposable {
+    this.stateChangeHandlers.add(handler);
+    this.outputChannel.appendLine(
+      `CodeDock[ws]: registered state change handler (total=${this.stateChangeHandlers.size})`,
+    );
+
+    return new vscode.Disposable(() => {
+      this.stateChangeHandlers.delete(handler);
+      this.outputChannel.appendLine(
+        `CodeDock[ws]: removed state change handler (total=${this.stateChangeHandlers.size})`,
+      );
+    });
+  }
 
   onMessage(handler: MessageHandler): vscode.Disposable {
     this.messageHandlers.add(handler);
