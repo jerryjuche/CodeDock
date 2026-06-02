@@ -185,9 +185,6 @@ func (s *InviteService) CreateRoomInviteToken(
 		return nil, err
 	}
 
-	if expiresInHours != nil && *expiresInHours <= 0 {
-		return nil, ErrInviteConfig
-	}
 	if maxUses != nil && *maxUses <= 0 {
 		return nil, ErrInviteConfig
 	}
@@ -198,21 +195,29 @@ func (s *InviteService) CreateRoomInviteToken(
 	}
 	defer tx.Rollback()
 
+	// Revoke any existing active invite tokens for this room first
+	_, err = tx.Exec(`
+		UPDATE room_invite_tokens
+		SET is_revoked = TRUE
+		WHERE room_id = $1 AND is_revoked = FALSE
+	`, roomID)
+	if err != nil {
+		return nil, err
+	}
+
 	code, err := generateUniqueJoinCode(tx)
 	if err != nil {
 		return nil, err
 	}
 
 	var invite RoomInviteToken
-	var expiresAt sql.NullTime
 	var maxUsesValue sql.NullInt64
 
-	if expiresInHours != nil {
-		expiresAt = sql.NullTime{
-			Time:  time.Now().Add(time.Duration(*expiresInHours) * time.Hour),
-			Valid: true,
-		}
+	expiresAt := sql.NullTime{
+		Time:  time.Now().Add(5 * time.Minute),
+		Valid: true,
 	}
+
 	if maxUses != nil {
 		maxUsesValue = sql.NullInt64{
 			Int64: int64(*maxUses),
