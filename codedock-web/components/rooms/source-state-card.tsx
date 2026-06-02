@@ -25,6 +25,8 @@ function readableStatus(state: RoomSourceState) {
       return "Waiting for host workspace";
     case "clone_not_ready":
       return "Repository is not provisioned yet";
+    case "paused":
+      return "Paused / Deactivated";
     default:
       return state.status || "Unknown";
   }
@@ -131,7 +133,7 @@ export default function SourceStateCard({
 
         {/* Confirmed fields from RoomSourceState only */}
         <div className="mt-6 space-y-1 divide-y divide-white/[0.03]">
-          <BoolRow label="Host Workspace" value={sourceState.host_bound} />
+          <BoolRow label="Host Workspace" value={sourceState.host_connected} />
           <BoolRow label="Room Activated" value={sourceState.activated} />
         </div>
 
