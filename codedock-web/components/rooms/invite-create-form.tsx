@@ -101,15 +101,15 @@ export default function InviteCreateForm({
         </div>
 
         <div className="pt-1">
-          <Button type="submit" disabled={submitting} variant="secondary">
-            {submitting ? (
-              <>
-                <Spinner size="sm" className="mr-2" />
-                Creating…
-              </>
-            ) : (
-              "Create invite token"
+          <Button type="submit" disabled={submitting} variant="secondary" className="relative">
+            {submitting && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <Spinner size="sm" />
+              </div>
             )}
+            <span className={`relative z-10 transition-opacity duration-200 ${submitting ? "opacity-0" : "opacity-100"}`}>
+              Create invite token
+            </span>
           </Button>
         </div>
       </form>
