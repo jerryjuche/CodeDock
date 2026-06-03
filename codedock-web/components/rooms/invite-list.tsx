@@ -1,7 +1,7 @@
 // components/rooms/invite-list.tsx
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { RoomInviteToken } from "@/types/invite";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -35,7 +35,7 @@ function CopyCodeButton({ code }: { code: string }) {
   );
 }
 
-function InviteStatusChip({ invite }: { invite: RoomInviteToken }) {
+function InviteStatusChip({ invite, now }: { invite: RoomInviteToken; now: Date }) {
   if (invite.is_revoked) {
     return (
       <span className="inline-flex items-center rounded-full bg-[rgba(255,90,107,0.12)] px-2.5 py-0.5 text-[11px] font-medium text-[rgb(255,160,170)]">
@@ -44,7 +44,7 @@ function InviteStatusChip({ invite }: { invite: RoomInviteToken }) {
     );
   }
 
-  const expired = invite.expires_at ? new Date(invite.expires_at) < new Date() : false;
+  const expired = invite.expires_at ? new Date(invite.expires_at) < now : false;
   if (expired) {
     return (
       <span className="inline-flex items-center rounded-full bg-[rgba(255,90,107,0.12)] px-2.5 py-0.5 text-[11px] font-medium text-[rgb(255,160,170)]">
@@ -84,6 +84,25 @@ export default function InviteList({
   onRevoke: (inviteId: string) => Promise<void>;
   onRetry?: () => void;
 }) {
+  const [now, setNow] = useState(new Date());
+
+  useEffect(() => {
+    const hasActiveExpiringInvites = invites.some(
+      (invite) =>
+        !invite.is_revoked &&
+        invite.expires_at &&
+        new Date(invite.expires_at) > new Date(),
+    );
+
+    if (!hasActiveExpiringInvites) return;
+
+    const timer = setInterval(() => {
+      setNow(new Date());
+    }, 5000);
+
+    return () => clearInterval(timer);
+  }, [invites]);
+
   return (
     <Card>
       <div className="flex items-center justify-between">
@@ -130,7 +149,7 @@ export default function InviteList({
           </div>
         ) : (
           invites.map((invite) => {
-            const expired = invite.expires_at ? new Date(invite.expires_at) < new Date() : false;
+            const expired = invite.expires_at ? new Date(invite.expires_at) < now : false;
             const deactivated = invite.is_revoked || expired;
             return (
               <div
@@ -148,7 +167,7 @@ export default function InviteList({
                   </div>
                   {/* Meta row */}
                   <div className="mt-1 flex items-center gap-2 text-[11px] text-[rgb(158,183,211)]">
-                    <InviteStatusChip invite={invite} />
+                    <InviteStatusChip invite={invite} now={now} />
                     <span>
                       {invite.uses_count}
                       {invite.max_uses != null
