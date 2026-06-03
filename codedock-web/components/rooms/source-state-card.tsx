@@ -25,6 +25,8 @@ function readableStatus(state: RoomSourceState) {
       return "Waiting for host workspace";
     case "clone_not_ready":
       return "Repository is not provisioned yet";
+    case "paused":
+      return "Paused / Deactivated";
     default:
       return state.status || "Unknown";
   }
@@ -113,7 +115,7 @@ export default function SourceStateCard({
   const showToggleButton = isHost;
 
   return (
-    <Card className="relative overflow-hidden border-white/[0.04] bg-white/[0.02] backdrop-blur-xl">
+    <Card className="relative overflow-hidden border-white/[0.04] bg-[rgba(5,21,43,0.6)]">
       {/* Decorative gradient flare */}
       <div className="absolute -right-20 -top-20 h-40 w-40 rounded-full bg-emerald-500/5 blur-[80px]" />
       
@@ -131,7 +133,7 @@ export default function SourceStateCard({
 
         {/* Confirmed fields from RoomSourceState only */}
         <div className="mt-6 space-y-1 divide-y divide-white/[0.03]">
-          <BoolRow label="Host Workspace" value={sourceState.host_bound} />
+          <BoolRow label="Host Workspace" value={sourceState.host_connected} />
           <BoolRow label="Room Activated" value={sourceState.activated} />
         </div>
 
@@ -148,10 +150,12 @@ export default function SourceStateCard({
               }`}
             >
               {loading ? (
-                <Loader2 className="h-4.5 w-4.5 animate-spin" />
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                </div>
               ) : null}
               
-              <span className="relative z-10 text-sm font-bold tracking-tight">
+              <span className={`relative z-10 text-sm font-bold tracking-tight transition-opacity duration-200 ${loading ? "opacity-0" : "opacity-100"}`}>
                 {sourceState.activated ? "Deactivate Room" : "Activate Room for Guests"}
               </span>
             </Button>

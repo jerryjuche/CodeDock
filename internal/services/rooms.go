@@ -361,7 +361,9 @@ func (s *RoomService) MarkLocalWorkspaceBound(roomID, userID, workspaceLabel str
 	}
 
 	metadata["workspace_bound"] = true
-	metadata["activated"] = true
+	if _, exists := metadata["activated"]; !exists {
+		metadata["activated"] = false
+	}
 	metadata["ready"] = true
 	metadata["status"] = "ready"
 	metadata["host_selected_at"] = time.Now().UTC().Format(time.RFC3339)

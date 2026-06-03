@@ -199,6 +199,23 @@ export async function ensureGitRepo(
     `CodeDock[git]: cloning ${safeRepoUrl} (branch: ${branch}) into ${targetPath}`,
   );
 
+  // Clean up targetPath if it contains files but is not a valid git repository
+  try {
+    const files = await fs.readdir(targetPath);
+    if (files.length > 0) {
+      outputChannel.appendLine(
+        `CodeDock[git]: target path ${targetPath} is not empty but lacks .git folder. Cleaning up directory before clone.`,
+      );
+      for (const file of files) {
+        await fs.rm(path.join(targetPath, file), { recursive: true, force: true });
+      }
+    }
+  } catch (err) {
+    outputChannel.appendLine(
+      `CodeDock[git]: warning: failed to pre-clean target folder: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
   // We must clone into the targetPath. Since ensureManagedWorkspace creates the empty dir,
   // we can clone into it, as long as it's perfectly empty.
   await runGitCommand(

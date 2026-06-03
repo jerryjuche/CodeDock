@@ -5,6 +5,10 @@ import { Card } from "@/components/ui/card";
 import RoomSourceBadge from "@/components/rooms/room-source-badge";
 
 export default function RoomCard({ room }: { room: Room }) {
+  const primaryJoinCodeExpired = room.created_at
+    ? new Date(room.created_at).getTime() + 5 * 60 * 1000 < Date.now()
+    : false;
+
   return (
     <Card className="group transition-all duration-200 hover:border-white/20 hover:shadow-[0_20px_50px_rgba(0,0,0,0.30)]">
       <div className="flex items-start justify-between gap-4">
@@ -33,13 +37,18 @@ export default function RoomCard({ room }: { room: Room }) {
       </div>
 
       {/* Join code */}
-      <div className="mt-4 flex items-center gap-2 rounded-lg bg-white/[0.03] px-3 py-2">
-        <span className="text-[10px] uppercase tracking-[0.2em] text-[rgb(158,183,211)]">
-          Code
-        </span>
-        <span className="font-mono text-sm font-semibold tracking-[0.15em] text-white">
-          {room.primary_join_code}
-        </span>
+      <div className="mt-4 flex items-center justify-between rounded-lg bg-white/[0.03] px-3 py-2" style={primaryJoinCodeExpired ? { opacity: 0.5 } : {}}>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] uppercase tracking-[0.2em] text-[rgb(158,183,211)]">
+            Code
+          </span>
+          <span className={`font-mono text-sm font-semibold tracking-[0.15em] ${primaryJoinCodeExpired ? "text-white/40 line-through select-none" : "text-white"}`}>
+            {room.primary_join_code}
+          </span>
+        </div>
+        {primaryJoinCodeExpired && (
+          <span className="text-[9px] text-[rgb(255,160,170)] font-medium">Expired</span>
+        )}
       </div>
 
       {/* Action */}

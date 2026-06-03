@@ -5,7 +5,9 @@ import * as vscode from "vscode";
 import { EventEmitter } from "events";
 import { AuthManager } from "./auth";
 import { ApiClient, LaunchContext } from "./api";
+import { CodeDockStatusBar } from "./status-bar";
 import { WebSocketManager } from "./websocket";
+import { CursorManager } from "./cursor-manager";
 import { YjsSync } from "./yjs-sync";
 import { ensureGitRepo } from "./git";
 
@@ -20,24 +22,34 @@ type PendingLaunchContext = LaunchContext & {
 let authManager: AuthManager;
 let wsManager: WebSocketManager;
 let yjsSync: YjsSync;
+let cursorManager: CursorManager | undefined;
 let apiClient: ApiClient;
-let statusBarItem: vscode.StatusBarItem | undefined;
 
 function refreshStatusBar(): void {
-  if (!statusBarItem) {
-    return;
+  try {
+    const sb = CodeDockStatusBar.get();
+    const connectionState = wsManager?.getConnectionState?.() ?? "disconnected";
+    const roomId = wsManager?.getRoomId?.();
+    const detail = roomId ? `Room: ${roomId.slice(0, 8)}` : undefined;
+
+    if (connectionState === "connected") {
+      sb.setState("connected", detail);
+    } else if (connectionState === "disconnected" || connectionState === "connecting") {
+      sb.setState(
+        "disconnected",
+        connectionState === "connecting"
+          ? (detail ? `Connecting…\n${detail}` : "Connecting…")
+          : detail,
+      );
+    } else {
+      sb.setState(
+        "issue",
+        detail ? `${connectionState} — ${detail}` : connectionState,
+      );
+    }
+  } catch {
+    // Status bar not initialized yet — ignore.
   }
-
-  const connectionState = wsManager?.getConnectionState?.() ?? "disconnected";
-  const roomId = wsManager?.getRoomId?.();
-  const roomLabel = roomId ? ` • ${roomId.slice(0, 8)}` : "";
-
-  statusBarItem.text = roomId
-    ? `$(rocket) CodeDock ${connectionState}${roomLabel}`
-    : "$(rocket) CodeDock";
-  statusBarItem.tooltip = roomId
-    ? `CodeDock — ${connectionState.toUpperCase()}${roomLabel}\nClick for room and web app actions`
-    : `CodeDock — ${connectionState.toUpperCase()}\nClick for room and web app actions`;
 }
 
 export async function activate(
@@ -58,7 +70,11 @@ export async function activate(
   apiClient = new ApiClient(serverUrl);
   authManager = new AuthManager(context.secrets, apiClient, emitter);
   wsManager = new WebSocketManager(serverUrl, outputChannel);
+  cursorManager = new CursorManager(wsManager);
   yjsSync = new YjsSync(wsManager, outputChannel, context.globalState);
+
+  // Initialize the CodeDock status bar singleton — must be after outputChannel
+  CodeDockStatusBar.init(context);
 
   context.subscriptions.push(
     wsManager.onClose((code, reason) => {
@@ -82,6 +98,7 @@ export async function activate(
       yjsSync.setActiveRoomId(null);
       yjsSync.setGuestMaterializationRoot(null);
       yjsSync.dispose();
+      cursorManager?.dispose();
       refreshStatusBar();
     }),
   );
@@ -95,19 +112,16 @@ export async function activate(
     void cleanupActiveRoomState(context);
     wsManager.disconnect("logout");
     yjsSync.dispose();
+    cursorManager?.dispose();
     refreshStatusBar();
   });
 
-  statusBarItem = vscode.window.createStatusBarItem(
-    vscode.StatusBarAlignment.Right,
-    100,
+  // Mirror WebSocket state changes to the status bar
+  context.subscriptions.push(
+    wsManager.onStateChange((state) => {
+      refreshStatusBar();
+    }),
   );
-  statusBarItem.command = "codedock.showMenu";
-  statusBarItem.text = "$(rocket) CodeDock";
-  statusBarItem.tooltip =
-    "CodeDock — click for session actions and web app access";
-  statusBarItem.show();
-  context.subscriptions.push(statusBarItem);
   refreshStatusBar();
 
   async function showCodeDockMenu(): Promise<void> {
@@ -178,6 +192,7 @@ export async function activate(
       outputChannel.appendLine("CodeDock: user requested room disconnect");
       void cleanupActiveRoomState(context);
       wsManager.disconnect("user");
+      cursorManager?.dispose();
       yjsSync.dispose();
       refreshStatusBar();
     }),
@@ -243,6 +258,25 @@ function extractLaunchTokenFromUriFragment(fragment: string): string | null {
   }
 
   return fragment || null;
+}
+
+function getUserInfoFromToken(token: string): { userId: string; email?: string } | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length < 2) return null;
+    let b = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    while (b.length % 4 !== 0) {
+      b += "=";
+    }
+    const decoded = Buffer.from(b, "base64").toString("utf8");
+    const obj = JSON.parse(decoded);
+    const userId = obj.sub || obj.user_id || obj.userId || obj.uid || "";
+    const email = obj.email || obj.eml || undefined;
+    if (!userId) return null;
+    return { userId, email };
+  } catch {
+    return null;
+  }
 }
 
 async function handleLaunchUri(
@@ -522,6 +556,18 @@ async function resumePendingLaunch(
   yjsSync.setSessionRole(isHostLike ? "host" : "guest");
 
   wsManager.connect(token, pending.room_id);
+  // activate cursor manager with user info
+  try {
+    const tokenStr = await authManager.getToken();
+    if (tokenStr) {
+      const info = getUserInfoFromToken(tokenStr);
+      if (info) {
+        cursorManager?.activate(info.userId, info.email ?? "");
+      }
+    }
+  } catch {
+    // noop
+  }
   yjsSync.activate();
 
   await clearPendingLaunch(context);
@@ -698,6 +744,16 @@ async function handleCreateRoom(
     yjsSync.setActiveRoomId(room.id);
     yjsSync.setGuestMaterializationRoot(null);
     wsManager.connect(token, room.id);
+    // activate cursor manager for current user
+    try {
+      const tokenStr = await authManager.getToken();
+      if (tokenStr) {
+        const info = getUserInfoFromToken(tokenStr);
+        if (info) {
+          cursorManager?.activate(info.userId, info.email ?? "");
+        }
+      }
+    } catch {}
     yjsSync.activate();
     refreshStatusBar();
   } catch (err) {
@@ -719,6 +775,16 @@ async function joinRoomNow(
   yjsSync.setSessionRole("guest");
   yjsSync.setActiveRoomId(roomId);
   wsManager.connect(token, roomId);
+  // activate cursor manager for current user
+  try {
+    const tokenStr = await authManager.getToken();
+    if (tokenStr) {
+      const info = getUserInfoFromToken(tokenStr);
+      if (info) {
+        cursorManager?.activate(info.userId, info.email ?? "");
+      }
+    }
+  } catch {}
   yjsSync.activate();
   refreshStatusBar();
 }
@@ -730,6 +796,7 @@ async function cleanupActiveRoomState(
   await clearPendingLaunch(context);
   yjsSync.setActiveRoomId(null);
   yjsSync.setGuestMaterializationRoot(null);
+  cursorManager?.dispose();
 }
 
 async function clearPendingHydratedJoin(
@@ -757,4 +824,9 @@ function normalizeFsPath(fsPath: string): string {
 export function deactivate(): void {
   wsManager?.disconnect("extension_deactivated");
   yjsSync?.dispose();
+  try {
+    CodeDockStatusBar.reset();
+  } catch {
+    // noop
+  }
 }

@@ -39,7 +39,11 @@ function parseCss(text: string, extension: string): Root {
 }
 
 function toLines(value: string): string[] {
-  return value.split("\n");
+  let val = value;
+  if (val.endsWith("\n")) {
+    val = val.slice(0, -1);
+  }
+  return val.split("\n");
 }
 
 function isDeclaration(node: Node): node is Declaration {

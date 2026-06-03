@@ -37,6 +37,9 @@ function CopyButton({ value }: { value: string }) {
 
 export default function RoomHeader({ details }: { details: RoomDetails }) {
   const { room, membership } = details;
+  const primaryJoinCodeExpired = room.created_at
+    ? new Date(room.created_at).getTime() + 5 * 60 * 1000 < Date.now()
+    : false;
 
   return (
     <section className="relative overflow-hidden rounded-[20px] border border-white/10">
@@ -63,13 +66,16 @@ export default function RoomHeader({ details }: { details: RoomDetails }) {
         </div>
 
         <div className="grid gap-4 sm:grid-cols-3">
-          <div className="rounded-[14px] border border-white/10 bg-white/[0.05] p-4">
-            <div className="text-[11px] uppercase tracking-[0.22em] text-[rgb(158,183,211)]">
-              Join code
+          <div className="rounded-[14px] border border-white/10 bg-white/[0.05] p-4" style={primaryJoinCodeExpired ? { opacity: 0.5 } : {}}>
+            <div className="text-[11px] uppercase tracking-[0.22em] text-[rgb(158,183,211)] flex justify-between items-center">
+              <span>Join code</span>
+              {primaryJoinCodeExpired && <span className="text-[10px] text-[rgb(255,160,170)] font-medium normal-case tracking-normal">Expired</span>}
             </div>
             <div className="mt-2 flex items-center gap-1">
-              <span className="font-mono text-lg text-white">{room.primary_join_code}</span>
-              <CopyButton value={room.primary_join_code} />
+              <span className={`font-mono text-lg ${primaryJoinCodeExpired ? "text-white/40 line-through select-none" : "text-white"}`}>
+                {room.primary_join_code}
+              </span>
+              {!primaryJoinCodeExpired && <CopyButton value={room.primary_join_code} />}
             </div>
           </div>
 

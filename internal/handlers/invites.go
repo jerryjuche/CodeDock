@@ -42,7 +42,7 @@ func (h *InviteHandler) ResolveJoinCode(w http.ResponseWriter, r *http.Request) 
 			http.Error(w, "invalid invite code", http.StatusNotFound)
 			return
 		case errors.Is(err, services.ErrJoinCodeExpired):
-			http.Error(w, "invite code expired or unavailable", http.StatusGone)
+			http.Error(w, "Room invite code expired / revoked. Admin will have to generate a new token so you can join workspace.", http.StatusGone)
 			return
 		default:
 			http.Error(w, "internal server error", http.StatusInternalServerError)
