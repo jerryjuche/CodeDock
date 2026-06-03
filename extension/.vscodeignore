@@ -2,8 +2,15 @@
 src/**
 .vscode/**
 .vscode-test/**
-node_modules/.bin/**
+node_modules/**
 .git/**
 .github/**
 tsconfig.json
 esbuild.js
+package-lock.json
+*.vsix
+codedock-*/**
+out/*
+!out/extension.js
+!out/extension.js.map
+out/test/**

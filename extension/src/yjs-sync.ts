@@ -152,6 +152,7 @@ export class YjsSync {
   private activityTimers: Map<string, ReturnType<typeof setTimeout>> =
     new Map();
   private pendingFileBootstrapRequests: Set<string> = new Set();
+  private sentBaselines: Set<string> = new Set();
 
   private workspaceManifestReceived = false;
   private workspaceManifestRetryCount = 0;
@@ -287,6 +288,7 @@ export class YjsSync {
     }
 
     this.pendingFileBootstrapRequests.clear();
+    this.sentBaselines.clear();
     this.workspaceManifestReceived = false;
     this.workspaceManifestRetryCount = 0;
     this.hydratedProjectOpenPromptShown = false;
@@ -374,6 +376,12 @@ export class YjsSync {
             "guest fallback seed on local edit",
           );
           this.queueForceFullState(fileKey);
+        }
+
+        if (!this.sentBaselines.has(fileKey)) {
+          const preEditContent = entry.ydoc.getText("content").toString();
+          this.sendBaselineActivity(fileKey, preEditContent);
+          this.sentBaselines.add(fileKey);
         }
 
         this.log(
@@ -687,6 +695,18 @@ export class YjsSync {
     }, ACTIVITY_DEBOUNCE_MS);
 
     this.activityTimers.set(fileKey, timer);
+  }
+
+  private sendBaselineActivity(fileKey: string, content: string): void {
+    if (!this.active) {
+      return;
+    }
+    const payload: FileActivityPayload = {
+      filePath: fileKey,
+      content: content,
+    };
+    const bytes = encodeFileActivityPayload(payload);
+    this.wsManager.send(bytes);
   }
 
   private async flushOutboundUpdates(fileKey: string): Promise<void> {

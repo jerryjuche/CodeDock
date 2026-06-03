@@ -1,12 +1,31 @@
-// components/dashboard/room-card.tsx
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import type { Room } from "@/types/room";
 import { Card } from "@/components/ui/card";
 import RoomSourceBadge from "@/components/rooms/room-source-badge";
 
 export default function RoomCard({ room }: { room: Room }) {
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    if (!room.created_at) return;
+
+    const expiryTime = new Date(room.created_at).getTime() + 5 * 60 * 1000;
+    if (expiryTime < Date.now()) return;
+
+    const timer = setInterval(() => {
+      const currentNow = Date.now();
+      setNow(currentNow);
+      if (currentNow >= expiryTime) {
+        clearInterval(timer);
+      }
+    }, 5000);
+
+    return () => clearInterval(timer);
+  }, [room.created_at]);
+
   const primaryJoinCodeExpired = room.created_at
-    ? new Date(room.created_at).getTime() + 5 * 60 * 1000 < Date.now()
+    ? new Date(room.created_at).getTime() + 5 * 60 * 1000 < now
     : false;
 
   return (
