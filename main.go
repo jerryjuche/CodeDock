@@ -91,10 +91,19 @@ func main() {
 	mux.Handle("/rooms/{roomId}/activities", auth.RequireAuth(http.HandlerFunc(roomHandler.GetRoomActivities)))
 
 	// Web control-plane routes
-	mux.Handle("POST /join-code/resolve", authLimiter.Limit(auth.RequireAuth(http.HandlerFunc(inviteHandler.ResolveJoinCode))))
-	mux.Handle("GET /rooms/{roomId}/invites", auth.RequireAuth(http.HandlerFunc(inviteHandler.ListRoomInvites)))
-	mux.Handle("POST /rooms/{roomId}/invites", auth.RequireAuth(http.HandlerFunc(inviteHandler.CreateRoomInvite)))
-	mux.Handle("POST /rooms/{roomId}/invites/{inviteId}/revoke", auth.RequireAuth(http.HandlerFunc(inviteHandler.RevokeRoomInvite)))
+	mux.Handle("/join-code/resolve", authLimiter.Limit(auth.RequireAuth(http.HandlerFunc(inviteHandler.ResolveJoinCode))))
+	mux.Handle("/rooms/{roomId}/invites", auth.RequireAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			inviteHandler.ListRoomInvites(w, r)
+		case http.MethodPost:
+			inviteHandler.CreateRoomInvite(w, r)
+		default:
+			w.Header().Set("Allow", "GET, POST")
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	})))
+	mux.Handle("/rooms/{roomId}/invites/{inviteId}/revoke", auth.RequireAuth(http.HandlerFunc(inviteHandler.RevokeRoomInvite)))
 
 	// IDE launch routes
 	mux.Handle("/rooms/{roomId}/open-in-vscode", auth.RequireAuth(http.HandlerFunc(launchHandler.OpenInVSCode)))

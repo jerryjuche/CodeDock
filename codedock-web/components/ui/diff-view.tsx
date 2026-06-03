@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useMemo } from "react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { atomDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 
@@ -67,13 +67,85 @@ interface DiffViewProps {
   language: string;
 }
 
-export function DiffView({
+// 1. Memoized single diff line component to prevent re-running Prism parser on scroll or unrelated updates
+const DiffLineRow = React.memo(function DiffLineRow({
+  line,
+  language,
+  isAddition,
+  isDeletion,
+}: {
+  line: DiffLine;
+  language: string;
+  isAddition: boolean;
+  isDeletion: boolean;
+}) {
+  return (
+    <div
+      className={`flex group ${
+        isAddition
+          ? "bg-emerald-500/15"
+          : isDeletion
+            ? "bg-rose-500/15"
+            : "hover:bg-white/[0.02]"
+      }`}
+    >
+      {/* Line Numbers */}
+      <div className="flex flex-shrink-0 select-none border-r border-slate-800/70 bg-slate-900/70 text-right text-[8px] text-slate-500 w-[50px]">
+        <div className="w-[25px] px-1 py-0.5 border-r border-slate-800/60">
+          {line.oldLineNumber || ""}
+        </div>
+        <div className="w-[25px] px-1 py-0.5">
+          {line.newLineNumber || ""}
+        </div>
+      </div>
+
+      {/* Marker */}
+      <div
+        className={`flex flex-shrink-0 items-center justify-center w-4 select-none font-bold text-[10px] ${
+          isAddition
+            ? "text-emerald-400"
+            : isDeletion
+              ? "text-rose-400"
+              : "text-slate-600"
+        }`}
+      >
+        {isAddition ? "+" : isDeletion ? "-" : " "}
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 px-2 py-0.5 whitespace-pre break-all">
+        <SyntaxHighlighter
+          language={language}
+          style={atomDark}
+          customStyle={{
+            margin: 0,
+            padding: 0,
+            background: "transparent",
+            fontSize: "inherit",
+          }}
+          PreTag="div"
+          CodeTag="span"
+        >
+          {line.content || " "}
+        </SyntaxHighlighter>
+      </div>
+    </div>
+  );
+});
+
+// 2. Fully memoized DiffView component. It will never re-render when other dynamic state updates
+// in the parent component (like live activity notifications, sidebar items, or user presence).
+export const DiffView = React.memo(function DiffView({
   filePath,
   oldCode,
   newCode,
   language,
 }: DiffViewProps) {
-  const diff = computeDiff(oldCode, newCode, filePath);
+  // Memoize the diff calculation to avoid CPU thrashing on re-renders
+  const diff = useMemo(
+    () => computeDiff(oldCode, newCode, filePath),
+    [oldCode, newCode, filePath]
+  );
 
   return (
     <div className="font-mono text-[13px] leading-6 bg-slate-950 overflow-x-auto rounded-3xl border border-slate-800/70">
@@ -82,59 +154,16 @@ export function DiffView({
         const isDeletion = line.type === "deletion";
 
         return (
-          <div
+          <DiffLineRow
             key={idx}
-            className={`flex group ${
-              isAddition
-                ? "bg-emerald-500/15"
-                : isDeletion
-                  ? "bg-rose-500/15"
-                  : "hover:bg-white/[0.02]"
-            }`}
-          >
-            {/* Line Numbers */}
-            <div className="flex flex-shrink-0 select-none border-r border-slate-800/70 bg-slate-900/70 text-right text-[8px] text-slate-500 w-[50px]">
-              <div className="w-[25px] px-1 py-0.5 border-r border-slate-800/60">
-                {line.oldLineNumber || ""}
-              </div>
-              <div className="w-[25px] px-1 py-0.5">
-                {line.newLineNumber || ""}
-              </div>
-            </div>
-
-            {/* Marker */}
-            <div
-              className={`flex flex-shrink-0 items-center justify-center w-4 select-none font-bold text-[10px] ${
-                isAddition
-                  ? "text-emerald-400"
-                  : isDeletion
-                    ? "text-rose-400"
-                    : "text-slate-600"
-              }`}
-            >
-              {isAddition ? "+" : isDeletion ? "-" : " "}
-            </div>
-
-            {/* Content */}
-            <div className="flex-1 px-2 py-0.5 whitespace-pre break-all">
-              <SyntaxHighlighter
-                language={language}
-                style={atomDark}
-                customStyle={{
-                  margin: 0,
-                  padding: 0,
-                  background: "transparent",
-                  fontSize: "inherit",
-                }}
-                PreTag="div"
-                CodeTag="span"
-              >
-                {line.content || " "}
-              </SyntaxHighlighter>
-            </div>
-          </div>
+            line={line}
+            language={language}
+            isAddition={isAddition}
+            isDeletion={isDeletion}
+          />
         );
       })}
     </div>
   );
-}
+});
+
