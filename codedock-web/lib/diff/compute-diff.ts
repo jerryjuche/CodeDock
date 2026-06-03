@@ -38,9 +38,11 @@ export function computeDiff(
     let newLine = 1;
 
     for (const ch of changes) {
-      // Preserve split semantics similar to `String.prototype.split("\n")` used
-      // elsewhere: this keeps a trailing empty string when the text ends with a newline.
-      const lines = ch.value.split("\n");
+      let val = ch.value;
+      if (val.endsWith("\n")) {
+        val = val.slice(0, -1);
+      }
+      const lines = val.split("\n");
 
       const type: DiffResult["type"] = ch.added
         ? "add"
