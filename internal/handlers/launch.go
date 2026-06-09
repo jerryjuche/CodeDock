@@ -6,11 +6,13 @@ import (
 	"net/http"
 
 	"github.com/jerryjuche/CodeDock/internal/auth"
+	"github.com/jerryjuche/CodeDock/internal/hub"
 	"github.com/jerryjuche/CodeDock/internal/services"
 )
 
 type LaunchHandler struct {
 	Service *services.LaunchService
+	Hub     *hub.Hub
 }
 
 type exchangeLaunchTokenRequest struct {
@@ -117,6 +119,10 @@ func (h *LaunchHandler) ExchangeLaunchToken(w http.ResponseWriter, r *http.Reque
 			http.Error(w, "internal server error", http.StatusInternalServerError)
 			return
 		}
+	}
+
+	if h.Hub != nil {
+		h.Hub.BroadcastAll(context.RoomID, []byte{hub.MessageTypeRoomUpdate})
 	}
 
 	writeJSON(w, http.StatusOK, context)

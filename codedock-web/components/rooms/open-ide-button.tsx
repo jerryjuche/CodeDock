@@ -17,11 +17,13 @@ export default function OpenIDEButton({
   roomId,
   launchAllowed,
   launchReason,
+  launchReceivedAt,
   isHost,
 }: {
   roomId: string;
   launchAllowed: boolean;
   launchReason?: string;
+  launchReceivedAt?: string;
   isHost?: boolean;
 }) {
   const { launchIDE, loading } = useLaunchIDE(roomId);
@@ -39,6 +41,9 @@ export default function OpenIDEButton({
   const [launchMessage, setLaunchMessage] = useState(
     "Preparing your workspace and opening your editor.",
   );
+  const [launchRequestTime, setLaunchRequestTime] = useState<number | null>(
+    null,
+  );
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -46,7 +51,32 @@ export default function OpenIDEButton({
     return () => setMounted(false);
   }, []);
 
+  useEffect(() => {
+    if (!showLaunchProgress || !launchRequestTime || !launchReceivedAt) {
+      return;
+    }
+
+    const receivedAt = Date.parse(launchReceivedAt);
+    if (Number.isNaN(receivedAt)) {
+      return;
+    }
+
+    if (receivedAt >= launchRequestTime) {
+      setLaunchMessage(
+        "Launch request received by CodeDock. Waiting for the editor to continue startup.",
+      );
+    }
+  }, [launchReceivedAt, launchRequestTime, showLaunchProgress]);
+
   const disabled = loading || (!isHost && !launchAllowed);
+
+  const isLaunchSuccessful = !!(
+    showLaunchProgress &&
+    launchRequestTime &&
+    launchReceivedAt &&
+    !Number.isNaN(Date.parse(launchReceivedAt)) &&
+    Date.parse(launchReceivedAt) >= launchRequestTime
+  );
 
   async function handleLaunchEditor(editor: CodeDockEditorTarget) {
     setLaunchError(null);
@@ -54,6 +84,7 @@ export default function OpenIDEButton({
     setLaunchLink(null);
     setShowLaunchProgress(true);
     setLaunchMessage("Preparing your workspace and opening your editor.");
+    setLaunchRequestTime(Date.now());
 
     const fallbackTimer = window.setTimeout(() => {
       setLaunchMessage(
@@ -82,6 +113,8 @@ export default function OpenIDEButton({
   }
 
   async function handleCopyLink(editor: CodeDockEditorTarget) {
+    setLaunchRequestTime(Date.now());
+
     try {
       const response = await launchIDE(editor, true);
       if (response.deep_link) {
@@ -372,55 +405,100 @@ export default function OpenIDEButton({
 
                     <div className="mt-8 rounded-[26px] border border-white/[0.08] bg-white/[0.03] p-6">
                       <div className="flex items-center gap-4">
-                        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[rgba(239,102,46,0.1)]">
-                          <svg
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            className="h-6 w-6 text-[rgb(239,102,46)]"
-                            aria-hidden="true"
-                          >
-                            <path
-                              d="M12 4v8l4 4"
-                              stroke="currentColor"
-                              strokeWidth="1.75"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
-                            <circle
-                              cx="12"
-                              cy="12"
-                              r="9"
-                              stroke="currentColor"
-                              strokeWidth="1.75"
-                            />
-                          </svg>
+                        <div className={`flex h-12 w-12 items-center justify-center rounded-2xl transition-colors duration-300 ${
+                          isLaunchSuccessful 
+                            ? "bg-[rgba(42,211,139,0.1)]" 
+                            : "bg-[rgba(239,102,46,0.1)]"
+                        }`}>
+                          {isLaunchSuccessful ? (
+                            <svg
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              className="h-6 w-6 text-[rgb(42,211,139)]"
+                              aria-hidden="true"
+                            >
+                              <path
+                                d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                            </svg>
+                          ) : (
+                            <svg
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              className="h-6 w-6 text-[rgb(239,102,46)]"
+                              aria-hidden="true"
+                            >
+                              <path
+                                d="M12 4v8l4 4"
+                                stroke="currentColor"
+                                strokeWidth="1.75"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                              <circle
+                                cx="12"
+                                cy="12"
+                                r="9"
+                                stroke="currentColor"
+                                strokeWidth="1.75"
+                              />
+                            </svg>
+                          )}
                         </div>
                         <div>
                           <p className="text-sm font-semibold text-white">
-                            Launch in progress
+                            {isLaunchSuccessful ? "Handoff complete" : "Launch in progress"}
                           </p>
                           <p className="mt-1 text-xs text-[rgb(158,183,211)]">
-                            Your browser is handing off the session to the
-                            editor.
+                            {isLaunchSuccessful 
+                              ? "The editor successfully received the launch token." 
+                              : "Your browser is handing off the session to the editor."}
                           </p>
                         </div>
                       </div>
 
                       <div className="mt-6 flex items-center gap-3">
-                        <div className="h-10 w-10 rounded-full border border-white/[0.08] bg-white/[0.06] grid place-items-center">
-                          <svg
-                            viewBox="0 0 24 24"
-                            className="h-5 w-5 animate-spin text-[rgb(239,102,46)]"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                          >
-                            <path d="M12 2a10 10 0 0 1 10 10" />
-                          </svg>
-                        </div>
-                        <p className="text-sm text-[rgb(158,183,211)]">
-                          Waiting for the editor to open...
-                        </p>
+                        {isLaunchSuccessful ? (
+                          <>
+                            <div className="h-10 w-10 rounded-full border border-[rgb(42,211,139)]/20 bg-[rgba(42,211,139,0.1)] grid place-items-center">
+                              <svg
+                                viewBox="0 0 24 24"
+                                className="h-5 w-5 text-[rgb(42,211,139)]"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2.5"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              >
+                                <polyline points="20 6 9 17 4 12" />
+                              </svg>
+                            </div>
+                            <p className="text-sm font-semibold text-white">
+                              Editor opened and connected!
+                            </p>
+                          </>
+                        ) : (
+                          <>
+                            <div className="h-10 w-10 rounded-full border border-white/[0.08] bg-white/[0.06] grid place-items-center">
+                              <svg
+                                viewBox="0 0 24 24"
+                                className="h-5 w-5 animate-spin text-[rgb(239,102,46)]"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                              >
+                                <path d="M12 2a10 10 0 0 1 10 10" />
+                              </svg>
+                            </div>
+                            <p className="text-sm text-[rgb(158,183,211)]">
+                              Waiting for the editor to open...
+                            </p>
+                          </>
+                        )}
                       </div>
 
                       {launchLink ? (

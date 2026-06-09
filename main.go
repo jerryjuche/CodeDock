@@ -51,7 +51,7 @@ func main() {
 	inviteHandler := &handlers.InviteHandler{Service: inviteService}
 
 	launchService := &services.LaunchService{DB: db}
-	launchHandler := &handlers.LaunchHandler{Service: launchService}
+	launchHandler := &handlers.LaunchHandler{Service: launchService, Hub: h}
 
 	roomService := &services.RoomService{DB: db}
 	roomHandler := &handlers.RoomHandler{

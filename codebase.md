@@ -356,6 +356,12 @@ The CodeDock repository is organized as a **monorepo** with three main applicati
 - Horizontal scaling ready
 - Microservice-friendly architecture
 
+### Multi-Editor / IDE Launch Handoff
+
+- Supports launching the collaborative workspace in different editor targets: **Visual Studio Code** and **Antigravity**.
+- Deep-links are generated with custom protocol schemes (`vscode://` and `antigravity://`) carrying a short-lived launch token (`2-minute TTL`).
+- **Real-Time Handoff Feedback Loop**: Once the IDE extension intercepts the protocol scheme and calls `/vscode/launch/exchange` to redeem the launch token, the backend triggers a WebSocket broadcast containing `MessageTypeRoomUpdate` (`0x0a`) to all connected dashboard web clients. The web frontend catches this event via `useRoomSync`, invalidates the active room details query, and updates the launch UI progress status to confirm that the session successfully transferred to the editor.
+
 ---
 
 ## Development Workflow
