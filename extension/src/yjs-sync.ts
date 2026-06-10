@@ -3,6 +3,7 @@ import * as path from "path";
 import * as vscode from "vscode";
 import * as Y from "yjs";
 import { WebSocketManager } from "./websocket";
+import { TelemetryService } from "./telemetry";
 import {
   decodeFileBootstrapRequest,
   decodeFileBootstrapResponse,
@@ -1052,6 +1053,9 @@ export class YjsSync {
     }
 
     this.hydratedProjectOpenPromptShown = true;
+    TelemetryService.getInstance().capture("workspace_hydrated", {
+      roomId: this.currentRoomId,
+    });
 
     const selection = await vscode.window.showInformationMessage(
       `CodeDock: Host project hydrated into ${this.guestMaterializationRoot.fsPath}. Open it in a new window?`,

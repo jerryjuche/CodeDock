@@ -6,6 +6,7 @@ require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/joho/godotenv v1.5.1
 	github.com/lib/pq v1.12.0
+	github.com/posthog/posthog-go v1.2.24
 	golang.org/x/crypto v0.49.0
 )
 

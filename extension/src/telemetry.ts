@@ -67,21 +67,13 @@ export class TelemetryService {
     }
 
     const config = vscode.workspace.getConfiguration("codedock");
-    const token = config.get<string>(
-      "telemetry.posthogToken",
-      "phc_codedock_default_telemetry_placeholder"
-    );
-    const host = config.get<string>(
+    const token = process.env.POSTHOG_API_KEY || config.get<string>("telemetry.posthogToken", "");
+    const host = process.env.POSTHOG_HOST || config.get<string>(
       "telemetry.posthogHost",
       "https://eu.i.posthog.com"
     );
 
-    if (
-      !token ||
-      token.trim() === "" ||
-      token.includes("placeholder") ||
-      token.includes("YOUR_REAL_TOKEN_HERE")
-    ) {
+    if (!token || !token.startsWith("phc_")) {
       return;
     }
 
