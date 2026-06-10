@@ -3,6 +3,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 import { Toaster } from "sonner";
+import { TelemetryProvider } from "./telemetry-provider";
 
 export default function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
@@ -25,7 +26,9 @@ export default function Providers({ children }: { children: React.ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      {children}
+      <TelemetryProvider>
+        {children}
+      </TelemetryProvider>
       <Toaster position="top-right" theme="dark" richColors duration={3000} />
     </QueryClientProvider>
   );
