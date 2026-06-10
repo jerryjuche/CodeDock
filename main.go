@@ -31,6 +31,9 @@ func main() {
 	flushSentry := observability.InitSentry()
 	defer flushSentry()
 
+	flushTelemetry := observability.InitTelemetry()
+	defer flushTelemetry()
+
 	db, err := connectDB()
 	if err != nil {
 		observability.CaptureError(err)

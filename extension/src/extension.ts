@@ -646,6 +646,11 @@ async function ensureManagedWorkspace(
       const branch = meta.branch || "main";
       try {
         await ensureGitRepo(repoUrl, branch, roomDir, outputChannel);
+        TelemetryService.getInstance().capture("github_repo_cloned", {
+          roomId: launchContext.room_id,
+          repoUrl,
+          branch,
+        });
       } catch (err) {
         throw new Error(
           `Failed to clone GitHub repository: ${

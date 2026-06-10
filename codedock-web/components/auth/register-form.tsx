@@ -12,6 +12,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+import posthog from "posthog-js";
+
 export default function RegisterForm() {
   const router = useRouter();
   const { loginSession } = useAuth();
@@ -32,17 +34,20 @@ export default function RegisterForm() {
     }
 
     setLoading(true);
+    posthog.capture("register_attempt");
 
     try {
       const response = await register(email.trim(), password);
       loginSession(response.token, response.email);
+      posthog.capture("register_success");
       router.replace("/dashboard");
     } catch (err) {
-      setError(
+      const errorMessage =
         err instanceof Error
           ? err.message
-          : "Registration failed. Please try again.",
-      );
+          : "Registration failed. Please try again.";
+      setError(errorMessage);
+      posthog.capture("register_failed", { error: errorMessage });
     } finally {
       setLoading(false);
     }

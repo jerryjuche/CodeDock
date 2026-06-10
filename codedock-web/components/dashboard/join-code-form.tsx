@@ -9,6 +9,8 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+import posthog from "posthog-js";
+
 export default function JoinCodeForm() {
   const router = useRouter();
   const { resolveCode, loading } = useJoinCode();
@@ -25,15 +27,19 @@ export default function JoinCodeForm() {
       return;
     }
 
+    posthog.capture("room_join_started", { code: normalized });
+
     try {
       const result = await resolveCode(normalized);
+      posthog.capture("room_joined", { roomId: result.room.id, code: normalized });
       router.push(`/rooms/${result.room.id}`);
     } catch (err) {
-      setError(
+      const errorMessage =
         err instanceof Error
           ? err.message
-          : "Failed to join room. Check the code and try again.",
-      );
+          : "Failed to join room. Check the code and try again.";
+      setError(errorMessage);
+      posthog.capture("room_join_failed", { error: errorMessage, code: normalized });
     }
   }
 
