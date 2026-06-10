@@ -8,6 +8,7 @@ import (
 	"regexp"
 
 	"github.com/jerryjuche/CodeDock/internal/auth"
+	"github.com/jerryjuche/CodeDock/internal/observability"
 	"github.com/jerryjuche/CodeDock/internal/services"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -78,6 +79,10 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	observability.TrackEvent(userID, "backend_user_registered", map[string]interface{}{
+		"email": req.Email,
+	})
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 
@@ -127,6 +132,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "internal server error", http.StatusInternalServerError)
 		return
 	}
+
+	observability.TrackEvent(userID, "backend_user_logged_in", map[string]interface{}{
+		"email": req.Email,
+	})
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

@@ -12,6 +12,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+import posthog from "posthog-js";
+
 export default function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -32,14 +34,18 @@ export default function LoginForm() {
     setError(null);
     setLoading(true);
 
+    posthog.capture("login_attempt");
+
     try {
       const response = await login(email.trim(), password);
       loginSession(response.token, response.email);
+      posthog.capture("login_success");
       router.replace(nextPath);
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Login failed. Please try again.",
-      );
+      const errorMessage =
+        err instanceof Error ? err.message : "Login failed. Please try again.";
+      setError(errorMessage);
+      posthog.capture("login_failed", { error: errorMessage });
     } finally {
       setLoading(false);
     }

@@ -10,6 +10,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 
+import posthog from "posthog-js";
+
 type SourceType = "local_workspace" | "github_repo";
 
 export default function CreateRoomForm() {
@@ -33,6 +35,7 @@ export default function CreateRoomForm() {
     }
 
     setSubmitting(true);
+    posthog.capture("room_creation_started", { source_type: sourceType });
 
     try {
       let sourceMetadata = {};
@@ -64,14 +67,22 @@ export default function CreateRoomForm() {
       };
 
       const room = await createRoom(token, payload);
+      posthog.capture("room_created", {
+        roomId: room.id,
+        source_type: sourceType,
+      });
       router.push(`/rooms/${room.id}`);
       router.refresh();
     } catch (err) {
-      setError(
+      const errorMessage =
         err instanceof Error
           ? err.message
-          : "Failed to create room. Please try again.",
-      );
+          : "Failed to create room. Please try again.";
+      setError(errorMessage);
+      posthog.capture("room_creation_failed", {
+        error: errorMessage,
+        source_type: sourceType,
+      });
     } finally {
       setSubmitting(false);
     }
