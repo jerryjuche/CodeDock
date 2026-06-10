@@ -1,8 +1,28 @@
 import * as vscode from "vscode";
 import { EventEmitter } from "events";
 import { ApiClient } from "./api";
+import { TelemetryService } from "./telemetry";
 
 const TOKEN_KEY = "codedock.jwt";
+
+function getUserInfoFromToken(token: string): { userId: string; email?: string } | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length < 2) return null;
+    let b = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    while (b.length % 4 !== 0) {
+      b += "=";
+    }
+    const decoded = Buffer.from(b, "base64").toString("utf8");
+    const obj = JSON.parse(decoded);
+    const userId = obj.sub || obj.user_id || obj.userId || obj.uid || "";
+    const email = obj.email || obj.eml || undefined;
+    if (!userId) return null;
+    return { userId, email };
+  } catch {
+    return null;
+  }
+}
 
 export class AuthManager {
   constructor(
@@ -22,6 +42,11 @@ export class AuthManager {
 
   async storeTokenSilently(token: string): Promise<void> {
     await this.saveToken(token);
+    const userInfo = getUserInfoFromToken(token);
+    if (userInfo) {
+      TelemetryService.getInstance().identify(userInfo.userId, userInfo.email);
+      TelemetryService.getInstance().capture("auth_token_stored_silently");
+    }
   }
 
   async deleteToken(): Promise<void> {
@@ -52,17 +77,27 @@ export class AuthManager {
     try {
       const response = await this.api.login(email, password);
       await this.saveToken(response.token);
+      
+      const userInfo = getUserInfoFromToken(response.token);
+      if (userInfo) {
+        TelemetryService.getInstance().identify(userInfo.userId, userInfo.email);
+      }
+      TelemetryService.getInstance().capture("login_success");
+
       this.events.emit("login", response.token);
       vscode.window.showInformationMessage("CodeDock: Logged in successfully.");
       await this.promptRoomAction();
     } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : "unknown error";
+      TelemetryService.getInstance().capture("login_failed", { error: errorMessage });
       vscode.window.showErrorMessage(
-        `CodeDock: Login failed — ${err instanceof Error ? err.message : "unknown error"}`,
+        `CodeDock: Login failed — ${errorMessage}`,
       );
     }
   }
 
   async logout(): Promise<void> {
+    TelemetryService.getInstance().capture("user_logged_out");
     await this.deleteToken();
     this.events.emit("logout");
     vscode.window.showInformationMessage("CodeDock: Logged out.");

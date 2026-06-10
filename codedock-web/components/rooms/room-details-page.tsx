@@ -231,6 +231,7 @@ export default function RoomDetailsPageClient({ roomId }: { roomId: string }) {
               roomId={roomId}
               launchAllowed={details.source_state.launch_allowed}
               launchReason={details.source_state.launch_reason}
+              launchReceivedAt={details.source_state.last_launch_exchange_at}
               isHost={isHost}
             />
           </ErrorBoundary>
