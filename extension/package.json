@@ -96,6 +96,24 @@
           "default": "https://codedockapp.vercel.app/",
           "description": "URL of the CodeDock web app for the status bar and open web app command",
           "scope": "application"
+        },
+        "codedock.telemetry.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable anonymous usage telemetry for CodeDock extension.",
+          "scope": "application"
+        },
+        "codedock.telemetry.posthogToken": {
+          "type": "string",
+          "default": "phc_wvm4jEZcWXyCrBBoZsS2A6q4UsyeojWsH3PXdwVsrVri",
+          "description": "PostHog project API key for tracking usage.",
+          "scope": "application"
+        },
+        "codedock.telemetry.posthogHost": {
+          "type": "string",
+          "default": "https://eu.i.posthog.com",
+          "description": "PostHog server URL host.",
+          "scope": "application"
         }
       }
     }
@@ -107,6 +125,7 @@
     "lint": "eslint src --ext ts"
   },
   "dependencies": {
+    "posthog-node": "^5.36.10",
     "ws": "^8.20.0",
     "yjs": "^13.6.30"
   },

@@ -31,6 +31,9 @@ func main() {
 	flushSentry := observability.InitSentry()
 	defer flushSentry()
 
+	flushTelemetry := observability.InitTelemetry()
+	defer flushTelemetry()
+
 	db, err := connectDB()
 	if err != nil {
 		observability.CaptureError(err)
@@ -51,7 +54,7 @@ func main() {
 	inviteHandler := &handlers.InviteHandler{Service: inviteService}
 
 	launchService := &services.LaunchService{DB: db}
-	launchHandler := &handlers.LaunchHandler{Service: launchService}
+	launchHandler := &handlers.LaunchHandler{Service: launchService, Hub: h}
 
 	roomService := &services.RoomService{DB: db}
 	roomHandler := &handlers.RoomHandler{

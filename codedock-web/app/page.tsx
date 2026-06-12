@@ -19,9 +19,9 @@ export default function HomePage() {
   }, [hydrated, token, router]);
   return (
     <MarketingShell>
-      <main className="grid lg:grid-cols-[1.1fr_0.9fr]">
-        <section className="max-w-4xl space-y-8">
-          <div className="space-y-4 animate-fade-in-up">
+      <main className="grid items-center gap-10 lg:grid-cols-[1.1fr_0.9fr] lg:gap-12">
+        <section className="max-w-4xl space-y-6">
+          <div className="space-y-3 animate-fade-in-up">
             <h1 className="max-w-3xl text-[40px] leading-[1.1] font-semibold tracking-tight text-white sm:text-[48px] lg:text-[56px] opacity-0 animate-fade-in-up">
               Professional collaborative coding that feels{" "}
               <TextRotate

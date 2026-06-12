@@ -6,11 +6,14 @@ import (
 	"net/http"
 
 	"github.com/jerryjuche/CodeDock/internal/auth"
+	"github.com/jerryjuche/CodeDock/internal/hub"
+	"github.com/jerryjuche/CodeDock/internal/observability"
 	"github.com/jerryjuche/CodeDock/internal/services"
 )
 
 type LaunchHandler struct {
 	Service *services.LaunchService
+	Hub     *hub.Hub
 }
 
 type exchangeLaunchTokenRequest struct {
@@ -118,6 +121,16 @@ func (h *LaunchHandler) ExchangeLaunchToken(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	}
+
+	if h.Hub != nil {
+		h.Hub.BroadcastAll(context.RoomID, []byte{hub.MessageTypeRoomUpdate})
+	}
+
+	observability.TrackEvent(context.UserID, "backend_launch_token_exchanged", map[string]interface{}{
+		"room_id":    context.RoomID,
+		"source":     context.SourceType,
+		"user_email": context.UserEmail,
+	})
 
 	writeJSON(w, http.StatusOK, context)
 }

@@ -10,6 +10,7 @@ import { WebSocketManager } from "./websocket";
 import { CursorManager } from "./cursor-manager";
 import { YjsSync } from "./yjs-sync";
 import { ensureGitRepo } from "./git";
+import { TelemetryService } from "./telemetry";
 
 const PENDING_HYDRATED_ROOM_ID_KEY = "codedock.pendingHydrated.roomId";
 const PENDING_HYDRATED_ROOT_KEY = "codedock.pendingHydrated.rootPath";
@@ -55,6 +56,10 @@ function refreshStatusBar(): void {
 export async function activate(
   context: vscode.ExtensionContext,
 ): Promise<void> {
+  const telemetry = TelemetryService.getInstance();
+  await telemetry.initialize(context);
+  telemetry.capture("extension_activated");
+
   const config = vscode.workspace.getConfiguration("codedock");
   const serverUrl = config.get<string>("serverUrl", "https://codedock.fly.dev");
   const webAppUrl = config.get<string>(
@@ -120,6 +125,7 @@ export async function activate(
   context.subscriptions.push(
     wsManager.onStateChange((state) => {
       refreshStatusBar();
+      telemetry.capture("websocket_state_changed", { state });
     }),
   );
   refreshStatusBar();
@@ -171,24 +177,30 @@ export async function activate(
   }
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("codedock.login", () =>
-      authManager.login(),
-    ),
-    vscode.commands.registerCommand("codedock.logout", () =>
-      authManager.logout(),
-    ),
-    vscode.commands.registerCommand("codedock.joinRoom", () =>
-      handleJoinRoom(context, outputChannel),
-    ),
-    vscode.commands.registerCommand("codedock.createRoom", () =>
-      handleCreateRoom(outputChannel),
-    ),
-    vscode.commands.registerCommand("codedock.openChat", () =>
-      vscode.window.showWarningMessage(
+    vscode.commands.registerCommand("codedock.login", () => {
+      telemetry.capture("command_login_called");
+      return authManager.login();
+    }),
+    vscode.commands.registerCommand("codedock.logout", () => {
+      telemetry.capture("command_logout_called");
+      return authManager.logout();
+    }),
+    vscode.commands.registerCommand("codedock.joinRoom", () => {
+      telemetry.capture("command_join_room_called");
+      return handleJoinRoom(context, outputChannel);
+    }),
+    vscode.commands.registerCommand("codedock.createRoom", () => {
+      telemetry.capture("command_create_room_called");
+      return handleCreateRoom(outputChannel);
+    }),
+    vscode.commands.registerCommand("codedock.openChat", () => {
+      telemetry.capture("command_open_chat_called");
+      return vscode.window.showWarningMessage(
         "CodeDock Chat is not available in this build yet.",
-      ),
-    ),
+      );
+    }),
     vscode.commands.registerCommand("codedock.disconnectRoom", () => {
+      telemetry.capture("command_disconnect_room_called");
       outputChannel.appendLine("CodeDock: user requested room disconnect");
       void cleanupActiveRoomState(context);
       wsManager.disconnect("user");
@@ -197,12 +209,17 @@ export async function activate(
       refreshStatusBar();
     }),
     vscode.commands.registerCommand("codedock.openWebApp", async () => {
+      telemetry.capture("command_open_web_app_called");
       await vscode.env.openExternal(vscode.Uri.parse(webAppUrl));
     }),
     vscode.commands.registerCommand("codedock.openLogs", () => {
+      telemetry.capture("command_open_logs_called");
       outputChannel.show(true);
     }),
-    vscode.commands.registerCommand("codedock.showMenu", showCodeDockMenu),
+    vscode.commands.registerCommand("codedock.showMenu", () => {
+      telemetry.capture("command_show_menu_called");
+      return showCodeDockMenu();
+    }),
   );
 
   context.subscriptions.push(
@@ -226,7 +243,14 @@ async function restoreSession(): Promise<void> {
     return;
   }
 
-  await authManager.validateToken();
+  const isValid = await authManager.validateToken();
+  if (isValid) {
+    const userInfo = getUserInfoFromToken(token);
+    if (userInfo) {
+      TelemetryService.getInstance().identify(userInfo.userId, userInfo.email);
+      TelemetryService.getInstance().capture("session_restored");
+    }
+  }
 }
 
 function extractLaunchTokenFromUriPath(path: string): string | null {
@@ -284,6 +308,7 @@ async function handleLaunchUri(
   uri: vscode.Uri,
   outputChannel: vscode.OutputChannel,
 ): Promise<void> {
+  TelemetryService.getInstance().capture("launch_uri_received");
   outputChannel.appendLine(`URI received: ${uri.toString()}`);
 
   const params = new URLSearchParams(uri.query);
@@ -304,6 +329,7 @@ async function handleLaunchUri(
   outputChannel.appendLine(`room_id: ${legacyRoomId ?? "null"}`);
 
   if (!launchToken) {
+    TelemetryService.getInstance().capture("launch_uri_failed", { reason: "missing_token" });
     vscode.window.showErrorMessage(
       "CodeDock: This launch link is missing its token.",
     );
@@ -312,6 +338,12 @@ async function handleLaunchUri(
 
   try {
     const launchContext = await apiClient.exchangeLaunchToken(launchToken);
+
+    TelemetryService.getInstance().capture("launch_token_exchanged", {
+      roomId: launchContext.room_id,
+      role: launchContext.role,
+      sourceType: launchContext.source_type,
+    });
 
     if (launchContext.auth_token) {
       await authManager.storeTokenSilently(launchContext.auth_token);
@@ -365,6 +397,7 @@ async function handleLaunchUri(
   } catch (error) {
     const errorMessage =
       error instanceof Error ? error.message : "unknown error";
+    TelemetryService.getInstance().capture("launch_token_exchange_failed", { error: errorMessage });
     outputChannel.appendLine(
       `CodeDock: launch exchange failed -> ${errorMessage}`,
     );
@@ -556,6 +589,11 @@ async function resumePendingLaunch(
   yjsSync.setSessionRole(isHostLike ? "host" : "guest");
 
   wsManager.connect(token, pending.room_id);
+  TelemetryService.getInstance().capture("launch_resumed", {
+    roomId: pending.room_id,
+    role: pending.role,
+    sourceType: pending.source_type,
+  });
   // activate cursor manager with user info
   try {
     const tokenStr = await authManager.getToken();
@@ -608,6 +646,11 @@ async function ensureManagedWorkspace(
       const branch = meta.branch || "main";
       try {
         await ensureGitRepo(repoUrl, branch, roomDir, outputChannel);
+        TelemetryService.getInstance().capture("github_repo_cloned", {
+          roomId: launchContext.room_id,
+          repoUrl,
+          branch,
+        });
       } catch (err) {
         throw new Error(
           `Failed to clone GitHub repository: ${
@@ -734,6 +777,10 @@ async function handleCreateRoom(
 
   try {
     const room = await apiClient.createRoom(token, roomName.trim());
+    TelemetryService.getInstance().capture("room_created", {
+      roomId: room.id,
+      roomName: room.name,
+    });
     vscode.window.showInformationMessage(
       `CodeDock: Room "${room.name}" created. ID: ${room.id}`,
     );
@@ -775,6 +822,10 @@ async function joinRoomNow(
   yjsSync.setSessionRole("guest");
   yjsSync.setActiveRoomId(roomId);
   wsManager.connect(token, roomId);
+  TelemetryService.getInstance().capture("room_joined", {
+    roomId: roomId,
+    role: "guest",
+  });
   // activate cursor manager for current user
   try {
     const tokenStr = await authManager.getToken();
@@ -821,7 +872,11 @@ function normalizeFsPath(fsPath: string): string {
   return path.resolve(fsPath);
 }
 
-export function deactivate(): void {
+export async function deactivate(): Promise<void> {
+  const telemetry = TelemetryService.getInstance();
+  telemetry.capture("extension_deactivated");
+  await telemetry.shutdown();
+
   wsManager?.disconnect("extension_deactivated");
   yjsSync?.dispose();
   try {

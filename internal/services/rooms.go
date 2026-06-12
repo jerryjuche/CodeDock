@@ -51,14 +51,15 @@ type RoomMembership struct {
 }
 
 type RoomSourceState struct {
-	Type          string `json:"type"`
-	Ready         bool   `json:"ready"`
-	HostBound     bool   `json:"host_bound"`
-	Activated     bool   `json:"activated"`
-	HostConnected bool   `json:"host_connected"`
-	Status        string `json:"status"`
-	LaunchAllowed bool   `json:"launch_allowed"`
-	LaunchReason  string `json:"launch_reason,omitempty"`
+	Type                   string `json:"type"`
+	Ready                  bool   `json:"ready"`
+	HostBound              bool   `json:"host_bound"`
+	Activated              bool   `json:"activated"`
+	HostConnected          bool   `json:"host_connected"`
+	Status                 string `json:"status"`
+	LaunchAllowed          bool   `json:"launch_allowed"`
+	LaunchReason           string `json:"launch_reason,omitempty"`
+	LastLaunchExchangeAt   string `json:"last_launch_exchange_at,omitempty"`
 
 	WorkspaceLabel string `json:"workspace_label,omitempty"`
 
@@ -273,6 +274,17 @@ func (s *RoomService) GetRoomDetails(roomID, userID string, connectedUserIDs map
 		}
 	}
 
+	var lastLaunchExchangeAt *time.Time
+	var lastLaunchExchange sql.NullTime
+	if err := s.DB.QueryRow(`
+		SELECT MAX(used_at) FROM room_launch_tokens WHERE room_id = $1 AND used_at IS NOT NULL
+	`, roomID).Scan(&lastLaunchExchange); err != nil && err != sql.ErrNoRows {
+		return nil, err
+	}
+	if lastLaunchExchange.Valid {
+		lastLaunchExchangeAt = &lastLaunchExchange.Time
+	}
+
 	s.broadcastRoomUpdate(roomID)
 
 	return &RoomDetails{
@@ -280,7 +292,7 @@ func (s *RoomService) GetRoomDetails(roomID, userID string, connectedUserIDs map
 		Membership: RoomMembership{
 			Role: role,
 		},
-		SourceState: buildRoomSourceState(room, role, connectedUserIDs),
+		SourceState: buildRoomSourceState(room, role, connectedUserIDs, lastLaunchExchangeAt),
 	}, nil
 }
 
@@ -405,7 +417,7 @@ func (s *RoomService) MarkLocalWorkspaceBound(roomID, userID, workspaceLabel str
 		Membership: RoomMembership{
 			Role: role,
 		},
-		SourceState: buildRoomSourceState(room, role, connectedUserIDs),
+		SourceState: buildRoomSourceState(room, role, connectedUserIDs, nil),
 	}, nil
 }
 
@@ -603,14 +615,18 @@ func (s *RoomService) DeleteRoom(roomID, userID string) error {
 	return nil
 }
 
-func buildRoomSourceState(room *Room, role string, connectedUserIDs map[string]bool) RoomSourceState {
+func buildRoomSourceState(room *Room, role string, connectedUserIDs map[string]bool, lastLaunchExchangeAt *time.Time) RoomSourceState {
 	state := RoomSourceState{
-		Type:          room.SourceType,
-		Status:        "unknown",
-		Ready:         false,
-		HostBound:     false,
-		LaunchAllowed: false,
-		HostConnected: connectedUserIDs[room.OwnerUserID],
+		Type:                 room.SourceType,
+		Status:               "unknown",
+		Ready:                false,
+		HostBound:            false,
+		LaunchAllowed:        false,
+		HostConnected:        connectedUserIDs[room.OwnerUserID],
+		LastLaunchExchangeAt: "",
+	}
+	if lastLaunchExchangeAt != nil {
+		state.LastLaunchExchangeAt = lastLaunchExchangeAt.Format(time.RFC3339)
 	}
 
 	switch room.SourceType {

@@ -24,6 +24,7 @@ export type RoomSourceState = {
   status: string;
   launch_allowed: boolean;
   launch_reason?: string;
+  last_launch_exchange_at?: string;
   workspace_label?: string;
   repo_owner?: string;
   repo_name?: string;

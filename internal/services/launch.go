@@ -53,6 +53,8 @@ type LaunchContext struct {
 	SourceMetadata    json.RawMessage `json:"source_metadata"`
 	WorkspacePathHint string          `json:"workspace_path_hint"`
 	AuthToken         string          `json:"auth_token"`
+	UserEmail         string          `json:"email"`
+	UserID            string          `json:"user_id"`
 }
 
 type LaunchService struct {
