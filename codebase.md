@@ -19,17 +19,17 @@ The CodeDock repository is organized as a **monorepo** with three main applicati
 
 ## Technologies & Frameworks
 
-| Layer              | Technology Stack                                                                                                   |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------ |
-| **Backend**        | Go 1.25, `net/http`, `gorilla/websocket`, `golang-jwt/jwt/v5`, `lib/pq` (PostgreSQL driver), Sentry error tracking |
-| **Database**       | PostgreSQL 16, pgcrypto extension                                                                                  |
-| **Frontend**       | Next.js 16 (App Router), React 19, TypeScript 5.9, Tailwind CSS 3.4, TanStack Query 5, Sonner, Lucide              |
-| **Extension**      | VS Code Extension API (≥1.85.0), TypeScript 5.9, esbuild, Yjs (CRDT sync), ws (WebSocket client)                   |
-| **Real-time Sync** | Yjs / CRDT over WebSocket (document sync, cursor presence, chat)                                                   |
-| **Auth**           | JWT tokens (golang-jwt/v5), bcrypt password hashing (golang.org/x/crypto)                                          |
-| **Hosting**        | Backend: Fly.io (fra region), Frontend: Vercel, DB: Supabase/self-hosted PostgreSQL                                |
-| **Deployment**     | Docker (multi-stage alpine), GitHub Actions → Fly.io, Vercel auto-deploy                                           |
-| **Testing**        | Go test (backend), Vitest (frontend), esbuild (extension)                                                          |
+| Layer              | Technology Stack                                                                                                         |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| **Backend**        | Go 1.25.0, `net/http`, `gorilla/websocket`, `golang-jwt/jwt/v5`, `lib/pq`, `posthog-go`, Sentry error tracking           |
+| **Database**       | PostgreSQL 16, pgcrypto extension                                                                                        |
+| **Frontend**       | Next.js 16.2.6 (App Router), React 19.2.5, TypeScript 5.9.3, Tailwind CSS 3.4, TanStack Query 5, Sonner, Lucide, PostHog |
+| **Extension**      | VS Code Extension API (≥1.85.0), TypeScript 5.9.3, esbuild, Yjs (CRDT sync), `ws` (WebSocket client), PostHog telemetry  |
+| **Real-time Sync** | Yjs / CRDT over WebSocket (document sync, cursor presence, chat)                                                         |
+| **Auth**           | JWT tokens (golang-jwt/v5), bcrypt password hashing (golang.org/x/crypto)                                                |
+| **Hosting**        | Backend: Fly.io (fra region), Frontend: Vercel, DB: Supabase/self-hosted PostgreSQL                                      |
+| **Deployment**     | Docker (multi-stage alpine), GitHub Actions → Fly.io, Vercel auto-deploy                                                 |
+| **Testing**        | Go test (backend), Vitest (frontend), esbuild (extension)                                                                |
 
 ---
 
@@ -58,7 +58,7 @@ The CodeDock repository is organized as a **monorepo** with three main applicati
 ### Extension
 
 - **extension/src/extension.ts** — Extension activation/deactivation, command registration, VS Code URI scheme callback handlers (`vscode://jerryjuche.codedock/...`)
-- **extension/package.json** — v3.2.0, defines 9 commands, 2 config settings, engine ≥1.85.0
+- **extension/package.json** — v3.2.0, defines 9 commands, 6 config settings, engine ≥1.85.0
 
 ### Test Dashboard
 
@@ -71,25 +71,25 @@ The CodeDock repository is organized as a **monorepo** with three main applicati
 
 ### Backend Services ([internal/services/](internal/services/))
 
-| Service           | File              | Purpose                                                              |
-| ----------------- | ----------------- | -------------------------------------------------------------------- |
-| **RoomService**   | `rooms.go`        | Room CRUD, GetRoomDetails, GetRoomPresence, ToggleActivation, MarkLocalWorkspaceBound, slug/join-code generation |
-| **InviteService** | `invite.go`       | Generate (5-min expiry, auto-revoke previous), Validate, List, Revoke |
-| **LaunchService** | `launch.go`       | GenerateLaunchToken (2-min TTL), ExchangeLaunchToken, hub notification |
-| **SnapshotStore** | `snapshots.go`    | Persist Yjs document state (CRDT snapshots per file per room)         |
-| **ActivityStore** | `activities.go`   | Track user activities (edits, joins, leaves) with metadata            |
-| **CreateUser**    | `users.go`        | Database user record insertion & bcrypt password hashing              |
+| Service           | File            | Purpose                                                                                                          |
+| ----------------- | --------------- | ---------------------------------------------------------------------------------------------------------------- |
+| **RoomService**   | `rooms.go`      | Room CRUD, GetRoomDetails, GetRoomPresence, ToggleActivation, MarkLocalWorkspaceBound, slug/join-code generation |
+| **InviteService** | `invite.go`     | Generate (5-min expiry, auto-revoke previous), Validate, List, Revoke                                            |
+| **LaunchService** | `launch.go`     | GenerateLaunchToken (2-min TTL), ExchangeLaunchToken, hub notification                                           |
+| **SnapshotStore** | `snapshots.go`  | Persist Yjs document state (CRDT snapshots per file per room)                                                    |
+| **ActivityStore** | `activities.go` | Track user activities (edits, joins, leaves) with metadata                                                       |
+| **CreateUser**    | `users.go`      | Database user record insertion & bcrypt password hashing                                                         |
 
 ### Backend Handlers ([internal/handlers/](internal/handlers/))
 
-| Handler           | File          | Endpoints                                                                                                                                                   |
-| ----------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **AuthHandler**   | `auth.go`     | `POST /auth/register`, `POST /auth/login`, `GET /auth/me`, `POST /auth/exchange` (deprecated)                                                               |
-| **RoomHandler**   | `rooms.go`    | `GET/POST /rooms`, `/rooms/{roomId}`, `/rooms/{roomId}/details`, `/rooms/{roomId}/presence`, `/rooms/{roomId}/activation/toggle`, `/rooms/{roomId}/source/local/bind`, `/rooms/{roomId}/leave`, `/rooms/{roomId}/activities` |
-| **InviteHandler** | `invites.go`  | `/join-code/resolve`, `/rooms/{roomId}/invites`, `/rooms/{roomId}/invites/{inviteId}/revoke`                                                                 |
-| **LaunchHandler** | `launch.go`   | `/rooms/{roomId}/open-in-vscode`, `/rooms/{roomId}/open-ide`, `/vscode/launch/exchange`                                                                      |
-| **WSHandler**     | `ws.go`       | `GET /ws` — WebSocket gateway (origin validation, rate limited, hub registration)                                                                            |
-| **HealthHandler** | `health.go`   | `GET /health` (liveness), `GET /ready` (readiness with DB ping)                                                                                              |
+| Handler           | File         | Endpoints                                                                                                                                                                                                                    |
+| ----------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **AuthHandler**   | `auth.go`    | `POST /auth/register`, `POST /auth/login`, `GET /auth/me`, `POST /auth/exchange` (deprecated)                                                                                                                                |
+| **RoomHandler**   | `rooms.go`   | `GET/POST /rooms`, `/rooms/{roomId}`, `/rooms/{roomId}/details`, `/rooms/{roomId}/presence`, `/rooms/{roomId}/activation/toggle`, `/rooms/{roomId}/source/local/bind`, `/rooms/{roomId}/leave`, `/rooms/{roomId}/activities` |
+| **InviteHandler** | `invites.go` | `/join-code/resolve`, `/rooms/{roomId}/invites`, `/rooms/{roomId}/invites/{inviteId}/revoke`                                                                                                                                 |
+| **LaunchHandler** | `launch.go`  | `/rooms/{roomId}/open-in-vscode`, `/rooms/{roomId}/open-ide`, `/vscode/launch/exchange`                                                                                                                                      |
+| **WSHandler**     | `ws.go`      | `GET /ws` — WebSocket gateway (origin validation, rate limited, hub registration)                                                                                                                                            |
+| **HealthHandler** | `health.go`  | `GET /health` (liveness), `GET /ready` (readiness with DB ping)                                                                                                                                                              |
 
 ### Backend Core Modules ([internal/](internal/))
 
@@ -100,53 +100,53 @@ The CodeDock repository is organized as a **monorepo** with three main applicati
 
 ### Frontend Components ([codedock-web/components/](codedock-web/components/))
 
-| Component Group | Key Files | Purpose                                                                               |
-| --------------- | --------- | ------------------------------------------------------------------------------------- |
-| **app-shell**   | `app-shell.tsx` | App chrome wrapper (header + content area)                                       |
-| **auth/**       | `auth-guard.tsx`, `auth-shell.tsx`, `login-form.tsx`, `register-form.tsx` | Login/register forms, route protection, auth layout |
-| **dashboard/**  | `room-list.tsx`, `room-card.tsx`, `join-code-form.tsx` | Room listing, preview cards, quick join                                |
-| **rooms/**      | 17 components | Room details, invites, presence, launch, review, CRUD, activity timeline |
-| **layout/**     | `app-header.tsx` | Navigation header with user menu                                              |
-| **marketing/**  | `marketing-shell.tsx` | Landing page layout with hero background                                  |
-| **brand/**      | `logo.tsx` | CodeDock SVG logo                                                                   |
-| **backgrounds/**| `silk-hero.tsx` | Animated silk gradient hero background                                          |
-| **fancy/**      | `text/text-rotate.tsx` | Rotating text animation                                                   |
-| **reactbits/**  | `silk.tsx` | WebGL silk effect rendering                                                         |
-| **ui/**         | 14 components | Buttons, inputs, cards, badges, skeletons, spinners, diff views, toasts, error boundaries |
+| Component Group  | Key Files                                                                 | Purpose                                                                                   |
+| ---------------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| **app-shell**    | `app-shell.tsx`                                                           | App chrome wrapper (header + content area)                                                |
+| **auth/**        | `auth-guard.tsx`, `auth-shell.tsx`, `login-form.tsx`, `register-form.tsx` | Login/register forms, route protection, auth layout                                       |
+| **dashboard/**   | `room-list.tsx`, `room-card.tsx`, `join-code-form.tsx`                    | Room listing, preview cards, quick join                                                   |
+| **rooms/**       | 17 components                                                             | Room details, invites, presence, launch, review, CRUD, activity timeline                  |
+| **layout/**      | `app-header.tsx`                                                          | Navigation header with user menu                                                          |
+| **marketing/**   | `marketing-shell.tsx`                                                     | Landing page layout with hero background                                                  |
+| **brand/**       | `logo.tsx`                                                                | CodeDock SVG logo                                                                         |
+| **backgrounds/** | `silk-hero.tsx`                                                           | Animated silk gradient hero background                                                    |
+| **fancy/**       | `text/text-rotate.tsx`                                                    | Rotating text animation                                                                   |
+| **reactbits/**   | `silk.tsx`                                                                | WebGL silk effect rendering                                                               |
+| **ui/**          | 14 components                                                             | Buttons, inputs, cards, badges, skeletons, spinners, diff views, toasts, error boundaries |
 
 ### Frontend Hooks ([codedock-web/hooks/](codedock-web/hooks/))
 
-| Hook                        | Purpose                                              |
-| --------------------------- | ---------------------------------------------------- |
+| Hook                        | Purpose                                                             |
+| --------------------------- | ------------------------------------------------------------------- |
 | `useAuth()`                 | Authentication state, login/logout, token management (localStorage) |
-| `useRoom(roomId)`           | Fetch/update single room details                     |
-| `useRooms()`                | Fetch user's room list                               |
-| `useRoomDetails(roomId)`    | Extended room metadata, source state, membership     |
-| `useRoomSync(roomId)`       | WebSocket sync state, MsgTypeRoomUpdate listener     |
-| `useRoomPresence(roomId)`   | Track online users, connection status                |
-| `useRoomActivities(roomId)` | Fetch activity log for audit/presence                |
-| `useInvites(roomId)`        | List, create, revoke room invites                    |
-| `useJoinCode()`             | Resolve join codes to rooms                          |
-| `useLaunch(roomId)`         | Generate and exchange launch tokens                  |
-| `useReviewFiles(roomId)`    | File diff generation and review UI state             |
-| `useErrorHandler()`         | Centralized React error normalization and reporting  |
+| `useRoom(roomId)`           | Fetch/update single room details                                    |
+| `useRooms()`                | Fetch user's room list                                              |
+| `useRoomDetails(roomId)`    | Extended room metadata, source state, membership                    |
+| `useRoomSync(roomId)`       | WebSocket sync state, MsgTypeRoomUpdate listener                    |
+| `useRoomPresence(roomId)`   | Track online users, connection status                               |
+| `useRoomActivities(roomId)` | Fetch activity log for audit/presence                               |
+| `useInvites(roomId)`        | List, create, revoke room invites                                   |
+| `useJoinCode()`             | Resolve join codes to rooms                                         |
+| `useLaunch(roomId)`         | Generate and exchange launch tokens                                 |
+| `useReviewFiles(roomId)`    | File diff generation and review UI state                            |
+| `useErrorHandler()`         | Centralized React error normalization and reporting                 |
 
 ### Extension Features ([extension/src/](extension/src/))
 
-| Module                | Size   | Purpose                                                                                |
-| --------------------- | ------ | -------------------------------------------------------------------------------------- |
+| Module                | Size   | Purpose                                                                                  |
+| --------------------- | ------ | ---------------------------------------------------------------------------------------- |
 | **extension.ts**      | 25 KB  | Extension activator, URI deep-link routers, workspace launchers, 9 command registrations |
-| **yjs-sync.ts**       | 38 KB  | Yjs CRDT document synchronization, workspace materialization, file tree handlers        |
-| **websocket.ts**      | 12 KB  | Custom reconnecting WebSocket client, message queuing, state transition dispatching     |
-| **chat.ts**           | 8 KB   | Webview chat panel backend provider                                                    |
-| **protocol.ts**       | 8 KB   | Binary encoding/decoding layers for sync, awareness, and activity frames               |
-| **git.ts**            | 6 KB   | Git repo initialization/management                                                     |
-| **cursor-manager.ts** | 5 KB   | Visual cursor and selection range tracking across active editors                        |
-| **api.ts**            | 4 KB   | REST client for backend communication                                                  |
-| **status-bar.ts**     | 3.5 KB | Native theme-aware status bar connection indicators (connected/disconnected/issue)      |
-| **auth.ts**           | 2.5 KB | VS Code SecretStorage credential store, token persistence                              |
-| **utils.ts**          | 2 KB   | Helper functions and path normalization utilities                                      |
-| **types.ts**          | 1.5 KB | Shared type interfaces for communication layers                                        |
+| **yjs-sync.ts**       | 38 KB  | Yjs CRDT document synchronization, workspace materialization, file tree handlers         |
+| **websocket.ts**      | 12 KB  | Custom reconnecting WebSocket client, message queuing, state transition dispatching      |
+| **chat.ts**           | 8 KB   | Webview chat panel backend provider                                                      |
+| **protocol.ts**       | 8 KB   | Binary encoding/decoding layers for sync, awareness, and activity frames                 |
+| **git.ts**            | 6 KB   | Git repo initialization/management                                                       |
+| **cursor-manager.ts** | 5 KB   | Visual cursor and selection range tracking across active editors                         |
+| **api.ts**            | 4 KB   | REST client for backend communication                                                    |
+| **status-bar.ts**     | 3.5 KB | Native theme-aware status bar connection indicators (connected/disconnected/issue)       |
+| **auth.ts**           | 2.5 KB | VS Code SecretStorage credential store, token persistence                                |
+| **utils.ts**          | 2 KB   | Helper functions and path normalization utilities                                        |
+| **types.ts**          | 1.5 KB | Shared type interfaces for communication layers                                          |
 
 ---
 
@@ -203,18 +203,18 @@ The CodeDock repository is organized as a **monorepo** with three main applicati
 
 ### Migration Files ([migration/](migration/))
 
-| Migration                         | Purpose                                                         |
-| --------------------------------- | --------------------------------------------------------------- |
-| `001_create_extensions.sql`       | Enable pgcrypto extension                                       |
-| `002_create_enums.sql`            | Define enums (e.g., room roles: `editor`, `viewer`)             |
-| `003_create_users.sql`            | Users table (id, email, password_hash, timestamps)              |
-| `004_create_trigger_function.sql` | Auto-update `updated_at` timestamps                             |
-| `005_create_rooms.sql`            | Rooms table (id, name, created_by, is_active)                   |
-| `006_create_room_members.sql`     | Room membership with roles (user_id, room_id, role)             |
-| `007_create_snapshots.sql`        | Yjs document snapshots (room_id, file_path, yjs_state)          |
-| `008_create_invite_tokens.sql`    | Invite tokens (room_id, token, expires_at, used_at)             |
-| `009_create_activities.sql`       | Activity audit log (room_id, user_id, type, file_path, details) |
-| `012_default_rooms_inactive.sql`  | Default rooms to inactive status                                |
+| Migration                         | Purpose                                                            |
+| --------------------------------- | ------------------------------------------------------------------ |
+| `001_create_extensions.sql`       | Enable pgcrypto extension                                          |
+| `002_create_enums.sql`            | Define enums (e.g., room roles: `editor`, `viewer`)                |
+| `003_create_users.sql`            | Users table (id, email, password_hash, timestamps)                 |
+| `004_create_trigger_function.sql` | Auto-update `updated_at` timestamps                                |
+| `005_create_rooms.sql`            | Rooms table (id, name, created_by, is_active)                      |
+| `006_create_room_members.sql`     | Room membership with roles (user_id, room_id, role)                |
+| `007_create_snapshots.sql`        | Yjs document snapshots (room_id, file_path, yjs_state)             |
+| `008_create_invite_tokens.sql`    | Invite tokens (room_id, token, expires_at, used_at)                |
+| `009_create_activities.sql`       | Activity audit log (room_id, user_id, type, file_path, details)    |
+| `012_default_rooms_inactive.sql`  | Default rooms to inactive status                                   |
 | `0002_phase1_control_plane.sql`   | Phase 1 control plane (launch tokens, source metadata, join codes) |
 
 **Core Tables:**
@@ -231,20 +231,20 @@ The CodeDock repository is organized as a **monorepo** with three main applicati
 
 ## Configuration Files
 
-| File                                | Purpose                                                                |
-| ----------------------------------- | ---------------------------------------------------------------------- |
-| **go.mod**                          | Go 1.25 dependencies: jwt/v5, websocket, postgres driver, sentry, env |
-| **package.json**                    | Root monorepo utils: diff, react                                       |
-| **codedock-web/package.json**       | Next.js 16 app: TanStack Query 5, Tailwind 3.4, Sonner, Lucide, Vitest |
-| **codedock-web/tsconfig.json**      | TypeScript compiler: path aliases (@/*)                                |
-| **codedock-web/next.config.ts**     | Next.js configuration (webpack, env vars)                              |
-| **codedock-web/tailwind.config.ts** | Tailwind CSS theming                                                   |
-| **extension/package.json**          | VS Code extension v3.2.0: 9 commands, 2 config settings, esbuild     |
-| **extension/tsconfig.json**         | Extension TypeScript build config                                      |
-| **extension/esbuild.js**            | Extension bundler config                                               |
-| **fly.toml**                        | Fly.io deployment: region (fra), 1GB RAM, auto-start, force HTTPS     |
-| **Dockerfile**                      | Multi-stage Go build (golang:1.25-alpine → alpine:latest)              |
-| **.github/workflows/fly-deploy.yml**| GitHub Actions: auto-deploy to Fly.io on push to main                  |
+| File                                 | Purpose                                                                         |
+| ------------------------------------ | ------------------------------------------------------------------------------- |
+| **go.mod**                           | Go 1.25 dependencies: jwt/v5, websocket, postgres driver, sentry, env, PostHog  |
+| **package.json**                     | Root monorepo utils: diff, react                                                |
+| **codedock-web/package.json**        | Next.js 16 app: TanStack Query 5, Tailwind 3.4, Sonner, Lucide, PostHog, Vitest |
+| **codedock-web/tsconfig.json**       | TypeScript compiler: path aliases (@/\*)                                        |
+| **codedock-web/next.config.ts**      | Next.js configuration (webpack, env vars)                                       |
+| **codedock-web/tailwind.config.ts**  | Tailwind CSS theming                                                            |
+| **extension/package.json**           | VS Code extension v3.2.0: 9 commands, telemetry settings, esbuild               |
+| **extension/tsconfig.json**          | Extension TypeScript build config                                               |
+| **extension/esbuild.js**             | Extension bundler config                                                        |
+| **fly.toml**                         | Fly.io deployment: region (fra), 1GB RAM, auto-start, force HTTPS               |
+| **Dockerfile**                       | Multi-stage Go build (golang:1.25-alpine → alpine:latest)                       |
+| **.github/workflows/fly-deploy.yml** | GitHub Actions: auto-deploy to Fly.io on push to main                           |
 
 ---
 
@@ -252,16 +252,16 @@ The CodeDock repository is organized as a **monorepo** with three main applicati
 
 ### Build Scripts ([scripts/](scripts/))
 
-| Script                              | Purpose                                  |
-| ----------------------------------- | ---------------------------------------- |
-| `scaffold-codedock-web.sh`          | Initialize frontend project structure    |
-| `apply-supabase-migrations.sh`      | Apply PostgreSQL migrations to Supabase  |
-| `apply-phase1-control-plane-migration.sh` | Apply phase 1 control plane migration |
-| `create-test-users.sh`              | Populate test database with sample users |
-| `export-backend-debug.sh`           | Bundle backend context for debugging     |
-| `export-debug-bundle.sh`            | Create diagnostic export                 |
-| `collect_codedock_full_snapshot.sh` | Collect full codebase snapshot            |
-| `cleanup-repo.sh`                   | Remove build artifacts and dependencies  |
+| Script                                    | Purpose                                  |
+| ----------------------------------------- | ---------------------------------------- |
+| `scaffold-codedock-web.sh`                | Initialize frontend project structure    |
+| `apply-supabase-migrations.sh`            | Apply PostgreSQL migrations to Supabase  |
+| `apply-phase1-control-plane-migration.sh` | Apply phase 1 control plane migration    |
+| `create-test-users.sh`                    | Populate test database with sample users |
+| `export-backend-debug.sh`                 | Bundle backend context for debugging     |
+| `export-debug-bundle.sh`                  | Create diagnostic export                 |
+| `collect_codedock_full_snapshot.sh`       | Collect full codebase snapshot           |
+| `cleanup-repo.sh`                         | Remove build artifacts and dependencies  |
 
 ### CI/CD Pipeline
 
